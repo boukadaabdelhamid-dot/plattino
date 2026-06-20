@@ -1,0 +1,31 @@
+kind = "web"
+previewPath = "/"
+title = "Midanic Store"
+version = "1.0.0"
+id = "artifacts/web-store"
+router = "path"
+
+[[integratedSkills]]
+name = "react-vite"
+version = "1.0.0"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 23733
+
+[services.development]
+run = "pnpm --filter @workspace/web-store run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/web-store", "run", "build" ]
+publicDir = "artifacts/web-store/dist/public"
+serve = "static"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "23733"
+BASE_PATH = "/"

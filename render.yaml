@@ -1,0 +1,55 @@
+services:
+  - type: web
+    name: api-server
+    runtime: node
+    rootDir: .
+    buildCommand: npm install -g pnpm && pnpm install --frozen-lockfile && pnpm --filter @workspace/api-server run build
+    startCommand: node artifacts/api-server/dist/index.mjs
+    envVars:
+      - key: NODE_ENV
+        value: production
+      # Paste your Neon (or other) PostgreSQL connection string here.
+      # Format: postgresql://user:password@host/dbname?sslmode=require
+      - key: DATABASE_URL
+        sync: false
+      - key: JWT_SECRET
+        generateValue: true
+      - key: SESSION_SECRET
+        generateValue: true
+      # --- Object Storage (Google Cloud Storage) ---
+      # Paste the full JSON content of your GCS service-account key here.
+      # Required for product image uploads and serving stored files.
+      - key: GOOGLE_CREDENTIALS_JSON
+        sync: false
+      # GCS path prefix for public/read assets, e.g. /my-bucket/public
+      - key: PUBLIC_OBJECT_SEARCH_PATHS
+        sync: false
+      # GCS path prefix for private/write assets, e.g. /my-bucket/private
+      - key: PRIVATE_OBJECT_DIR
+        sync: false
+
+  - type: web
+    name: web-store
+    runtime: static
+    rootDir: .
+    buildCommand: npm install -g pnpm && pnpm install --frozen-lockfile && pnpm --filter @workspace/web-store run build
+    staticPublishPath: artifacts/web-store/dist/public
+    envVars:
+      - key: NODE_ENV
+        value: production
+      # Set this to your deployed api-server URL, e.g. https://api-server.onrender.com
+      - key: VITE_API_URL
+        sync: false
+
+  - type: web
+    name: erp
+    runtime: static
+    rootDir: .
+    buildCommand: npm install -g pnpm && pnpm install --frozen-lockfile && pnpm --filter @workspace/erp run build
+    staticPublishPath: artifacts/erp/dist/public
+    envVars:
+      - key: NODE_ENV
+        value: production
+      # Set this to your deployed api-server URL, e.g. https://api-server.onrender.com
+      - key: VITE_API_URL
+        sync: false

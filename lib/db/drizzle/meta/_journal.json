@@ -1,0 +1,34 @@
+{
+  "version": "7",
+  "dialect": "postgresql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "7",
+      "when": 1778586022250,
+      "tag": "0000_left_moon_knight",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1780873621709,
+      "tag": "0001_phase2_customer_operations_caisse_id",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1780874218987,
+      "tag": "0002_shiny_captain_stacy",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1780875130689,
+      "tag": "0003_jazzy_saracen",
+      "breakpoints": true
+    }
+  ]
+}

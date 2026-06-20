@@ -1,0 +1,132 @@
+modules = ["nodejs-20", "web"]
+
+[deployment]
+router = "application"
+deploymentTarget = "autoscale"
+run = ["bash", "scripts/start-prod.sh"]
+build = ["bash", "scripts/build-prod.sh"]
+
+[deployment.postBuild]
+args = ["pnpm", "store", "prune"]
+env = { "CI" = "true" }
+
+[workflows]
+runButton = "Project"
+
+[[workflows.workflow]]
+name = "Project"
+mode = "parallel"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "workflow.run"
+args = "API Server"
+
+[[workflows.workflow.tasks]]
+task = "workflow.run"
+args = "Web Store"
+
+[[workflows.workflow.tasks]]
+task = "workflow.run"
+args = "ERP Dev"
+
+[[workflows.workflow]]
+name = "API Server"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "PORT=8080 pnpm --filter @workspace/api-server run dev"
+waitForPort = 8080
+
+[workflows.workflow.metadata]
+outputType = "console"
+
+[[workflows.workflow]]
+name = "Web Store"
+author = "agent"
+
+[workflows.workflow.metadata]
+outputType = "webview"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "PORT=5000 BASE_PATH=/ pnpm --filter @workspace/web-store dev"
+waitForPort = 5000
+
+[[workflows.workflow]]
+name = "ERP Dev"
+author = "agent"
+
+[workflows.workflow.metadata]
+outputType = "console"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "PORT=3001 BASE_PATH=/erp pnpm --filter @workspace/erp dev"
+waitForPort = 3001
+
+[agent]
+stack = "BEST_EFFORT_FALLBACK"
+expertMode = true
+integrations = ["github:1.0.0"]
+
+[postMerge]
+path = "scripts/post-merge.sh"
+timeoutMs = 20000
+
+[[ports]]
+localPort = 3000
+externalPort = 3000
+
+[[ports]]
+localPort = 3001
+externalPort = 3001
+
+[[ports]]
+localPort = 5000
+externalPort = 80
+
+[[ports]]
+localPort = 8080
+externalPort = 8080
+
+[[ports]]
+localPort = 8082
+externalPort = 4200
+
+[[ports]]
+localPort = 8083
+externalPort = 5000
+
+[[ports]]
+localPort = 18996
+externalPort = 3002
+
+[[ports]]
+localPort = 19558
+externalPort = 3001
+
+[[ports]]
+localPort = 19559
+externalPort = 3003
+
+[[ports]]
+localPort = 19560
+externalPort = 6000
+
+[[ports]]
+localPort = 23733
+externalPort = 3000
+
+[userenv]
+
+[userenv.shared]
+JWT_SECRET = "d952bc6cf967c4aba73081a26abb0a43017fe47f38c602f107b5ca43c6933bd8dbf926340bdef9efedf59b1404b4cb40"
+PORT = "8080"
+
+[userenv.development]
+APP_URL = "https://c43ba022-7689-4454-974a-fe20c139f53c-00-11xp5tmivnd3i.janeway.replit.dev"
+
+[nix]
+channel = "stable-25_05"

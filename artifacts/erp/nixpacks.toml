@@ -1,0 +1,8 @@
+[phases.install]
+cmds = ["pnpm install --no-frozen-lockfile --filter @workspace/erp..."]
+
+[phases.build]
+cmds = ["pnpm --filter @workspace/erp run build"]
+
+[start]
+cmd = "npx serve -s /app/artifacts/erp/dist/public -l $PORT"

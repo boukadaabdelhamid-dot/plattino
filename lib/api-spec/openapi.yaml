@@ -1,0 +1,5655 @@
+openapi: 3.1.0
+info:
+  # Do not change the title, if the title changes, the import paths will be broken
+  title: Api
+  version: 0.1.0
+  description: Midanic E-Commerce & ERP API
+servers:
+  - url: /api
+    description: Base API path
+tags:
+  - name: health
+  - name: auth
+  - name: products
+  - name: categories
+  - name: cart
+  - name: orders
+  - name: admin
+  - name: erp
+  - name: storage
+
+paths:
+  /healthz:
+    get:
+      operationId: healthCheck
+      tags: [health]
+      summary: Health check
+      responses:
+        "200":
+          description: Healthy
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthStatus"
+
+  # ── Auth ──────────────────────────────────────────────────────────
+  /auth/register:
+    post:
+      operationId: register
+      tags: [auth]
+      summary: Register a new user
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RegisterRequest"
+      responses:
+        "201":
+          description: User created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthResponse"
+
+  /auth/login:
+    post:
+      operationId: login
+      tags: [auth]
+      summary: Login
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoginRequest"
+      responses:
+        "200":
+          description: Login successful
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthResponse"
+
+  /auth/me:
+    get:
+      operationId: getMe
+      tags: [auth]
+      summary: Get current user
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Current user
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+
+  /auth/select-store:
+    post:
+      operationId: selectStore
+      tags: [auth]
+      summary: Switch to another store the user has access to (re-issues JWT)
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SelectStoreRequest"
+      responses:
+        "200":
+          description: Selected store
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SelectStoreResponse"
+
+  /stores/public:
+    get:
+      operationId: getPublicStores
+      tags: [storage]
+      summary: List active stores (storefront switcher)
+      responses:
+        "200":
+          description: Stores
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Store"
+
+  /erp/stores:
+    get:
+      operationId: getErpStores
+      tags: [erp]
+      summary: List all stores (admin)
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Stores
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Store"
+    post:
+      operationId: createErpStore
+      tags: [erp]
+      summary: Create a new store
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateStoreRequest"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Store"
+
+  /erp/stores/all:
+    get:
+      operationId: getErpStoresAll
+      tags: [erp]
+      summary: List all active tenant stores (any staff)
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Active stores
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Store"
+
+  /erp/stores/mine:
+    get:
+      operationId: getErpStoresMine
+      tags: [erp]
+      summary: Stores the current user belongs to (with profile fields)
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: My stores
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Store"
+
+  /erp/stores/{id}:
+    patch:
+      operationId: updateErpStore
+      tags: [erp]
+      summary: Update a store (rename / activate / deactivate)
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: integer }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateStoreRequest"
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Store"
+    delete:
+      operationId: deleteErpStore
+      tags: [erp]
+      summary: Delete a store (only if it has no data)
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: integer }
+      responses:
+        "200":
+          description: Deleted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+
+  /erp/products/generate-barcode:
+    post:
+      operationId: generateProductBarcode
+      tags: [erp]
+      summary: Generate a unique EAN-13 barcode for the current store
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Generated barcode
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GenerateBarcodeResponse"
+
+  # ── Products ──────────────────────────────────────────────────────
+  /products:
+    get:
+      operationId: getProducts
+      tags: [products]
+      summary: List products
+      parameters:
+        - in: query
+          name: search
+          schema:
+            type: string
+        - in: query
+          name: categoryId
+          schema:
+            type: integer
+        - in: query
+          name: page
+          schema:
+            type: integer
+            default: 1
+        - in: query
+          name: limit
+          schema:
+            type: integer
+            default: 20
+        - in: query
+          name: filterName
+          schema:
+            type: string
+        - in: query
+          name: filterCode
+          schema:
+            type: string
+        - in: query
+          name: filterBrand
+          schema:
+            type: string
+        - in: query
+          name: filterFamily
+          schema:
+            type: string
+        - in: query
+          name: filterStock
+          schema:
+            type: string
+        - in: query
+          name: inStockOnly
+          schema:
+            type: boolean
+          description: When true, return only products whose store stock is > 0.
+        - in: query
+          name: filterCatalogueType
+          schema:
+            type: string
+        - in: query
+          name: filterDescription
+          schema:
+            type: string
+        - in: query
+          name: filterModel
+          schema:
+            type: string
+        - in: query
+          name: filterColor
+          schema:
+            type: string
+        - in: query
+          name: filterColisage
+          schema:
+            type: string
+        - in: query
+          name: filterWeight
+          schema:
+            type: string
+        - in: query
+          name: filterCatalogue1
+          schema:
+            type: string
+        - in: query
+          name: filterCatalogue2
+          schema:
+            type: string
+        - in: query
+          name: filterCatalogue3
+          schema:
+            type: string
+        - in: query
+          name: filterCatalogue4
+          schema:
+            type: string
+        - in: query
+          name: filterCatalogue5
+          schema:
+            type: string
+        - in: query
+          name: filterCatalogue6
+          schema:
+            type: string
+        - in: query
+          name: filterPrice
+          schema:
+            type: string
+        - in: query
+          name: filterPriceGros
+          schema:
+            type: string
+        - in: query
+          name: filterPriceSemiGros
+          schema:
+            type: string
+        - in: query
+          name: filterPriceMin
+          schema:
+            type: string
+        - in: query
+          name: filterBarcode
+          schema:
+            type: string
+        - in: query
+          name: filterReference
+          schema:
+            type: string
+        - in: query
+          name: filterId
+          schema:
+            type: string
+        - in: query
+          name: filterRef
+          schema:
+            type: string
+        - in: query
+          name: filterCreatedAt
+          schema:
+            type: string
+        - in: query
+          name: filterExposed
+          schema:
+            type: string
+        - in: query
+          name: filterActive
+          schema:
+            type: string
+        - in: query
+          name: filterCostPrice
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Products list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProductsResponse"
+    post:
+      operationId: createProduct
+      tags: [products]
+      summary: Create product (admin)
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateProductRequest"
+      responses:
+        "201":
+          description: Product created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Product"
+
+  /products/{id}:
+    get:
+      operationId: getProduct
+      tags: [products]
+      summary: Get product by ID
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Product detail
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProductDetail"
+    put:
+      operationId: updateProduct
+      tags: [products]
+      summary: Update product (admin)
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateProductRequest"
+      responses:
+        "200":
+          description: Updated product
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Product"
+    delete:
+      operationId: deleteProduct
+      tags: [products]
+      summary: Delete product (admin)
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Deleted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+
+  /products/{id}/reviews:
+    post:
+      operationId: createReview
+      tags: [products]
+      summary: Add product review
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateReviewRequest"
+      responses:
+        "201":
+          description: Review created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Review"
+
+  /products/{id}/images:
+    put:
+      operationId: setProductImages
+      tags: [products]
+      summary: Replace a product's image gallery (admin)
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                images:
+                  type: array
+                  items:
+                    $ref: "#/components/schemas/ProductImageInput"
+              required: [images]
+      responses:
+        "200":
+          description: Updated image gallery
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ProductImage"
+
+  # ── Categories ────────────────────────────────────────────────────
+  /categories:
+    get:
+      operationId: getCategories
+      tags: [categories]
+      summary: List categories
+      responses:
+        "200":
+          description: Categories
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Category"
+    post:
+      operationId: createCategory
+      tags: [categories]
+      summary: Create category (admin)
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateCategoryRequest"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Category"
+
+  /categories/{id}:
+    put:
+      operationId: updateCategory
+      tags: [categories]
+      summary: Update category (admin)
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateCategoryRequest"
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Category"
+    delete:
+      operationId: deleteCategory
+      tags: [categories]
+      summary: Delete category (admin)
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Deleted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+
+  # ── Cart ──────────────────────────────────────────────────────────
+  /cart:
+    get:
+      operationId: getCart
+      tags: [cart]
+      summary: Get cart items
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Cart items
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/CartItem"
+    post:
+      operationId: addToCart
+      tags: [cart]
+      summary: Add item to cart
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AddToCartRequest"
+      responses:
+        "201":
+          description: Item added
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+
+  /cart/{productId}:
+    put:
+      operationId: updateCartItem
+      tags: [cart]
+      summary: Update cart item quantity
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: productId
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateCartRequest"
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+    delete:
+      operationId: removeFromCart
+      tags: [cart]
+      summary: Remove item from cart
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: productId
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Removed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+
+  /coupons/validate:
+    post:
+      operationId: validateCoupon
+      tags: [cart]
+      summary: Validate coupon code
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ValidateCouponRequest"
+      responses:
+        "200":
+          description: Coupon valid
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CouponValidationResponse"
+
+  # ── Orders ────────────────────────────────────────────────────────
+  /orders:
+    get:
+      operationId: getMyOrders
+      tags: [orders]
+      summary: Get my orders
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Orders
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Order"
+    post:
+      operationId: createOrder
+      tags: [orders]
+      summary: Place an order
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateOrderRequest"
+      responses:
+        "201":
+          description: Order created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Order"
+
+  /orders/{id}:
+    get:
+      operationId: getOrder
+      tags: [orders]
+      summary: Get order by ID
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Order detail
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OrderDetail"
+
+  # ── Admin ────────────────────────────────────────────────────────
+  /admin/orders:
+    get:
+      operationId: getAdminOrders
+      tags: [admin]
+      summary: Get all orders (admin)
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: query
+          name: channel
+          description: |
+            Filter by sales channel.
+            `online` = web/mobile storefront orders (no seller),
+            `pos` = in-store cashier sales,
+            `all` (default) = both.
+          schema:
+            type: string
+            enum: [all, online, pos]
+            default: all
+      responses:
+        "200":
+          description: All orders
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Order"
+
+  /admin/orders/{id}/status:
+    put:
+      operationId: updateOrderStatus
+      tags: [admin]
+      summary: Update order status (admin)
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateOrderStatusRequest"
+      responses:
+        "200":
+          description: Updated order
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Order"
+
+  /admin/orders/{id}/retours:
+    post:
+      operationId: createBonRetour
+      tags: [admin]
+      summary: Create a Bon Retour for an order
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: integer }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateBonRetourRequest"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BonRetourDetail"
+
+  /admin/retours:
+    get:
+      operationId: getAdminRetours
+      tags: [admin]
+      summary: List all Bons Retour (admin)
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Retours
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/BonRetour"
+    post:
+      operationId: createStandaloneRetour
+      tags: [admin]
+      summary: Create a standalone Bon Retour (no linked order)
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateStandaloneRetourRequest"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BonRetourDetail"
+
+  /admin/retours/{id}:
+    get:
+      operationId: getAdminRetour
+      tags: [admin]
+      summary: Get Bon Retour detail
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: integer }
+      responses:
+        "200":
+          description: Retour detail
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BonRetourDetail"
+
+  /admin/analytics:
+    get:
+      operationId: getAnalytics
+      tags: [admin]
+      summary: Get analytics (admin)
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Analytics data
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Analytics"
+
+  /admin/reports/products:
+    get:
+      operationId: getProductProfitReport
+      tags: [admin]
+      summary: Per-product profit report
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: query
+          name: from
+          schema: { type: string, format: date }
+        - in: query
+          name: to
+          schema: { type: string, format: date }
+      responses:
+        "200":
+          description: Product profit rows
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ProductProfitRow"
+
+  /admin/reports/customers:
+    get:
+      operationId: getCustomerProfitReport
+      tags: [admin]
+      summary: Per-customer revenue and balance report
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: query
+          name: from
+          schema: { type: string, format: date }
+        - in: query
+          name: to
+          schema: { type: string, format: date }
+      responses:
+        "200":
+          description: Customer profit rows
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/CustomerProfitRow"
+
+  /admin/reports/suppliers:
+    get:
+      operationId: getSupplierReport
+      tags: [admin]
+      summary: Per-supplier purchases and payables report
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: query
+          name: from
+          schema: { type: string, format: date }
+        - in: query
+          name: to
+          schema: { type: string, format: date }
+      responses:
+        "200":
+          description: Supplier report rows
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/SupplierReportRow"
+
+  /admin/reports/monthly:
+    get:
+      operationId: getMonthlyReport
+      tags: [admin]
+      summary: Month-by-month revenue vs expenses vs profit comparison
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: query
+          name: from
+          schema: { type: string, format: date }
+        - in: query
+          name: to
+          schema: { type: string, format: date }
+      responses:
+        "200":
+          description: Monthly report rows
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/MonthlyReportRow"
+
+  /admin/low-stock:
+    get:
+      operationId: getLowStock
+      tags: [admin]
+      summary: Get low-stock products (admin)
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: query
+          name: threshold
+          required: false
+          schema:
+            type: integer
+            default: 5
+          description: Stock level below which a product is considered low-stock
+      responses:
+        "200":
+          description: Low-stock products
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Product"
+
+  # ── ERP: Employees ───────────────────────────────────────────────
+  /erp/employees:
+    get:
+      operationId: getEmployees
+      tags: [erp]
+      summary: List employees
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Employees
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Employee"
+    post:
+      operationId: createEmployee
+      tags: [erp]
+      summary: Create employee
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateEmployeeRequest"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Employee"
+
+  /erp/employees/{id}:
+    put:
+      operationId: updateEmployee
+      tags: [erp]
+      summary: Update employee
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateEmployeeRequest"
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Employee"
+    delete:
+      operationId: deleteEmployee
+      tags: [erp]
+      summary: Archive employee
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Archived
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+
+  /erp/attendance:
+    get:
+      operationId: getAttendance
+      tags: [erp]
+      summary: Get attendance records
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: query
+          name: employeeId
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Attendance records
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Attendance"
+    post:
+      operationId: createAttendance
+      tags: [erp]
+      summary: Record attendance
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateAttendanceRequest"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Attendance"
+
+  /erp/leaves:
+    get:
+      operationId: getLeaves
+      tags: [erp]
+      summary: Get leave requests
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Leave requests
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Leave"
+    post:
+      operationId: createLeave
+      tags: [erp]
+      summary: Create leave request
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateLeaveRequest"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Leave"
+
+  /erp/leaves/{id}/status:
+    put:
+      operationId: updateLeaveStatus
+      tags: [erp]
+      summary: Approve/reject leave
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                status:
+                  type: string
+                  enum: [approved, rejected]
+              required: [status]
+      responses:
+        "200":
+          description: Updated leave
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Leave"
+
+  # ── ERP: Suppliers ───────────────────────────────────────────────
+  /erp/suppliers:
+    get:
+      operationId: getSuppliers
+      tags: [erp]
+      summary: List suppliers
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Suppliers
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Supplier"
+    post:
+      operationId: createSupplier
+      tags: [erp]
+      summary: Create supplier
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateSupplierRequest"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Supplier"
+
+  /erp/suppliers/{id}:
+    put:
+      operationId: updateSupplier
+      tags: [erp]
+      summary: Update supplier
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateSupplierRequest"
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Supplier"
+
+  /erp/suppliers/{id}/operations:
+    get:
+      operationId: getSupplierOperations
+      tags: [erp]
+      summary: Get supplier account statement with running balance
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: integer }
+      responses:
+        "200":
+          description: Supplier operations
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SupplierStatementResponse"
+    post:
+      operationId: createSupplierOperation
+      tags: [erp]
+      summary: Record a supplier payment (reduces balance)
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: integer }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateSupplierOperationRequest"
+      responses:
+        "201":
+          description: Created operation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SupplierOperation"
+
+  /erp/purchase-orders:
+    get:
+      operationId: getPurchaseOrders
+      tags: [erp]
+      summary: List purchase orders
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Purchase orders
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/PurchaseOrder"
+    post:
+      operationId: createPurchaseOrder
+      tags: [erp]
+      summary: Create purchase order
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreatePurchaseOrderRequest"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PurchaseOrder"
+
+  /erp/purchase-orders/{id}/items:
+    get:
+      operationId: getPurchaseOrderItems
+      tags: [erp]
+      summary: List items of a purchase order
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Items
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/PurchaseOrderItem"
+
+  /erp/purchase-orders/{id}/receive:
+    put:
+      operationId: receivePurchaseOrder
+      tags: [erp]
+      summary: Mark purchase order as received (updates stock)
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Received
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PurchaseOrder"
+
+  # ── ERP: Inventory ───────────────────────────────────────────────
+  /erp/inventory:
+    get:
+      operationId: getInventoryMovements
+      tags: [erp]
+      summary: Get inventory movements
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Movements
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/InventoryMovement"
+
+  /erp/inventory/stock:
+    get:
+      operationId: getInventoryStock
+      tags: [erp]
+      summary: Get current stock levels for all products
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Product stock levels
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ProductStockLevel"
+
+  /erp/inventory/adjust:
+    post:
+      operationId: adjustInventory
+      tags: [erp]
+      summary: Manual stock adjustment
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AdjustInventoryRequest"
+      responses:
+        "200":
+          description: Adjustment recorded
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InventoryMovement"
+
+  # ── ERP: Accounting ──────────────────────────────────────────────
+  /erp/transactions:
+    get:
+      operationId: getTransactions
+      tags: [erp]
+      summary: List transactions
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Transactions
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Transaction"
+    post:
+      operationId: createTransaction
+      tags: [erp]
+      summary: Create transaction
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateTransactionRequest"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Transaction"
+
+  /erp/dashboard/general:
+    get:
+      operationId: getDashboardGeneral
+      tags: [erp]
+      summary: General dashboard KPIs (Général tab)
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: General KPI stats
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DashboardGeneralStats"
+
+  /erp/accounting-summary:
+    get:
+      operationId: getAccountingSummary
+      tags: [erp]
+      summary: Accounting summary
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Summary
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AccountingSummary"
+
+  # ── ERP: Inter-store Stock Transfers ────────────────────────────
+  /erp/transfers:
+    get:
+      operationId: getErpTransfers
+      tags: [erp]
+      summary: List inter-store transfers (incoming/outgoing for current store)
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: query
+          name: direction
+          schema:
+            type: string
+            enum: [in, out, all]
+        - in: query
+          name: status
+          schema:
+            type: string
+            enum: [requested, approved, rejected, prepared, in_transit, received, cancelled]
+      responses:
+        "200":
+          description: Transfers
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/StockTransferSummary"
+    post:
+      operationId: createErpTransfer
+      tags: [erp]
+      summary: Create a transfer (request or direct send)
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateStockTransferRequest"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StockTransfer"
+
+  /erp/transfers/{id}:
+    get:
+      operationId: getErpTransfer
+      tags: [erp]
+      summary: Get transfer detail with items and event log
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Transfer detail
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StockTransferDetail"
+
+  /erp/transfers/{id}/approve:
+    post:
+      operationId: approveErpTransfer
+      tags: [erp]
+      summary: Approve a requested transfer (destination side)
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/StockTransferActionRequest"
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StockTransfer"
+
+  /erp/transfers/{id}/reject:
+    post:
+      operationId: rejectErpTransfer
+      tags: [erp]
+      summary: Reject a requested transfer (destination side)
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/StockTransferActionRequest"
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StockTransfer"
+
+  /erp/transfers/{id}/prepare:
+    post:
+      operationId: prepareErpTransfer
+      tags: [erp]
+      summary: Mark items prepared & decrement source stock (source side)
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/StockTransferActionRequest"
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StockTransfer"
+
+  /erp/transfers/{id}/ship:
+    post:
+      operationId: shipErpTransfer
+      tags: [erp]
+      summary: Mark prepared transfer as in transit (source side)
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/StockTransferActionRequest"
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StockTransfer"
+
+  /erp/transfers/{id}/receive:
+    post:
+      operationId: receiveErpTransfer
+      tags: [erp]
+      summary: Mark items received & increment destination stock (destination side)
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/StockTransferActionRequest"
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StockTransfer"
+
+  /erp/transfers/{id}/cancel:
+    post:
+      operationId: cancelErpTransfer
+      tags: [erp]
+      summary: Cancel a transfer (source side; restocks if already prepared)
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/StockTransferActionRequest"
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StockTransfer"
+
+  # ── ERP: Caisses (virtual cashboxes) ─────────────────────────────
+  /erp/caisses:
+    get:
+      operationId: getErpCaisses
+      tags: [erp]
+      summary: List caisses visible to current user in current store
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Caisses
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/CaisseSummary"
+
+  /erp/caisses/reports:
+    get:
+      operationId: getErpCaisseReports
+      tags: [erp]
+      summary: Per-staff caisse activity report aggregated over a date range (admin only)
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: query
+          name: from
+          description: "Start of range (inclusive). YYYY-MM-DD or ISO datetime. Defaults to start of today."
+          schema: { type: string }
+        - in: query
+          name: to
+          description: "End of range. If YYYY-MM-DD it is treated as inclusive end-of-day. Defaults to start of tomorrow."
+          schema: { type: string }
+      responses:
+        "200":
+          description: Aggregated activity per staff caisse
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CaisseReportResponse"
+
+  /erp/caisses/{id}:
+    get:
+      operationId: getErpCaisse
+      tags: [erp]
+      summary: Get caisse detail with recent movements
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: integer }
+      responses:
+        "200":
+          description: Caisse detail
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CaisseDetail"
+
+  /erp/caisses/{id}/sessions:
+    get:
+      operationId: getErpCaisseSessions
+      tags: [erp]
+      summary: List sessions (Z-Reports) for a caisse, newest first
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: integer }
+        - in: query
+          name: limit
+          schema: { type: integer, default: 30 }
+      responses:
+        "200":
+          description: Sessions list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/CaisseSessionDetail"
+
+  /erp/caisses/{id}/open-session:
+    post:
+      operationId: openErpCaisseSession
+      tags: [erp]
+      summary: Open a new caisse session (Z-Report shift open)
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: integer }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/OpenCaisseSessionRequest"
+      responses:
+        "201":
+          description: Session opened
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CaisseSession"
+        "409":
+          description: Already has an open session
+
+  /erp/caisses/{id}/close-session:
+    post:
+      operationId: closeErpCaisseSession
+      tags: [erp]
+      summary: Close the active caisse session and produce the Z-Report
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: integer }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CloseCaisseSessionRequest"
+      responses:
+        "200":
+          description: Session closed with Z-Report data
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CaisseSessionDetail"
+        "404":
+          description: No open session found
+        "409":
+          description: No active session or conflict
+
+  /erp/caisse-transfers:
+    get:
+      operationId: getErpCaisseTransfers
+      tags: [erp]
+      summary: List caisse transfers (inbox / outbox / all)
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: query
+          name: box
+          schema:
+            type: string
+            enum: [inbox, outbox, all]
+        - in: query
+          name: status
+          schema:
+            type: string
+            enum: [pending, accepted, rejected, cancelled]
+      responses:
+        "200":
+          description: Transfers
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/CaisseTransferSummary"
+    post:
+      operationId: createErpCaisseTransfer
+      tags: [erp]
+      summary: Initiate a caisse transfer (no balance change until accepted)
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateCaisseTransferRequest"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CaisseTransfer"
+
+  /erp/caisse-transfers/{id}/accept:
+    post:
+      operationId: acceptErpCaisseTransfer
+      tags: [erp]
+      summary: Recipient accepts a pending transfer
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: integer }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+
+  /erp/caisse-transfers/{id}/reject:
+    post:
+      operationId: rejectErpCaisseTransfer
+      tags: [erp]
+      summary: Recipient rejects a pending transfer (funds returned to sender)
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: integer }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+
+  /erp/caisse-transfers/{id}/cancel:
+    post:
+      operationId: cancelErpCaisseTransfer
+      tags: [erp]
+      summary: Sender cancels a still-pending transfer (funds returned)
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: integer }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+
+  /erp/caisse-transfer-recipients:
+    get:
+      operationId: getErpCaisseTransferRecipients
+      tags: [erp]
+      summary: List eligible transfer recipients (other staff/admins) in current store
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: query
+          name: includeMe
+          schema:
+            type: boolean
+          description: >-
+            When true (admin only), include the caller in the list so they can
+            receive a transfer from the main caisse into their own staff caisse.
+      responses:
+        "200":
+          description: Recipients
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/CaisseTransferRecipient"
+
+  /erp/account/me:
+    get:
+      operationId: getErpAccountMe
+      tags: [erp]
+      summary: Current user's account summary (identity, store, caisse balance)
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Account summary
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AccountMe"
+
+  /erp/caisses/admin/deposit:
+    post:
+      operationId: adminDepositErpCaisse
+      tags: [erp]
+      summary: Admin moves cash from a staff caisse into the store's main caisse
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AdminCaisseAmountRequest"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+
+  /erp/caisses/admin/withdraw:
+    post:
+      operationId: adminWithdrawErpCaisse
+      tags: [erp]
+      summary: Admin moves cash from the main caisse into a staff caisse
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AdminCaisseAmountRequest"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+
+  /erp/caisses/admin/adjust:
+    post:
+      operationId: adminAdjustErpCaisse
+      tags: [erp]
+      summary: Admin applies a signed adjustment to a caisse with a required reason
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AdminCaisseAdjustRequest"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+
+  # ── ERP: CRM ─────────────────────────────────────────────────────
+  /erp/customers:
+    get:
+      operationId: getErpCustomers
+      tags: [erp]
+      summary: List customers (CRM)
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: query
+          name: search
+          schema:
+            type: string
+          description: Search by name, email, or phone
+        - in: query
+          name: wilaya
+          schema:
+            type: string
+        - in: query
+          name: classificationId
+          schema:
+            type: integer
+        - in: query
+          name: priceTierId
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Customers
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/CustomerSummary"
+    post:
+      operationId: createErpCustomer
+      tags: [erp]
+      summary: Create a new customer
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateCustomerRequest"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CustomerSummary"
+
+  /erp/customers/{id}:
+    get:
+      operationId: getErpCustomer
+      tags: [erp]
+      summary: Get customer detail
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Customer detail
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CustomerDetail"
+    put:
+      operationId: updateErpCustomer
+      tags: [erp]
+      summary: Update customer basic info and profile (upsert)
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpsertCustomerProfileRequest"
+      responses:
+        "200":
+          description: Updated customer detail
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CustomerDetail"
+
+  /erp/customer-classifications:
+    get:
+      operationId: getErpCustomerClassifications
+      tags: [erp]
+      summary: List customer classifications
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Classifications
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/CustomerClassification"
+    post:
+      operationId: createErpCustomerClassification
+      tags: [erp]
+      summary: Create customer classification
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateCustomerClassificationRequest"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CustomerClassification"
+
+  /erp/customer-classifications/{id}:
+    put:
+      operationId: updateErpCustomerClassification
+      tags: [erp]
+      summary: Update customer classification
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateCustomerClassificationRequest"
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CustomerClassification"
+    delete:
+      operationId: deleteErpCustomerClassification
+      tags: [erp]
+      summary: Delete customer classification
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Deleted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+
+  /erp/price-tiers:
+    get:
+      operationId: getErpPriceTiers
+      tags: [erp]
+      summary: List price tiers
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Price tiers
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/PriceTier"
+    post:
+      operationId: createErpPriceTier
+      tags: [erp]
+      summary: Create price tier
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreatePriceTierRequest"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PriceTier"
+
+  /erp/price-tiers/{id}:
+    put:
+      operationId: updateErpPriceTier
+      tags: [erp]
+      summary: Update price tier
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreatePriceTierRequest"
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PriceTier"
+    delete:
+      operationId: deleteErpPriceTier
+      tags: [erp]
+      summary: Delete price tier
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Deleted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+
+  /erp/staff:
+    get:
+      operationId: getErpStaff
+      tags: [erp]
+      summary: List staff (admins and employees)
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Staff list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/StaffMember"
+    post:
+      operationId: createErpStaff
+      tags: [erp]
+      summary: Create a staff account (admin or employee)
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateStaffRequest"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StaffMember"
+
+  /erp/staff/{id}/stores:
+    put:
+      operationId: setErpStaffStores
+      tags: [erp]
+      summary: Replace the set of stores a staff member can access
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: integer }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                storeIds:
+                  type: array
+                  items: { type: integer }
+              required: [storeIds]
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+
+  /erp/staff/{id}/password:
+    put:
+      operationId: resetErpStaffPassword
+      tags: [erp]
+      summary: Reset a staff member's password
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: integer }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                password:
+                  type: string
+                  minLength: 6
+              required: [password]
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+
+  /erp/staff/{id}:
+    delete:
+      operationId: deleteErpStaff
+      tags: [erp]
+      summary: Delete a staff account
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Deleted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+
+  /erp/customers/{id}/notes:
+    post:
+      operationId: createCustomerNote
+      tags: [erp]
+      summary: Add customer note
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                note:
+                  type: string
+              required: [note]
+      responses:
+        "201":
+          description: Note created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CustomerNote"
+
+  /erp/customers/{id}/operations:
+    get:
+      operationId: getCustomerOperations
+      tags: [erp]
+      summary: List customer operations (versements / remboursements)
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: integer
+        - in: query
+          name: type
+          schema:
+            type: string
+            enum: [all, versement, remboursement, vente_a_terme]
+        - in: query
+          name: from
+          schema:
+            type: string
+            format: date
+        - in: query
+          name: to
+          schema:
+            type: string
+            format: date
+      responses:
+        "200":
+          description: Operations list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/CustomerOperation"
+    post:
+      operationId: createCustomerOperation
+      tags: [erp]
+      summary: Create a versement or remboursement for a customer
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateCustomerOperationRequest"
+      responses:
+        "201":
+          description: Operation created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CustomerOperation"
+
+  /erp/customers/{id}/operations/{opId}:
+    put:
+      operationId: updateCustomerOperation
+      tags: [erp]
+      summary: Update a versement or remboursement
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: integer
+        - in: path
+          name: opId
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateCustomerOperationRequest"
+      responses:
+        "200":
+          description: Operation updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CustomerOperation"
+        "404":
+          description: Operation not found
+    delete:
+      operationId: deleteCustomerOperation
+      tags: [erp]
+      summary: Delete a versement or remboursement and reverse its balance effect
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: integer
+        - in: path
+          name: opId
+          required: true
+          schema:
+            type: integer
+      responses:
+        "204":
+          description: Operation deleted
+        "404":
+          description: Operation not found
+
+  # ── ERP Settings — Product Attributes ────────────────────────────
+
+  /erp/settings/products/families:
+    get:
+      operationId: getErpSettingsProductsFamilies
+      tags: [erp]
+      summary: List product families (admin)
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Product families
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProductAttributeListResponse"
+    post:
+      operationId: createErpSettingsProductsFamily
+      tags: [erp]
+      summary: Create product family (admin)
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateProductAttributeRequest"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProductFamily"
+
+  /erp/settings/products/families/{id}:
+    put:
+      operationId: updateErpSettingsProductsFamily
+      tags: [erp]
+      summary: Update product family (admin)
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: integer }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateProductAttributeRequest"
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProductFamily"
+    delete:
+      operationId: deleteErpSettingsProductsFamily
+      tags: [erp]
+      summary: Delete product family (admin)
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: integer }
+      responses:
+        "200":
+          description: Deleted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+
+  /erp/settings/products/brands:
+    get:
+      operationId: getErpSettingsProductsBrands
+      tags: [erp]
+      summary: List product brands (admin)
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Product brands
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProductAttributeListResponse"
+    post:
+      operationId: createErpSettingsProductsBrand
+      tags: [erp]
+      summary: Create product brand (admin)
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateProductAttributeRequest"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProductBrand"
+
+  /erp/settings/products/brands/{id}:
+    put:
+      operationId: updateErpSettingsProductsBrand
+      tags: [erp]
+      summary: Update product brand (admin)
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: integer }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateProductAttributeRequest"
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProductBrand"
+    delete:
+      operationId: deleteErpSettingsProductsBrand
+      tags: [erp]
+      summary: Delete product brand (admin)
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: integer }
+      responses:
+        "200":
+          description: Deleted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+
+  /erp/settings/products/colors:
+    get:
+      operationId: getErpSettingsProductsColors
+      tags: [erp]
+      summary: List product colors (admin)
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Product colors
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProductColorListResponse"
+    post:
+      operationId: createErpSettingsProductsColor
+      tags: [erp]
+      summary: Create product color (admin)
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateProductColorRequest"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProductColor"
+
+  /erp/settings/products/colors/{id}:
+    put:
+      operationId: updateErpSettingsProductsColor
+      tags: [erp]
+      summary: Update product color (admin)
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: integer }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateProductColorRequest"
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProductColor"
+    delete:
+      operationId: deleteErpSettingsProductsColor
+      tags: [erp]
+      summary: Delete product color (admin)
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: integer }
+      responses:
+        "200":
+          description: Deleted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+
+  /erp/settings/products/types:
+    get:
+      operationId: getErpSettingsProductsTypes
+      tags: [erp]
+      summary: List product types (admin)
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Product types
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProductTypeListResponse"
+    post:
+      operationId: createErpSettingsProductsType
+      tags: [erp]
+      summary: Create product type (admin)
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateProductAttributeRequest"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProductType"
+
+  /erp/settings/products/types/{id}:
+    put:
+      operationId: updateErpSettingsProductsType
+      tags: [erp]
+      summary: Update product type (admin)
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: integer }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateProductAttributeRequest"
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProductType"
+    delete:
+      operationId: deleteErpSettingsProductsType
+      tags: [erp]
+      summary: Delete product type (admin)
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: integer }
+      responses:
+        "200":
+          description: Deleted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+
+  # ── Storage ───────────────────────────────────────────────────────
+  /uploads/{id}:
+    get:
+      operationId: getUploadedImage
+      tags: [storage]
+      summary: Serve a previously uploaded image (public, no auth required)
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Image file
+          content:
+            image/*:
+              schema:
+                type: string
+                format: binary
+        "404":
+          description: Not found
+
+  /uploads:
+    post:
+      operationId: uploadImage
+      tags: [storage]
+      summary: Upload an image file (multipart/form-data, admin auth required)
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                file:
+                  type: string
+                  format: binary
+              required: [file]
+      responses:
+        "201":
+          description: Uploaded image record
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UploadedImage"
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  schemas:
+    HealthStatus:
+      type: object
+      properties:
+        status:
+          type: string
+      required: [status]
+
+    SuccessResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+      required: [success]
+
+    GenerateBarcodeResponse:
+      type: object
+      properties:
+        barcode:
+          type: string
+      required: [barcode]
+
+    # Auth
+    RegisterRequest:
+      type: object
+      properties:
+        name:
+          type: string
+        email:
+          type: string
+        password:
+          type: string
+        preferredLang:
+          type: string
+          enum: [ar, en]
+      required: [name, email, password]
+
+    LoginRequest:
+      type: object
+      properties:
+        email:
+          type: string
+        password:
+          type: string
+      required: [email, password]
+
+    AuthResponse:
+      type: object
+      properties:
+        token:
+          type: string
+        user:
+          $ref: "#/components/schemas/User"
+        stores:
+          type: array
+          items:
+            $ref: "#/components/schemas/Store"
+        currentStoreId:
+          type: integer
+          nullable: true
+      required: [token, user]
+
+    Store:
+      type: object
+      properties:
+        id:
+          type: integer
+        nameAr:
+          type: string
+        nameEn:
+          type: string
+        slug:
+          type: string
+        isActive:
+          type: boolean
+        createdAt:
+          type: string
+        address:
+          type: string
+          nullable: true
+        phone:
+          type: string
+          nullable: true
+        logoUrl:
+          type: string
+          nullable: true
+        tvaRate:
+          type: string
+          nullable: true
+        showTvaByDefault:
+          type: boolean
+          nullable: true
+        nif:
+          type: string
+          nullable: true
+        rc:
+          type: string
+          nullable: true
+        ai:
+          type: string
+          nullable: true
+        defaultComptoirCustomerId:
+          type: integer
+          nullable: true
+      required: [id, nameAr, nameEn, slug]
+
+    SelectStoreRequest:
+      type: object
+      properties:
+        storeId:
+          type: integer
+      required: [storeId]
+
+    SelectStoreResponse:
+      type: object
+      properties:
+        token:
+          type: string
+        currentStoreId:
+          type: integer
+        store:
+          $ref: "#/components/schemas/Store"
+      required: [token, currentStoreId, store]
+
+    CreateStoreRequest:
+      type: object
+      properties:
+        nameAr: { type: string }
+        nameEn: { type: string }
+        slug:   { type: string }
+        isActive: { type: boolean }
+        address: { type: string }
+        phone: { type: string }
+        logoUrl: { type: string }
+        tvaRate: { type: string }
+        showTvaByDefault: { type: boolean }
+        nif: { type: string }
+        rc: { type: string }
+        ai: { type: string }
+      required: [nameAr, nameEn, slug]
+
+    UpdateStoreRequest:
+      type: object
+      properties:
+        nameAr:   { type: string }
+        nameEn:   { type: string }
+        isActive: { type: boolean }
+        address: { type: string, nullable: true }
+        phone: { type: string, nullable: true }
+        logoUrl: { type: string, nullable: true }
+        tvaRate: { type: string }
+        showTvaByDefault: { type: boolean }
+        nif: { type: string, nullable: true }
+        rc: { type: string, nullable: true }
+        ai: { type: string, nullable: true }
+        defaultComptoirCustomerId: { type: integer, nullable: true }
+
+    User:
+      type: object
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        email:
+          type: string
+        role:
+          type: string
+          enum: [customer, admin, employee]
+        preferredLang:
+          type: string
+          enum: [ar, en]
+        stores:
+          type: array
+          items:
+            $ref: "#/components/schemas/Store"
+        currentStoreId:
+          type: integer
+          nullable: true
+      required: [id, name, email, role]
+
+    # Products
+    Product:
+      type: object
+      properties:
+        id:
+          type: integer
+        nameAr:
+          type: string
+        nameEn:
+          type: string
+        descriptionAr:
+          type: string
+        descriptionEn:
+          type: string
+        price:
+          type: string
+        imageUrl:
+          type: string
+          nullable: true
+        stock:
+          type: integer
+        categoryId:
+          type: integer
+          nullable: true
+        rating:
+          type: string
+        reviewCount:
+          type: integer
+        createdAt:
+          type: string
+        reference:
+          type: string
+          nullable: true
+        barcode:
+          type: string
+          nullable: true
+        costPrice:
+          type: string
+          nullable: true
+        catalogueType:
+          type: string
+          nullable: true
+        brand:
+          type: string
+          nullable: true
+        model:
+          type: string
+          nullable: true
+        color:
+          type: string
+          nullable: true
+        colisage:
+          type: integer
+          nullable: true
+        weight:
+          type: string
+          nullable: true
+        priceGros:
+          type: string
+          nullable: true
+        priceSemiGros:
+          type: string
+          nullable: true
+        priceMin:
+          type: string
+          nullable: true
+        catalogue1:
+          type: string
+          nullable: true
+        catalogue2:
+          type: string
+          nullable: true
+        catalogue3:
+          type: string
+          nullable: true
+        catalogue4:
+          type: string
+          nullable: true
+        catalogue5:
+          type: string
+          nullable: true
+        catalogue6:
+          type: string
+          nullable: true
+        isActive:
+          type: boolean
+          nullable: true
+        isExposed:
+          type: boolean
+          nullable: true
+        familyId:
+          type: integer
+          nullable: true
+        brandId:
+          type: integer
+          nullable: true
+        colorId:
+          type: integer
+          nullable: true
+        images:
+          type: array
+          items:
+            $ref: "#/components/schemas/ProductImage"
+        primaryImage:
+          type: string
+          nullable: true
+      required: [id, nameAr, nameEn, price, stock, rating, reviewCount]
+
+    ProductImage:
+      type: object
+      properties:
+        id:
+          type: integer
+        productId:
+          type: integer
+        url:
+          type: string
+        sortOrder:
+          type: integer
+        isPrimary:
+          type: boolean
+        createdAt:
+          type: string
+      required: [id, productId, url, sortOrder, isPrimary]
+
+    ProductImageInput:
+      type: object
+      properties:
+        url:
+          type: string
+        sortOrder:
+          type: integer
+        isPrimary:
+          type: boolean
+      required: [url]
+
+    Review:
+      type: object
+      properties:
+        id:
+          type: integer
+        rating:
+          type: integer
+        comment:
+          type: string
+          nullable: true
+        createdAt:
+          type: string
+        userName:
+          type: string
+          nullable: true
+      required: [id, rating]
+
+    ProductDetail:
+      allOf:
+        - $ref: "#/components/schemas/Product"
+        - type: object
+          properties:
+            reviews:
+              type: array
+              items:
+                $ref: "#/components/schemas/Review"
+
+    ProductsResponse:
+      type: object
+      properties:
+        products:
+          type: array
+          items:
+            $ref: "#/components/schemas/Product"
+        total:
+          type: integer
+        page:
+          type: integer
+        limit:
+          type: integer
+      required: [products, total, page, limit]
+
+    CreateProductRequest:
+      type: object
+      properties:
+        nameAr:
+          type: string
+        nameEn:
+          type: string
+        descriptionAr:
+          type: string
+        descriptionEn:
+          type: string
+        price:
+          type: string
+        imageUrl:
+          type: string
+          nullable: true
+        stock:
+          type: integer
+        categoryId:
+          type: integer
+          nullable: true
+        reference:
+          type: string
+          nullable: true
+        barcode:
+          type: string
+          nullable: true
+        costPrice:
+          type: string
+          nullable: true
+        catalogueType:
+          type: string
+          nullable: true
+        brand:
+          type: string
+          nullable: true
+        model:
+          type: string
+          nullable: true
+        color:
+          type: string
+          nullable: true
+        colisage:
+          type: integer
+          nullable: true
+        weight:
+          type: string
+          nullable: true
+        priceGros:
+          type: string
+          nullable: true
+        priceSemiGros:
+          type: string
+          nullable: true
+        priceMin:
+          type: string
+          nullable: true
+        catalogue1:
+          type: string
+          nullable: true
+        catalogue2:
+          type: string
+          nullable: true
+        catalogue3:
+          type: string
+          nullable: true
+        catalogue4:
+          type: string
+          nullable: true
+        catalogue5:
+          type: string
+          nullable: true
+        catalogue6:
+          type: string
+          nullable: true
+        isActive:
+          type: boolean
+          nullable: true
+        isExposed:
+          type: boolean
+          nullable: true
+        familyId:
+          type: integer
+          nullable: true
+        brandId:
+          type: integer
+          nullable: true
+        colorId:
+          type: integer
+          nullable: true
+        images:
+          type: array
+          items:
+            $ref: "#/components/schemas/ProductImageInput"
+      required: [nameAr, nameEn, price]
+
+    UpdateProductRequest:
+      type: object
+      properties:
+        nameAr:
+          type: string
+        nameEn:
+          type: string
+        descriptionAr:
+          type: string
+        descriptionEn:
+          type: string
+        price:
+          type: string
+        imageUrl:
+          type: string
+          nullable: true
+        stock:
+          type: integer
+        categoryId:
+          type: integer
+          nullable: true
+        reference:
+          type: string
+          nullable: true
+        barcode:
+          type: string
+          nullable: true
+        costPrice:
+          type: string
+          nullable: true
+        catalogueType:
+          type: string
+          nullable: true
+        brand:
+          type: string
+          nullable: true
+        model:
+          type: string
+          nullable: true
+        color:
+          type: string
+          nullable: true
+        colisage:
+          type: integer
+          nullable: true
+        weight:
+          type: string
+          nullable: true
+        priceGros:
+          type: string
+          nullable: true
+        priceSemiGros:
+          type: string
+          nullable: true
+        priceMin:
+          type: string
+          nullable: true
+        catalogue1:
+          type: string
+          nullable: true
+        catalogue2:
+          type: string
+          nullable: true
+        catalogue3:
+          type: string
+          nullable: true
+        catalogue4:
+          type: string
+          nullable: true
+        catalogue5:
+          type: string
+          nullable: true
+        catalogue6:
+          type: string
+          nullable: true
+        isActive:
+          type: boolean
+          nullable: true
+        isExposed:
+          type: boolean
+          nullable: true
+        familyId:
+          type: integer
+          nullable: true
+        brandId:
+          type: integer
+          nullable: true
+        colorId:
+          type: integer
+          nullable: true
+        images:
+          type: array
+          items:
+            $ref: "#/components/schemas/ProductImageInput"
+
+    CreateReviewRequest:
+      type: object
+      properties:
+        rating:
+          type: integer
+          minimum: 1
+          maximum: 5
+        comment:
+          type: string
+      required: [rating]
+
+    # Categories
+    Category:
+      type: object
+      properties:
+        id:
+          type: integer
+        nameAr:
+          type: string
+        nameEn:
+          type: string
+        imageUrl:
+          type: string
+          nullable: true
+        createdAt:
+          type: string
+      required: [id, nameAr, nameEn]
+
+    CreateCategoryRequest:
+      type: object
+      properties:
+        nameAr:
+          type: string
+        nameEn:
+          type: string
+        imageUrl:
+          type: string
+          nullable: true
+      required: [nameAr, nameEn]
+
+    # Cart
+    CartItem:
+      type: object
+      properties:
+        id:
+          type: integer
+        quantity:
+          type: integer
+        product:
+          type: object
+          properties:
+            id:
+              type: integer
+            nameAr:
+              type: string
+            nameEn:
+              type: string
+            price:
+              type: string
+            imageUrl:
+              type: string
+              nullable: true
+            stock:
+              type: integer
+      required: [id, quantity]
+
+    AddToCartRequest:
+      type: object
+      properties:
+        productId:
+          type: integer
+        quantity:
+          type: integer
+          default: 1
+      required: [productId]
+
+    UpdateCartRequest:
+      type: object
+      properties:
+        quantity:
+          type: integer
+      required: [quantity]
+
+    ValidateCouponRequest:
+      type: object
+      properties:
+        code:
+          type: string
+        orderTotal:
+          type: number
+      required: [code, orderTotal]
+
+    CouponValidationResponse:
+      type: object
+      properties:
+        valid:
+          type: boolean
+        code:
+          type: string
+        type:
+          type: string
+          enum: [percent, fixed]
+        value:
+          type: string
+        discount:
+          type: string
+      required: [valid]
+
+    # Orders
+    Order:
+      type: object
+      properties:
+        id:
+          type: integer
+        userId:
+          type: integer
+          nullable: true
+        sellerUserId:
+          type: integer
+          nullable: true
+        sellerUser:
+          $ref: "#/components/schemas/UserLite"
+          nullable: true
+        customerName:
+          type: string
+        customerPhone:
+          type: string
+        customerAddress:
+          type: string
+        status:
+          type: string
+          enum: [pending, processing, shipped, delivered, cancelled]
+        totalAmount:
+          type: string
+        discountAmount:
+          type: string
+        couponCode:
+          type: string
+          nullable: true
+        createdAt:
+          type: string
+        updatedAt:
+          type: string
+      required: [id, customerName, customerPhone, customerAddress, status, totalAmount]
+
+    OrderDetail:
+      allOf:
+        - $ref: "#/components/schemas/Order"
+        - type: object
+          properties:
+            items:
+              type: array
+              items:
+                type: object
+                properties:
+                  quantity:
+                    type: integer
+                  unitPrice:
+                    type: string
+                  product:
+                    type: object
+                    nullable: true
+                    properties:
+                      id:
+                        type: integer
+                      nameAr:
+                        type: string
+                      nameEn:
+                        type: string
+                      imageUrl:
+                        type: string
+                        nullable: true
+                      reference:
+                        type: string
+                        nullable: true
+                      barcode:
+                        type: string
+                        nullable: true
+
+    CreateOrderRequest:
+      type: object
+      properties:
+        customerName:
+          type: string
+        customerPhone:
+          type: string
+        customerAddress:
+          type: string
+        couponCode:
+          type: string
+          nullable: true
+        items:
+          type: array
+          items:
+            type: object
+            properties:
+              productId:
+                type: integer
+              quantity:
+                type: integer
+            required: [productId, quantity]
+        linkedCustomerId:
+          type: integer
+          nullable: true
+        paymentMode:
+          type: string
+          enum: [comptant, terme]
+        versement:
+          type: number
+          minimum: 0
+          nullable: true
+          description: >-
+            Down-payment (versement) collected at the time of an à-terme POS
+            sale. Reduces the receivable registered against the customer's
+            credit balance (receivable = total - versement) and is credited to
+            the seller's caisse as cash actually collected.
+      required: [customerName, customerPhone, customerAddress]
+
+    UpdateOrderStatusRequest:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [pending, processing, shipped, delivered, cancelled]
+      required: [status]
+
+    # Bon Retour
+    BonRetour:
+      type: object
+      properties:
+        id:
+          type: integer
+        storeId:
+          type: integer
+        originalOrderId:
+          type: integer
+          nullable: true
+        clientName:
+          type: string
+          nullable: true
+        clientUserId:
+          type: integer
+          nullable: true
+        retourType:
+          type: string
+          nullable: true
+          description: "remboursement | sans_remboursement | null"
+        reason:
+          type: string
+          nullable: true
+        createdAt:
+          type: string
+        createdByUserId:
+          type: integer
+          nullable: true
+        totalAmount:
+          type: number
+        items:
+          type: array
+          items:
+            type: object
+            properties:
+              productId:
+                type: integer
+              quantity:
+                type: integer
+              unitPrice:
+                type: string
+        originalOrder:
+          $ref: "#/components/schemas/Order"
+          nullable: true
+      required: [id, storeId, createdAt, totalAmount]
+
+    BonRetourDetail:
+      allOf:
+        - $ref: "#/components/schemas/BonRetour"
+        - type: object
+          properties:
+            items:
+              type: array
+              items:
+                type: object
+                properties:
+                  id:
+                    type: integer
+                  productId:
+                    type: integer
+                  quantity:
+                    type: integer
+                  unitPrice:
+                    type: string
+                  product:
+                    type: object
+                    nullable: true
+                    properties:
+                      id:
+                        type: integer
+                      nameAr:
+                        type: string
+                      nameEn:
+                        type: string
+                      reference:
+                        type: string
+                        nullable: true
+                      barcode:
+                        type: string
+                        nullable: true
+
+    CreateBonRetourRequest:
+      type: object
+      properties:
+        reason:
+          type: string
+          nullable: true
+        retourType:
+          type: string
+          nullable: true
+          description: "remboursement | sans_remboursement"
+        items:
+          type: array
+          items:
+            type: object
+            properties:
+              productId:
+                type: integer
+              quantity:
+                type: integer
+            required: [productId, quantity]
+      required: [items]
+
+    CreateStandaloneRetourRequest:
+      type: object
+      properties:
+        clientName:
+          type: string
+          nullable: true
+        clientUserId:
+          type: integer
+          nullable: true
+        reason:
+          type: string
+          nullable: true
+        retourType:
+          type: string
+          nullable: true
+          description: "remboursement | sans_remboursement"
+        items:
+          type: array
+          items:
+            type: object
+            properties:
+              productId:
+                type: integer
+              quantity:
+                type: integer
+            required: [productId, quantity]
+      required: [items]
+
+    Analytics:
+      type: object
+      properties:
+        totalOrders:
+          type: integer
+        totalRevenue:
+          type: number
+        totalExpenses:
+          type: number
+        totalCogs:
+          type: number
+        totalRetours:
+          type: number
+        grossProfit:
+          type: number
+        grossMargin:
+          type: number
+          description: Gross margin percentage (0–100)
+        netProfit:
+          type: number
+        inventoryValue:
+          type: number
+          description: Current stock value (SUM stock × cost_price)
+        customerDebt:
+          type: number
+          description: Total positive balances owed by customers
+        supplierPayables:
+          type: number
+          description: Total positive balances owed to suppliers
+        pendingOrders:
+          type: integer
+        dailySales:
+          type: array
+          items:
+            type: object
+        topProducts:
+          type: array
+          items:
+            type: object
+        lowStock:
+          type: array
+          items:
+            $ref: "#/components/schemas/Product"
+        channelBreakdown:
+          type: object
+          description: |
+            Revenue and order counts split by sales channel for the
+            same window as `dailySales` (last 30 days).
+          properties:
+            online:
+              $ref: "#/components/schemas/ChannelStats"
+            pos:
+              $ref: "#/components/schemas/ChannelStats"
+          required: [online, pos]
+        dailyChannelSales:
+          type: array
+          description: |
+            Per-day revenue split by channel over the last 30 days.
+          items:
+            type: object
+            properties:
+              date:
+                type: string
+              onlineRevenue:
+                type: number
+              posRevenue:
+                type: number
+            required: [date, onlineRevenue, posRevenue]
+      required: [totalOrders, totalRevenue, netProfit, pendingOrders]
+
+    ProductProfitRow:
+      type: object
+      properties:
+        id:
+          type: integer
+        nameEn:
+          type: string
+        nameAr:
+          type: string
+        reference:
+          type: string
+          nullable: true
+        costPrice:
+          type: number
+          nullable: true
+        stock:
+          type: integer
+        totalSold:
+          type: integer
+        totalRevenue:
+          type: number
+        totalCogs:
+          type: number
+        grossProfit:
+          type: number
+        grossMargin:
+          type: number
+      required: [id, nameEn, nameAr, stock, totalSold, totalRevenue, totalCogs, grossProfit, grossMargin]
+
+    CustomerProfitRow:
+      type: object
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        email:
+          type: string
+          nullable: true
+        phone:
+          type: string
+          nullable: true
+        wilaya:
+          type: string
+          nullable: true
+        currentBalance:
+          type: number
+        totalOrders:
+          type: integer
+        totalRevenue:
+          type: number
+        totalCogs:
+          type: number
+        grossProfit:
+          type: number
+        grossMargin:
+          type: number
+      required: [id, name, currentBalance, totalOrders, totalRevenue, totalCogs, grossProfit, grossMargin]
+
+    SupplierReportRow:
+      type: object
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        contactName:
+          type: string
+          nullable: true
+        email:
+          type: string
+          nullable: true
+        phone:
+          type: string
+          nullable: true
+        currentBalance:
+          type: number
+        totalPos:
+          type: integer
+        totalPurchased:
+          type: number
+        totalReceived:
+          type: number
+        distinctProducts:
+          type: integer
+          description: Number of distinct products ordered from this supplier
+        avgUnitCost:
+          type: number
+          description: Weighted average unit cost across all purchase items
+      required: [id, name, currentBalance, totalPos, totalPurchased, totalReceived, distinctProducts, avgUnitCost]
+
+    MonthlyReportRow:
+      type: object
+      properties:
+        month:
+          type: string
+          description: "YYYY-MM"
+        totalRevenue:
+          type: number
+        totalCogs:
+          type: number
+        totalRetours:
+          type: number
+          description: "Σ(bon_retour_items.quantity × unit_price) for the month. Deducted from grossProfit."
+        totalExpenses:
+          type: number
+          description: "Operating expenses only — excludes RETOUR-% transactions to avoid double-counting refunds."
+        grossProfit:
+          type: number
+        netProfit:
+          type: number
+        grossMargin:
+          type: number
+      required: [month, totalRevenue, totalCogs, totalRetours, totalExpenses, grossProfit, netProfit, grossMargin]
+
+    ChannelStats:
+      type: object
+      properties:
+        revenue:
+          type: number
+        orders:
+          type: integer
+      required: [revenue, orders]
+
+    # ERP
+    Employee:
+      type: object
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        email:
+          type: string
+          nullable: true
+        phone:
+          type: string
+          nullable: true
+        position:
+          type: string
+        salary:
+          type: string
+        status:
+          type: string
+          enum: [active, inactive, on_leave]
+        hireDate:
+          type: string
+        createdAt:
+          type: string
+      required: [id, name, position, salary, status, hireDate]
+
+    CreateEmployeeRequest:
+      type: object
+      properties:
+        name:
+          type: string
+        email:
+          type: string
+        phone:
+          type: string
+        position:
+          type: string
+        salary:
+          type: string
+        hireDate:
+          type: string
+      required: [name, position, salary, hireDate]
+
+    Attendance:
+      type: object
+      properties:
+        id:
+          type: integer
+        employeeId:
+          type: integer
+        date:
+          type: string
+        status:
+          type: string
+          enum: [present, absent, late, half_day]
+        checkIn:
+          type: string
+          nullable: true
+        checkOut:
+          type: string
+          nullable: true
+        notes:
+          type: string
+          nullable: true
+      required: [id, employeeId, date, status]
+
+    CreateAttendanceRequest:
+      type: object
+      properties:
+        employeeId:
+          type: integer
+        date:
+          type: string
+        status:
+          type: string
+          enum: [present, absent, late, half_day]
+        checkIn:
+          type: string
+        checkOut:
+          type: string
+        notes:
+          type: string
+      required: [employeeId, date, status]
+
+    Leave:
+      type: object
+      properties:
+        id:
+          type: integer
+        employeeId:
+          type: integer
+        type:
+          type: string
+          enum: [annual, sick, unpaid, other]
+        startDate:
+          type: string
+        endDate:
+          type: string
+        reason:
+          type: string
+          nullable: true
+        status:
+          type: string
+          enum: [pending, approved, rejected]
+        createdAt:
+          type: string
+      required: [id, employeeId, type, startDate, endDate, status]
+
+    CreateLeaveRequest:
+      type: object
+      properties:
+        employeeId:
+          type: integer
+        type:
+          type: string
+          enum: [annual, sick, unpaid, other]
+        startDate:
+          type: string
+        endDate:
+          type: string
+        reason:
+          type: string
+      required: [employeeId, type, startDate, endDate]
+
+    Supplier:
+      type: object
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        contactName:
+          type: string
+          nullable: true
+        email:
+          type: string
+          nullable: true
+        phone:
+          type: string
+          nullable: true
+        address:
+          type: string
+          nullable: true
+        notes:
+          type: string
+          nullable: true
+        currentBalance:
+          type: string
+          description: "Running debt balance (positive = owe supplier)"
+        createdAt:
+          type: string
+      required: [id, name, currentBalance]
+
+    SupplierOperation:
+      type: object
+      properties:
+        id:
+          type: integer
+        supplierId:
+          type: integer
+        storeId:
+          type: integer
+        type:
+          type: string
+          enum: [purchase, payment]
+        amount:
+          type: string
+        date:
+          type: string
+        reference:
+          type: string
+          nullable: true
+        note:
+          type: string
+          nullable: true
+        poId:
+          type: integer
+          nullable: true
+        caisseId:
+          type: integer
+          nullable: true
+        runningBalance:
+          type: string
+          description: "Balance after this operation"
+        createdAt:
+          type: string
+      required: [id, supplierId, storeId, type, amount, date]
+
+    SupplierStatementResponse:
+      type: object
+      properties:
+        supplier:
+          $ref: "#/components/schemas/Supplier"
+        operations:
+          type: array
+          items:
+            $ref: "#/components/schemas/SupplierOperation"
+      required: [supplier, operations]
+
+    CreateSupplierOperationRequest:
+      type: object
+      properties:
+        amount:
+          type: number
+        date:
+          type: string
+        reference:
+          type: string
+        note:
+          type: string
+      required: [amount, date]
+
+    CreateSupplierRequest:
+      type: object
+      properties:
+        name:
+          type: string
+        contactName:
+          type: string
+        email:
+          type: string
+        phone:
+          type: string
+        address:
+          type: string
+        notes:
+          type: string
+      required: [name]
+
+    PurchaseOrder:
+      type: object
+      properties:
+        id:
+          type: integer
+        supplierId:
+          type: integer
+        status:
+          type: string
+          enum: [pending, received, cancelled]
+        totalAmount:
+          type: string
+        notes:
+          type: string
+          nullable: true
+        createdAt:
+          type: string
+        receivedAt:
+          type: string
+          nullable: true
+      required: [id, supplierId, status, totalAmount]
+
+    PurchaseOrderItem:
+      type: object
+      properties:
+        id:
+          type: integer
+        purchaseOrderId:
+          type: integer
+        productId:
+          type: integer
+        quantity:
+          type: integer
+        unitCost:
+          type: string
+        productNameEn:
+          type: string
+          nullable: true
+        productNameAr:
+          type: string
+          nullable: true
+      required: [id, purchaseOrderId, productId, quantity, unitCost]
+
+    CreatePurchaseOrderRequest:
+      type: object
+      properties:
+        supplierId:
+          type: integer
+        notes:
+          type: string
+        items:
+          type: array
+          items:
+            type: object
+            properties:
+              productId:
+                type: integer
+              quantity:
+                type: integer
+              unitCost:
+                type: number
+            required: [productId, quantity, unitCost]
+      required: [supplierId, items]
+
+    InventoryMovement:
+      type: object
+      properties:
+        id:
+          type: integer
+        productId:
+          type: integer
+        type:
+          type: string
+          enum: [in, out, adjustment]
+        quantity:
+          type: integer
+        reason:
+          type: string
+          nullable: true
+        reference:
+          type: string
+          nullable: true
+        createdAt:
+          type: string
+        product:
+          type: object
+          nullable: true
+          properties:
+            id:
+              type: integer
+            nameAr:
+              type: string
+            nameEn:
+              type: string
+      required: [id, type, quantity]
+
+    ProductStockLevel:
+      type: object
+      properties:
+        id:
+          type: integer
+        nameEn:
+          type: string
+        nameAr:
+          type: string
+        stock:
+          type: integer
+        status:
+          type: string
+          enum: [ok, low, critical]
+      required: [id, nameEn, nameAr, stock, status]
+
+    AdjustInventoryRequest:
+      type: object
+      properties:
+        productId:
+          type: integer
+        quantity:
+          type: integer
+        reason:
+          type: string
+      required: [productId, quantity, reason]
+
+    StoreLite:
+      type: object
+      properties:
+        id:
+          type: integer
+        nameEn:
+          type: string
+        nameAr:
+          type: string
+      required: [id, nameEn, nameAr]
+
+    StockTransfer:
+      type: object
+      properties:
+        id:
+          type: integer
+        sourceStoreId:
+          type: integer
+        destinationStoreId:
+          type: integer
+        initiatorUserId:
+          type: integer
+        initiatorSide:
+          type: string
+        status:
+          type: string
+          enum: [requested, approved, rejected, prepared, in_transit, received, cancelled]
+        notes:
+          type: string
+          nullable: true
+        createdAt:
+          type: string
+        approvedAt:
+          type: string
+          nullable: true
+        rejectedAt:
+          type: string
+          nullable: true
+        preparedAt:
+          type: string
+          nullable: true
+        shippedAt:
+          type: string
+          nullable: true
+        receivedAt:
+          type: string
+          nullable: true
+        cancelledAt:
+          type: string
+          nullable: true
+      required: [id, sourceStoreId, destinationStoreId, status, createdAt]
+
+    UserLite:
+      type: object
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+          nullable: true
+        email:
+          type: string
+          nullable: true
+      required: [id]
+
+    StockTransferSummary:
+      allOf:
+        - $ref: "#/components/schemas/StockTransfer"
+        - type: object
+          properties:
+            sourceStore:
+              $ref: "#/components/schemas/StoreLite"
+            destinationStore:
+              $ref: "#/components/schemas/StoreLite"
+            initiatorUser:
+              $ref: "#/components/schemas/UserLite"
+              nullable: true
+            itemCount:
+              type: integer
+            totalQuantity:
+              type: integer
+
+    StockTransferItem:
+      type: object
+      properties:
+        id:
+          type: integer
+        transferId:
+          type: integer
+        sourceProductId:
+          type: integer
+        destinationProductId:
+          type: integer
+          nullable: true
+        quantity:
+          type: integer
+        matchKey:
+          type: string
+        sourceProductNameEn:
+          type: string
+          nullable: true
+        sourceProductNameAr:
+          type: string
+          nullable: true
+        sourceProductStock:
+          type: integer
+          nullable: true
+      required: [id, transferId, sourceProductId, quantity, matchKey]
+
+    StockTransferEvent:
+      type: object
+      properties:
+        id:
+          type: integer
+        transferId:
+          type: integer
+        status:
+          type: string
+        actorUserId:
+          type: integer
+        actorStoreId:
+          type: integer
+        actorUser:
+          $ref: "#/components/schemas/UserLite"
+          nullable: true
+        notes:
+          type: string
+          nullable: true
+        createdAt:
+          type: string
+      required: [id, transferId, status, actorUserId, actorStoreId, createdAt]
+
+    StockTransferDetail:
+      allOf:
+        - $ref: "#/components/schemas/StockTransfer"
+        - type: object
+          properties:
+            sourceStore:
+              $ref: "#/components/schemas/StoreLite"
+            destinationStore:
+              $ref: "#/components/schemas/StoreLite"
+            initiatorUser:
+              $ref: "#/components/schemas/UserLite"
+              nullable: true
+            items:
+              type: array
+              items:
+                $ref: "#/components/schemas/StockTransferItem"
+            events:
+              type: array
+              items:
+                $ref: "#/components/schemas/StockTransferEvent"
+
+    CreateStockTransferRequest:
+      type: object
+      description: |
+        Provide exactly one of `destinationStoreId` (when current store is the source — push request)
+        or `sourceStoreId` (when current store is the destination — pull request).
+      properties:
+        destinationStoreId:
+          type: integer
+        sourceStoreId:
+          type: integer
+        notes:
+          type: string
+        mode:
+          type: string
+          enum: [request, send]
+        items:
+          type: array
+          items:
+            type: object
+            properties:
+              sourceProductId:
+                type: integer
+              quantity:
+                type: integer
+            required: [sourceProductId, quantity]
+      required: [items]
+
+    StockTransferActionRequest:
+      type: object
+      properties:
+        notes:
+          type: string
+
+    Caisse:
+      type: object
+      properties:
+        id: { type: integer }
+        storeId: { type: integer }
+        ownerUserId: { type: integer, nullable: true }
+        kind:
+          type: string
+          enum: [staff, main]
+        balance: { type: string }
+        createdAt: { type: string }
+      required: [id, storeId, kind, balance, createdAt]
+
+    CaisseSummary:
+      allOf:
+        - $ref: "#/components/schemas/Caisse"
+        - type: object
+          properties:
+            owner:
+              $ref: "#/components/schemas/UserLite"
+              nullable: true
+
+    CaisseMovement:
+      type: object
+      properties:
+        id: { type: integer }
+        caisseId: { type: integer }
+        type:
+          type: string
+          enum: [credit, debit]
+        amount: { type: string }
+        reason:
+          type: string
+          enum: [sale, transfer_in, transfer_out, transfer_hold, transfer_refund, admin_deposit, admin_withdraw, adjustment]
+        counterpartyCaisseId: { type: integer, nullable: true }
+        orderId: { type: integer, nullable: true }
+        caisseTransferId: { type: integer, nullable: true }
+        actorUserId: { type: integer }
+        notes: { type: string, nullable: true }
+        createdAt: { type: string }
+        actorUser:
+          $ref: "#/components/schemas/UserLite"
+          nullable: true
+        counterparty:
+          type: object
+          nullable: true
+          properties:
+            id: { type: integer }
+            kind: { type: string }
+            ownerUserId: { type: integer, nullable: true }
+            owner:
+              $ref: "#/components/schemas/UserLite"
+              nullable: true
+      required: [id, caisseId, type, amount, reason, actorUserId, createdAt]
+
+    CaisseDetail:
+      allOf:
+        - $ref: "#/components/schemas/Caisse"
+        - type: object
+          properties:
+            owner:
+              $ref: "#/components/schemas/UserLite"
+              nullable: true
+            movements:
+              type: array
+              items:
+                $ref: "#/components/schemas/CaisseMovement"
+
+    CaisseTransfer:
+      type: object
+      properties:
+        id: { type: integer }
+        storeId: { type: integer }
+        senderCaisseId: { type: integer }
+        recipientCaisseId: { type: integer }
+        amount: { type: string }
+        status:
+          type: string
+          enum: [pending, accepted, rejected, cancelled]
+        notes: { type: string, nullable: true }
+        requestedByUserId: { type: integer }
+        decidedByUserId: { type: integer, nullable: true }
+        createdAt: { type: string }
+        decidedAt: { type: string, nullable: true }
+      required: [id, storeId, senderCaisseId, recipientCaisseId, amount, status, requestedByUserId, createdAt]
+
+    CaisseTransferSummary:
+      allOf:
+        - $ref: "#/components/schemas/CaisseTransfer"
+        - type: object
+          properties:
+            senderCaisse:
+              type: object
+              nullable: true
+              properties:
+                id: { type: integer }
+                kind: { type: string }
+                ownerUserId: { type: integer, nullable: true }
+                owner:
+                  $ref: "#/components/schemas/UserLite"
+                  nullable: true
+            recipientCaisse:
+              type: object
+              nullable: true
+              properties:
+                id: { type: integer }
+                kind: { type: string }
+                ownerUserId: { type: integer, nullable: true }
+                owner:
+                  $ref: "#/components/schemas/UserLite"
+                  nullable: true
+            requestedByUser:
+              $ref: "#/components/schemas/UserLite"
+              nullable: true
+            decidedByUser:
+              $ref: "#/components/schemas/UserLite"
+              nullable: true
+
+    CreateCaisseTransferRequest:
+      type: object
+      description: >-
+        Provide exactly one destination: recipientUserId (another user's
+        staff caisse) OR recipientCaisseId (the store's main caisse).
+        Optionally provide senderCaisseId to send from the main caisse
+        (admin only).
+      properties:
+        senderCaisseId: { type: integer }
+        recipientUserId: { type: integer }
+        recipientCaisseId: { type: integer }
+        amount: { type: string }
+        notes: { type: string }
+      required: [amount]
+
+    AccountMe:
+      type: object
+      properties:
+        user:
+          type: object
+          properties:
+            id: { type: integer }
+            name: { type: string, nullable: true }
+            email: { type: string }
+            role: { type: string, enum: [admin, employee] }
+          required: [id, email, role]
+        store:
+          type: object
+          properties:
+            id: { type: integer }
+            nameEn: { type: string }
+            nameAr: { type: string }
+          required: [id, nameEn, nameAr]
+        caisse:
+          $ref: "#/components/schemas/CaisseSummary"
+        mainCaisseId: { type: integer }
+      required: [user, store, caisse, mainCaisseId]
+
+    CaisseTransferRecipient:
+      type: object
+      properties:
+        id: { type: integer }
+        name: { type: string, nullable: true }
+        email: { type: string }
+        role: { type: string, enum: [admin, employee] }
+      required: [id, email, role]
+
+    CaisseSession:
+      type: object
+      properties:
+        id: { type: integer }
+        caisseId: { type: integer }
+        storeId: { type: integer }
+        status:
+          type: string
+          enum: [open, closed]
+        openedAt: { type: string }
+        closedAt: { type: string, nullable: true }
+        openingBalance: { type: string }
+        theoreticalClosingBalance: { type: string, nullable: true }
+        actualClosingBalance: { type: string, nullable: true }
+        ecart: { type: string, nullable: true }
+        openedByUserId: { type: integer }
+        closedByUserId: { type: integer, nullable: true }
+        notes: { type: string, nullable: true }
+        createdAt: { type: string }
+      required: [id, caisseId, storeId, status, openedAt, openingBalance, openedByUserId, createdAt]
+
+    CaisseSessionMovementSummary:
+      type: object
+      properties:
+        totalSales: { type: string }
+        transfersIn: { type: string }
+        transfersOut: { type: string }
+        transfersHeld: { type: string }
+        transfersRefunded: { type: string }
+        adminDeposits: { type: string }
+        adminWithdrawals: { type: string }
+        adjustmentsCredit: { type: string }
+        adjustmentsDebit: { type: string }
+        netMovement: { type: string }
+        movementCount: { type: integer }
+      required: [totalSales, transfersIn, transfersOut, transfersHeld, transfersRefunded, adminDeposits, adminWithdrawals, adjustmentsCredit, adjustmentsDebit, netMovement, movementCount]
+
+    CaisseSessionDetail:
+      allOf:
+        - $ref: "#/components/schemas/CaisseSession"
+        - type: object
+          properties:
+            openedByUser:
+              $ref: "#/components/schemas/UserLite"
+              nullable: true
+            closedByUser:
+              $ref: "#/components/schemas/UserLite"
+              nullable: true
+            movementSummary:
+              $ref: "#/components/schemas/CaisseSessionMovementSummary"
+              nullable: true
+
+    OpenCaisseSessionRequest:
+      type: object
+      properties:
+        openingBalance: { type: string }
+        notes: { type: string }
+      required: [openingBalance]
+
+    CloseCaisseSessionRequest:
+      type: object
+      properties:
+        actualClosingBalance: { type: string }
+        notes: { type: string }
+      required: [actualClosingBalance]
+
+    AdminCaisseAmountRequest:
+      type: object
+      properties:
+        caisseId: { type: integer }
+        amount: { type: string }
+        notes: { type: string }
+      required: [caisseId, amount]
+
+    CaisseReportRow:
+      type: object
+      properties:
+        caisseId: { type: integer }
+        ownerUserId: { type: integer, nullable: true }
+        kind: { type: string }
+        currentBalance: { type: string }
+        totalSales: { type: string }
+        transfersIn: { type: string }
+        transfersOut: { type: string }
+        transfersHeld: { type: string }
+        transfersRefunded: { type: string }
+        adminDeposits: { type: string }
+        adminWithdrawals: { type: string }
+        adjustmentsCredit: { type: string }
+        adjustmentsDebit: { type: string }
+        netMovement: { type: string }
+        movementCount: { type: integer }
+        owner:
+          $ref: "#/components/schemas/UserLite"
+          nullable: true
+      required:
+        [caisseId, kind, currentBalance, totalSales, transfersIn, transfersOut,
+         transfersHeld, transfersRefunded, adminDeposits, adminWithdrawals,
+         adjustmentsCredit, adjustmentsDebit, netMovement, movementCount]
+
+    CaisseReportTotals:
+      type: object
+      properties:
+        totalSales: { type: string }
+        transfersIn: { type: string }
+        transfersOut: { type: string }
+        transfersHeld: { type: string }
+        transfersRefunded: { type: string }
+        adminDeposits: { type: string }
+        adminWithdrawals: { type: string }
+        adjustmentsCredit: { type: string }
+        adjustmentsDebit: { type: string }
+        netMovement: { type: string }
+        movementCount: { type: integer }
+      required:
+        [totalSales, transfersIn, transfersOut, transfersHeld, transfersRefunded,
+         adminDeposits, adminWithdrawals, adjustmentsCredit, adjustmentsDebit,
+         netMovement, movementCount]
+
+    CaisseReportResponse:
+      type: object
+      properties:
+        from: { type: string }
+        to: { type: string }
+        rows:
+          type: array
+          items:
+            $ref: "#/components/schemas/CaisseReportRow"
+        totals:
+          $ref: "#/components/schemas/CaisseReportTotals"
+      required: [from, to, rows, totals]
+
+    AdminCaisseAdjustRequest:
+      type: object
+      properties:
+        caisseId: { type: integer }
+        delta: { type: string, description: "Signed amount; positive=credit, negative=debit" }
+        notes: { type: string, description: "Required reason" }
+      required: [caisseId, delta, notes]
+
+    Transaction:
+      type: object
+      properties:
+        id:
+          type: integer
+        type:
+          type: string
+          enum: [income, expense]
+        category:
+          type: string
+          enum: [sales, purchase, salary, rent, utilities, marketing, other]
+        amount:
+          type: string
+        description:
+          type: string
+        date:
+          type: string
+        reference:
+          type: string
+          nullable: true
+        createdAt:
+          type: string
+      required: [id, type, category, amount, description, date]
+
+    CreateTransactionRequest:
+      type: object
+      properties:
+        type:
+          type: string
+          enum: [income, expense]
+        category:
+          type: string
+          enum: [sales, purchase, salary, rent, utilities, marketing, other]
+        amount:
+          type: string
+        description:
+          type: string
+        date:
+          type: string
+        reference:
+          type: string
+      required: [type, category, amount, description, date]
+
+    DashboardGeneralStats:
+      type: object
+      description: KPIs for the Général dashboard tab. New fields are added here as the tab grows.
+      properties:
+        stockValue:
+          type: number
+          description: "Σ (stock × costPrice) — current inventory value at cost price"
+      required: [stockValue]
+
+    AccountingSummary:
+      type: object
+      properties:
+        totalIncome:
+          type: number
+        totalExpenses:
+          type: number
+        netBalance:
+          type: number
+          description: "Ledger balance = Σ(income) − Σ(expense). NOT net profit — this is the accounting Grand Livre balance."
+        monthly:
+          type: array
+          items:
+            type: object
+      required: [totalIncome, totalExpenses, netBalance]
+
+    CustomerClassification:
+      type: object
+      properties:
+        id:
+          type: integer
+        labelFr:
+          type: string
+        labelAr:
+          type: string
+        color:
+          type: string
+          nullable: true
+        sortOrder:
+          type: integer
+      required: [id, labelFr, labelAr, sortOrder]
+
+    CreateCustomerClassificationRequest:
+      type: object
+      properties:
+        labelFr:
+          type: string
+        labelAr:
+          type: string
+        color:
+          type: string
+          nullable: true
+        sortOrder:
+          type: integer
+      required: [labelFr, labelAr]
+
+    PriceTier:
+      type: object
+      properties:
+        id:
+          type: integer
+        labelFr:
+          type: string
+        labelAr:
+          type: string
+        code:
+          type: string
+        sortOrder:
+          type: integer
+      required: [id, labelFr, labelAr, code, sortOrder]
+
+    CreatePriceTierRequest:
+      type: object
+      properties:
+        labelFr:
+          type: string
+        labelAr:
+          type: string
+        code:
+          type: string
+        sortOrder:
+          type: integer
+      required: [labelFr, labelAr, code]
+
+    CustomerProfile:
+      type: object
+      properties:
+        contactType:
+          type: string
+          enum: [customer, customer_supplier]
+        wilaya:
+          type: string
+          nullable: true
+        commune:
+          type: string
+          nullable: true
+        gps:
+          type: string
+          nullable: true
+        classificationId:
+          type: integer
+          nullable: true
+        classification:
+          $ref: "#/components/schemas/CustomerClassification"
+          nullable: true
+        priceTierId:
+          type: integer
+          nullable: true
+        priceTier:
+          $ref: "#/components/schemas/PriceTier"
+          nullable: true
+        accountNumber:
+          type: string
+          nullable: true
+        creditLimit:
+          type: number
+          nullable: true
+        minBalanceAlert:
+          type: number
+          nullable: true
+        currentBalance:
+          type: number
+        foreignCurrency:
+          type: boolean
+        rc:
+          type: string
+          nullable: true
+        nif:
+          type: string
+          nullable: true
+        ai:
+          type: string
+          nullable: true
+        nis:
+          type: string
+          nullable: true
+      required: [contactType, currentBalance, foreignCurrency]
+
+    UpsertCustomerProfileRequest:
+      type: object
+      properties:
+        name:
+          type: string
+        phone:
+          type: string
+          nullable: true
+        address:
+          type: string
+          nullable: true
+        city:
+          type: string
+          nullable: true
+        contactType:
+          type: string
+          enum: [customer, customer_supplier]
+        wilaya:
+          type: string
+          nullable: true
+        commune:
+          type: string
+          nullable: true
+        gps:
+          type: string
+          nullable: true
+        classificationId:
+          type: integer
+          nullable: true
+        priceTierId:
+          type: integer
+          nullable: true
+        accountNumber:
+          type: string
+          nullable: true
+        creditLimit:
+          type: number
+          nullable: true
+        minBalanceAlert:
+          type: number
+          nullable: true
+        currentBalance:
+          type: number
+          nullable: true
+        foreignCurrency:
+          type: boolean
+          nullable: true
+        rc:
+          type: string
+          nullable: true
+        nif:
+          type: string
+          nullable: true
+        ai:
+          type: string
+          nullable: true
+        nis:
+          type: string
+          nullable: true
+
+    CustomerSummary:
+      type: object
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        email:
+          type: string
+        phone:
+          type: string
+          nullable: true
+        address:
+          type: string
+          nullable: true
+        city:
+          type: string
+          nullable: true
+        wilaya:
+          type: string
+          nullable: true
+        created_at:
+          type: string
+        total_orders:
+          type: integer
+        total_spent:
+          type: number
+        classification:
+          $ref: "#/components/schemas/CustomerClassification"
+          nullable: true
+        priceTier:
+          $ref: "#/components/schemas/PriceTier"
+          nullable: true
+      required: [id, name, email]
+
+    StaffMember:
+      type: object
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        email:
+          type: string
+        role:
+          type: string
+          enum: [admin, employee]
+        phone:
+          type: string
+          nullable: true
+        created_at:
+          type: string
+        stores:
+          type: array
+          items:
+            $ref: "#/components/schemas/Store"
+      required: [id, name, email, role]
+
+    CreateStaffRequest:
+      type: object
+      properties:
+        name:
+          type: string
+        email:
+          type: string
+        password:
+          type: string
+        storeIds:
+          type: array
+          items:
+            type: integer
+        role:
+          type: string
+          enum: [admin, employee]
+        phone:
+          type: string
+      required: [name, email, password]
+
+    CreateCustomerRequest:
+      type: object
+      properties:
+        name:
+          type: string
+        email:
+          type: string
+        password:
+          type: string
+        preferredLang:
+          type: string
+          enum: [ar, en]
+        phone:
+          type: string
+        address:
+          type: string
+        city:
+          type: string
+        notes:
+          type: string
+        contactType:
+          type: string
+          enum: [customer, customer_supplier]
+        wilaya:
+          type: string
+          nullable: true
+        commune:
+          type: string
+          nullable: true
+        classificationId:
+          type: integer
+          nullable: true
+        priceTierId:
+          type: integer
+          nullable: true
+        gps:
+          type: string
+          nullable: true
+        accountNumber:
+          type: string
+          nullable: true
+        creditLimit:
+          type: number
+          nullable: true
+        minBalanceAlert:
+          type: number
+          nullable: true
+        currentBalance:
+          type: number
+          nullable: true
+        foreignCurrency:
+          type: boolean
+          nullable: true
+        rc:
+          type: string
+          nullable: true
+        nif:
+          type: string
+          nullable: true
+        ai:
+          type: string
+          nullable: true
+        nis:
+          type: string
+          nullable: true
+      required: [name, email]
+
+    CustomerDetail:
+      type: object
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        email:
+          type: string
+        phone:
+          type: string
+          nullable: true
+        address:
+          type: string
+          nullable: true
+        city:
+          type: string
+          nullable: true
+        created_at:
+          type: string
+        profile:
+          $ref: "#/components/schemas/CustomerProfile"
+          nullable: true
+        orders:
+          type: array
+          items:
+            $ref: "#/components/schemas/Order"
+        notes:
+          type: array
+          items:
+            $ref: "#/components/schemas/CustomerNote"
+      required: [id, name, email]
+
+    CustomerNote:
+      type: object
+      properties:
+        id:
+          type: integer
+        userId:
+          type: integer
+        note:
+          type: string
+        createdAt:
+          type: string
+      required: [id, userId, note]
+
+    CustomerOperation:
+      type: object
+      properties:
+        id:
+          type: integer
+        customerId:
+          type: integer
+        storeId:
+          type: integer
+        type:
+          type: string
+          enum: [versement, remboursement, vente_a_terme, avoir_retour]
+        amount:
+          type: string
+        date:
+          type: string
+          format: date
+        reference:
+          type: string
+          nullable: true
+        note:
+          type: string
+          nullable: true
+        caisseId:
+          type: integer
+          nullable: true
+        createdBy:
+          type: integer
+          nullable: true
+        createdAt:
+          type: string
+      required: [id, customerId, storeId, type, amount, date, createdAt]
+
+    CreateCustomerOperationRequest:
+      type: object
+      properties:
+        type:
+          type: string
+          enum: [versement, remboursement, vente_a_terme]
+        amount:
+          type: number
+        date:
+          type: string
+          format: date
+        reference:
+          type: string
+          nullable: true
+        note:
+          type: string
+          nullable: true
+      required: [type, amount, date]
+
+    UpdateCustomerOperationRequest:
+      type: object
+      properties:
+        type:
+          type: string
+          enum: [versement, remboursement, vente_a_terme]
+        amount:
+          type: number
+        date:
+          type: string
+          format: date
+        reference:
+          type: string
+          nullable: true
+        note:
+          type: string
+          nullable: true
+      required: [type, amount, date]
+
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: string
+      required: [error]
+
+    # Storage
+    UploadedImage:
+      type: object
+      properties:
+        id:
+          type: integer
+        url:
+          type: string
+        objectPath:
+          type: string
+        contentType:
+          type: string
+        size:
+          type: integer
+      required: [id, url, objectPath, contentType, size]
+
+    # ── Product Attribute Schemas ────────────────────────────────────
+    ProductType:
+      type: object
+      properties:
+        id:
+          type: integer
+        nameFr:
+          type: string
+        nameAr:
+          type: string
+        createdAt:
+          type: string
+      required: [id, nameFr, nameAr]
+
+    ProductTypeListResponse:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/ProductType"
+      required: [items]
+
+    ProductFamily:
+      type: object
+      properties:
+        id:
+          type: integer
+        storeId:
+          type: integer
+        nameAr:
+          type: string
+        nameFr:
+          type: string
+        createdAt:
+          type: string
+      required: [id, storeId, nameAr, nameFr]
+
+    ProductBrand:
+      type: object
+      properties:
+        id:
+          type: integer
+        storeId:
+          type: integer
+        nameAr:
+          type: string
+        nameFr:
+          type: string
+        createdAt:
+          type: string
+      required: [id, storeId, nameAr, nameFr]
+
+    ProductColor:
+      type: object
+      properties:
+        id:
+          type: integer
+        storeId:
+          type: integer
+        nameAr:
+          type: string
+        nameFr:
+          type: string
+        hexCode:
+          type: string
+          nullable: true
+        createdAt:
+          type: string
+      required: [id, storeId, nameAr, nameFr]
+
+    ProductAttributeListResponse:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            type: object
+            properties:
+              id:
+                type: integer
+              storeId:
+                type: integer
+              nameAr:
+                type: string
+              nameFr:
+                type: string
+              createdAt:
+                type: string
+            required: [id, storeId, nameAr, nameFr]
+      required: [items]
+
+    ProductColorListResponse:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/ProductColor"
+      required: [items]
+
+    CreateProductAttributeRequest:
+      type: object
+      properties:
+        nameAr:
+          type: string
+        nameFr:
+          type: string
+      required: [nameAr, nameFr]
+
+    CreateProductColorRequest:
+      type: object
+      properties:
+        nameAr:
+          type: string
+        nameFr:
+          type: string
+        hexCode:
+          type: string
+          nullable: true
+      required: [nameAr, nameFr]
+

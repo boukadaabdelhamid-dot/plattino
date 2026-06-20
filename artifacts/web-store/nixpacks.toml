@@ -1,0 +1,8 @@
+[phases.install]
+cmds = ["pnpm install --no-frozen-lockfile --filter @workspace/web-store..."]
+
+[phases.build]
+cmds = ["pnpm --filter @workspace/web-store run build"]
+
+[start]
+cmd = "npx serve -s /app/artifacts/web-store/dist/public -l $PORT"

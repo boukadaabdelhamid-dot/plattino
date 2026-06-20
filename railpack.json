@@ -1,0 +1,8 @@
+{
+  "$schema": "https://schema.railpack.com",
+  "install": {
+    "cmds": [
+      "pnpm install --no-frozen-lockfile --prefer-offline"
+    ]
+  }
+}

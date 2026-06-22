@@ -1,7 +1,7 @@
 FROM node:20-alpine AS build
 RUN apk add --no-cache git
-ADD https://api.github.com/repos/boukadaabdelhamid-dot/midanic-monorepo/commits/main /dev/null
-RUN git clone --depth 1 https://github.com/boukadaabdelhamid-dot/midanic-monorepo.git /repo
+ADD https://api.github.com/repos/boukadaabdelhamid-dot/plattino/commits/main /dev/null
+RUN git clone --depth 1 https://github.com/boukadaabdelhamid-dot/plattino.git /repo
 WORKDIR /repo
 RUN corepack enable && corepack prepare pnpm@10.26.1 --activate
 RUN pnpm install --frozen-lockfile=false --filter @workspace/api-server... --filter @workspace/db

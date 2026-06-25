@@ -198,6 +198,7 @@ router.get("/erp/dashboard/ventes", authenticate, requireStaff, requireStore, re
         FROM transactions t
         WHERE t.type = 'expense'
           AND (t.reference IS NULL OR t.reference NOT LIKE 'RETOUR-%')
+          AND (t.reference IS NULL OR t.reference NOT LIKE 'PO-%')
           ${chargesDateFilter}
           ${chargesStoreFilter}
         GROUP BY 1
@@ -966,16 +967,9 @@ router.put("/erp/purchase-orders/:id/receive", authenticate, requireStaff, requi
         comptantCaisseId = payingCaisse.id;
       }
 
-      // Record accounting expense regardless of payment method
-      await tx.insert(schema.transactionsTable).values({
-        storeId,
-        type: "expense",
-        category: "purchase",
-        amount: totalAmount.toFixed(2),
-        description: `Réception BCA N°${poId}${po.paymentMethod === "comptant" ? " (Comptant)" : ""}`,
-        date: today,
-        reference: `PO-${poId}`,
-      });
+      // NOTE: purchasing goods is an inventory asset acquisition, NOT an operating
+      // expense. No transaction is inserted here. Profit is recognised at the point
+      // of sale via order_items.cost_price (COGS), not at the point of purchase.
 
       return po;
     });

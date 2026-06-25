@@ -34,6 +34,21 @@ recovered as inventory — only the margin is lost. Therefore every P&L surface 
   full sale value while goods are restocked, so the margin reversal still belongs in P&L. Loss-making
   sales (unit_price < cost) yield a negative returnedProfit that correctly reverses the original loss.
 
+## Inventory purchases must NEVER hit P&L charges (category exclusion)
+
+Buying stock is an ASSET acquisition, not an operating expense — its cost enters P&L only as COGS at
+the moment of sale (`order_items.cost_price × qty`). Likewise `supplier_payment` (debt settlement)
+and `purchase_payment` (achat comptant) are caisse/treasury movements, not profit charges. Current
+code records all three as `supplier_operations` + `caisse_movements` only (no `transactions` row), and
+PO receipt deliberately inserts no expense. But OLD/legacy code inserted an `expense` transaction with
+`category='purchase'`, `reference='PO-<id>'` on every PO receipt — those rows still live in production.
+
+**Every P&L charges query MUST filter `category <> 'purchase'`** (the `category` column is NOT NULL, so
+this never drops real operating expenses). This excludes legacy purchase rows regardless of reference
+format; keep the `PO-%` reference exclusion as a secondary guard. Query-time exclusion fixes existing
+prod data without destructive cleanup. The Accounting ledger (`/erp/accounting-summary`) is treasury,
+NOT P&L — it is intentionally left showing all cash movements.
+
 ## The RETOUR-% double-count rule (still applies)
 
 A cash-refund return (`retour_type = 'remboursement'`) also creates an `expense` transaction with

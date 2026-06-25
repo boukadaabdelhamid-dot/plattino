@@ -27,6 +27,7 @@
     "pino": "^9",
     "pino-http": "^10",
     "ws": "^8.20.0",
+    "xlsx": "^0.18.5",
     "zod": "catalog:"
   },
   "devDependencies": {
@@ -39,6 +40,7 @@
     "@types/node": "catalog:",
     "@types/pg": "^8.18.0",
     "@types/ws": "^8.18.1",
+    "@types/xlsx": "^0.0.36",
     "esbuild": "^0.27.3",
     "esbuild-plugin-pino": "^2.3.3",
     "pino-pretty": "^13",

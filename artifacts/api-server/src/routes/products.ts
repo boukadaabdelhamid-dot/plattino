@@ -3,6 +3,52 @@ import { eq, ilike, and, sql, or, inArray, gt } from "drizzle-orm";
 import { db, schema } from "../lib/db";
 import { authenticate, requireAdmin, requireStaff, requireStore, optionalAuth, requirePermission, type AuthRequest } from "../lib/auth";
 import { resolvePublicStore } from "../lib/store-context";
+import multer from "multer";
+import * as XLSX from "xlsx";
+import { randomUUID } from "crypto";
+
+// ── Excel import session store ──────────────────────────────────────────────
+interface ImportRow {
+  index: number;
+  excelCategoryId: number | null;
+  nameEn: string;
+  nameAr: string;
+  barcode: string;
+  price: number;
+  costPrice: number | null;
+  isDuplicate: boolean;
+  existingProductId: number | null;
+  resolvedCategoryId: number | null;
+  error: string | null;
+}
+interface ImportSession {
+  storeId: number;
+  rows: ImportRow[];
+  createdAt: number;
+  totalRows: number;
+  newCount: number;
+  duplicateCount: number;
+  errorCount: number;
+  missingCategoryIds: number[];
+}
+const importSessions = new Map<string, ImportSession>();
+setInterval(() => {
+  const now = Date.now();
+  for (const [key, s] of importSessions) {
+    if (now - s.createdAt > 20 * 60 * 1000) importSessions.delete(key);
+  }
+}, 5 * 60 * 1000);
+
+const xlsxUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 30 * 1024 * 1024 },
+  fileFilter: (_req, file, cb) => {
+    const ok = file.mimetype.includes("spreadsheet") || file.mimetype.includes("excel") ||
+      file.originalname.endsWith(".xlsx") || file.originalname.endsWith(".xls");
+    if (ok) cb(null, true);
+    else cb(new Error("Only Excel files (.xlsx / .xls) are accepted"));
+  },
+});
 
 const router = Router();
 
@@ -936,6 +982,167 @@ router.get("/erp/products/:productId/cross-store-stock", authenticate, requireAd
     res.json({ matchKey, stores: result });
   } catch (err) { req.log.error(err); res.status(500).json({ error: "Internal server error" }); }
 });
+
+// ── POST /erp/products/import/parse ────────────────────────────────────────
+// Upload an XLSX file, parse it, detect duplicates, return preview + sessionKey.
+router.post(
+  "/erp/products/import/parse",
+  authenticate, requireStaff, requireStore, requirePermission("products", "create"),
+  xlsxUpload.single("file"),
+  async (req: AuthRequest, res) => {
+    try {
+      if (!req.file) { res.status(400).json({ error: "No file provided" }); return; }
+      const storeId = req.currentStoreId!;
+
+      const wb = XLSX.read(req.file.buffer, { type: "buffer" });
+      const ws = wb.Sheets[wb.SheetNames[0]];
+      const rawData = XLSX.utils.sheet_to_json<unknown[]>(ws, { header: 1, defval: "" }) as unknown[][];
+
+      // Auto-detect header row (rows 0-4) by looking for known column names
+      let headerRowIdx = -1;
+      let colMap: { name: number; code: number; price: number; cost?: number; catId?: number } | null = null;
+      for (let i = 0; i < Math.min(5, rawData.length); i++) {
+        const row = (rawData[i] as unknown[]).map((c) => String(c).toLowerCase().trim());
+        const nameIdx = row.findIndex((c) => c.includes("désignation") || c.includes("designation") || c === "nom" || c.includes("libellé"));
+        const codeIdx = row.findIndex((c) => c === "code" || c.includes("barcode") || c.includes("référence") || c.includes("ref"));
+        const priceIdx = row.findIndex((c) => c.includes("détail") || (c.includes("pu") && !c.includes("coût")) || c === "prix");
+        const costIdx = row.findIndex((c) => c.includes("coût") || c.includes("cout") || c.includes("cost") || c.includes("achat"));
+        const catIdx = row.findIndex((c) => c.includes("catégor") || c.includes("categor"));
+        if (nameIdx !== -1 && codeIdx !== -1 && priceIdx !== -1) {
+          headerRowIdx = i;
+          colMap = { name: nameIdx, code: codeIdx, price: priceIdx, cost: costIdx >= 0 ? costIdx : undefined, catId: catIdx >= 0 ? catIdx : undefined };
+          break;
+        }
+      }
+      if (!colMap) {
+        res.status(400).json({ error: "Impossible de détecter les colonnes. Colonnes attendues: Désignation, Code, PU Détail, Coût" });
+        return;
+      }
+
+      const dataRows = rawData.slice(headerRowIdx + 1).filter((r) => {
+        const row = r as unknown[];
+        return String(row[colMap!.name] ?? "").trim() || String(row[colMap!.code] ?? "").trim();
+      }) as unknown[][];
+
+      // Gather barcodes to batch-check duplicates
+      const barcodes = dataRows
+        .map((r) => String((r as unknown[])[colMap!.code] ?? "").trim())
+        .filter(Boolean);
+      const existingMap = new Map<string, number>();
+      if (barcodes.length > 0) {
+        const existing = await db.select({ id: schema.productsTable.id, barcode: schema.productsTable.barcode })
+          .from(schema.productsTable)
+          .where(and(eq(schema.productsTable.storeId, storeId), inArray(schema.productsTable.barcode, barcodes)));
+        for (const p of existing) { if (p.barcode) existingMap.set(p.barcode, p.id); }
+      }
+
+      // Load store categories
+      const categories = await db.select({ id: schema.categoriesTable.id })
+        .from(schema.categoriesTable).where(eq(schema.categoriesTable.storeId, storeId));
+      const categoryIds = new Set(categories.map((c) => c.id));
+
+      const excelCatIds = new Set<number>();
+      dataRows.forEach((r) => {
+        const v = (r as unknown[])[colMap!.catId ?? -1];
+        if (typeof v === "number") excelCatIds.add(v);
+      });
+      const missingCategoryIds = [...excelCatIds].filter((id) => !categoryIds.has(id));
+
+      const rows: ImportRow[] = dataRows.map((r, i) => {
+        const row = r as unknown[];
+        const nameRaw = String(row[colMap!.name] ?? "").trim();
+        const codeRaw = String(row[colMap!.code] ?? "").trim();
+        const priceRaw = Number(row[colMap!.price] ?? 0);
+        const costRaw = colMap!.cost !== undefined ? Number(row[colMap!.cost] ?? 0) : 0;
+        const catRaw = colMap!.catId !== undefined ? row[colMap!.catId] : null;
+        const excelCategoryId = typeof catRaw === "number" ? catRaw : null;
+        const resolvedCategoryId = excelCategoryId !== null && categoryIds.has(excelCategoryId) ? excelCategoryId : null;
+        let error: string | null = null;
+        if (!nameRaw) error = "Désignation manquante";
+        else if (!codeRaw) error = "Code manquant";
+        else if (isNaN(priceRaw) || priceRaw <= 0) error = "Prix invalide";
+        const isDuplicate = Boolean(codeRaw && existingMap.has(codeRaw));
+        return {
+          index: i, excelCategoryId, nameEn: nameRaw, nameAr: nameRaw,
+          barcode: codeRaw, price: priceRaw, costPrice: costRaw > 0 ? costRaw : null,
+          isDuplicate, existingProductId: isDuplicate ? (existingMap.get(codeRaw) ?? null) : null,
+          resolvedCategoryId, error,
+        };
+      });
+
+      const newCount = rows.filter((r) => !r.isDuplicate && !r.error).length;
+      const duplicateCount = rows.filter((r) => r.isDuplicate && !r.error).length;
+      const errorCount = rows.filter((r) => r.error).length;
+      const sessionKey = randomUUID();
+      importSessions.set(sessionKey, { storeId, rows, createdAt: Date.now(), totalRows: rows.length, newCount, duplicateCount, errorCount, missingCategoryIds });
+
+      res.json({
+        sessionKey,
+        stats: { total: rows.length, new: newCount, duplicates: duplicateCount, errors: errorCount, missingCategoryIds },
+        preview: rows.slice(0, 60).map(({ index, nameEn, barcode, price, costPrice, excelCategoryId, resolvedCategoryId, isDuplicate, error }) =>
+          ({ index, nameEn, barcode, price, costPrice, excelCategoryId, resolvedCategoryId, isDuplicate, error })),
+      });
+    } catch (err) { req.log.error(err); res.status(500).json({ error: "Échec du traitement du fichier" }); }
+  }
+);
+
+// ── POST /erp/products/import/confirm ──────────────────────────────────────
+// Confirm import: insert new rows, optionally update duplicates.
+router.post(
+  "/erp/products/import/confirm",
+  authenticate, requireStaff, requireStore, requirePermission("products", "create"),
+  async (req: AuthRequest, res) => {
+    try {
+      const { sessionKey, mode } = req.body as { sessionKey: string; mode: "skip" | "update" };
+      const storeId = req.currentStoreId!;
+      const session = importSessions.get(sessionKey);
+      if (!session) { res.status(400).json({ error: "Session expirée. Veuillez re-uploader le fichier." }); return; }
+      if (session.storeId !== storeId) { res.status(403).json({ error: "Store mismatch" }); return; }
+
+      let inserted = 0, updated = 0, skipped = 0, errors = 0;
+      const validRows = session.rows.filter((r) => !r.error);
+
+      // Split into new vs duplicates
+      const newRows = validRows.filter((r) => !r.isDuplicate);
+      const dupRows = validRows.filter((r) => r.isDuplicate);
+
+      // Batch insert new rows in chunks of 200
+      const chunkSize = 200;
+      for (let i = 0; i < newRows.length; i += chunkSize) {
+        const chunk = newRows.slice(i, i + chunkSize);
+        try {
+          await db.insert(schema.productsTable).values(
+            chunk.map((r) => ({
+              storeId, nameEn: r.nameEn, nameAr: r.nameAr,
+              price: String(r.price), costPrice: r.costPrice != null ? String(r.costPrice) : null,
+              barcode: r.barcode || null, categoryId: r.resolvedCategoryId,
+              descriptionAr: "", descriptionEn: "", stock: 0, isActive: true, isExposed: false,
+            }))
+          );
+          inserted += chunk.length;
+        } catch { errors += chunk.length; }
+      }
+
+      // Handle duplicates
+      for (const row of dupRows) {
+        if (mode === "update" && row.existingProductId) {
+          try {
+            await db.update(schema.productsTable).set({
+              nameEn: row.nameEn, nameAr: row.nameAr,
+              price: String(row.price),
+              costPrice: row.costPrice != null ? String(row.costPrice) : null,
+              ...(row.resolvedCategoryId != null ? { categoryId: row.resolvedCategoryId } : {}),
+            }).where(and(eq(schema.productsTable.id, row.existingProductId), eq(schema.productsTable.storeId, storeId)));
+            updated++;
+          } catch { errors++; }
+        } else { skipped++; }
+      }
+
+      importSessions.delete(sessionKey);
+      res.json({ inserted, updated, skipped, errors, total: validRows.length + session.errorCount });
+    } catch (err) { req.log.error(err); res.status(500).json({ error: "Échec de l'importation" }); }
+  }
+);
 
 // DELETE /erp/products/:id/barcodes/:barcodeId — remove a barcode
 router.delete("/erp/products/:id/barcodes/:barcodeId", authenticate, requireStaff, requirePermission("products", "delete"), async (req: AuthRequest, res) => {

@@ -150,10 +150,10 @@ router.get("/products", optionalAuth, async (req: AuthRequest, res, next) => {
   // optionalAuth populates req.currentStoreId from a valid JWT if present.
   // Anonymous, customer (no store), or invalid bearer → fall back to public.
   if (req.currentStoreId) return handleListProducts(req, res);
-  return resolvePublicStore(req, res, () => handleListProducts(req, res));
+  return resolvePublicStore(req, res, () => handleListProducts(req, res, true));
 });
 
-async function handleListProducts(req: AuthRequest, res: import("express").Response) {
+async function handleListProducts(req: AuthRequest, res: import("express").Response, publicOnly = false) {
   try {
     const storeId = req.currentStoreId!;
     const {
@@ -170,6 +170,13 @@ async function handleListProducts(req: AuthRequest, res: import("express").Respo
     const offset = (parseInt(page) - 1) * parseInt(limit);
 
     const conditions = [eq(schema.productsTable.storeId, storeId)];
+
+    // Public storefront (web store / mobile) only sees products flagged visible
+    // via the VITRINE (isExposed) toggle in the ERP. The staff/ERP path
+    // (currentStoreId from JWT) skips this and sees every product.
+    if (publicOnly) {
+      conditions.push(eq(schema.productsTable.isExposed, true));
+    }
 
     if (search) {
       conditions.push(
@@ -338,15 +345,20 @@ router.get("/products/:id", optionalAuth, async (req: AuthRequest, res) => {
     if (!perm?.granted) { res.status(403).json({ error: "Forbidden: insufficient permissions" }); return; }
   }
   if (req.currentStoreId) return handleGetProduct(req, res);
-  return resolvePublicStore(req, res, () => handleGetProduct(req, res));
+  return resolvePublicStore(req, res, () => handleGetProduct(req, res, true));
 });
 
-async function handleGetProduct(req: AuthRequest, res: import("express").Response) {
+async function handleGetProduct(req: AuthRequest, res: import("express").Response, publicOnly = false) {
   try {
     const storeId = req.currentStoreId!;
     const id = parseInt(req.params["id"] as string);
     const [product] = await db.select().from(schema.productsTable)
-      .where(and(eq(schema.productsTable.id, id), eq(schema.productsTable.storeId, storeId))).limit(1);
+      .where(and(
+        eq(schema.productsTable.id, id),
+        eq(schema.productsTable.storeId, storeId),
+        // Public storefront cannot open a product hidden via the VITRINE toggle.
+        ...(publicOnly ? [eq(schema.productsTable.isExposed, true)] : []),
+      )).limit(1);
     if (!product) { res.status(404).json({ error: "Product not found" }); return; }
 
     const reviews = await db.select({

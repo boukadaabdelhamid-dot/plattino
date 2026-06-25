@@ -712,14 +712,18 @@ router.get("/admin/analytics", authenticate, requireAdmin, requireStore, async (
     const [{ totalRevenue }] = await db.select({ totalRevenue: sql<number>`coalesce(sum(total_amount), 0)` })
       .from(schema.ordersTable)
       .where(and(eq(schema.ordersTable.storeId, storeId), sql`${confirmedStatuses}`));
-    // Operating expenses only. Exclude RETOUR-% transactions: a refund's profit
-    // impact is already captured via totalRetours (returned margin, deducted from
-    // grossProfit), so counting the cash refund here too would double-deduct.
+    // Operating expenses only. Exclude category='purchase' (inventory acquisition,
+    // not an operating charge — COGS is recognised at sale via order_items.cost_price;
+    // covers legacy PO-receipt expense rows regardless of reference format). Exclude
+    // RETOUR-% transactions: a refund's profit impact is already captured via
+    // totalRetours (returned margin, deducted from grossProfit), so counting the cash
+    // refund here too would double-deduct.
     const [{ totalExpenses }] = await db.select({ totalExpenses: sql<number>`coalesce(sum(amount), 0)` })
       .from(schema.transactionsTable)
       .where(and(
         eq(schema.transactionsTable.type, "expense"),
         eq(schema.transactionsTable.storeId, storeId),
+        sql`category <> 'purchase'`,
         sql`(reference IS NULL OR reference NOT LIKE 'RETOUR-%')`,
         sql`(reference IS NULL OR reference NOT LIKE 'PO-%')`,
       ));
@@ -1824,10 +1828,11 @@ router.get("/admin/reports/monthly", authenticate, requireAdmin, requireStore, a
       cogsMap.set(String(row["month"]), Number(row["total_cogs"] ?? 0));
     }
 
-    // Operating expenses (type = 'expense') grouped by month. Exclude RETOUR-%
-    // transactions (profit impact captured via retours query — double-deduct if
-    // counted here) and PO-% transactions (purchasing stock is an inventory asset
-    // acquisition, not an operating expense — profit recognised at sale via COGS).
+    // Operating expenses (type = 'expense') grouped by month. Exclude
+    // category='purchase' (inventory acquisition, not an operating expense — profit
+    // recognised at sale via COGS; covers legacy PO-receipt rows regardless of
+    // reference). Exclude RETOUR-% transactions (profit impact captured via retours
+    // query — double-deduct if counted here) and PO-% transactions as a secondary guard.
     const expenseRows = await db.execute(sql`
       SELECT
         TO_CHAR(DATE_TRUNC('month', created_at), 'YYYY-MM') AS month,
@@ -1835,6 +1840,7 @@ router.get("/admin/reports/monthly", authenticate, requireAdmin, requireStore, a
       FROM transactions
       WHERE store_id = ${storeId}
         AND type = 'expense'
+        AND category <> 'purchase'
         AND (reference IS NULL OR reference NOT LIKE 'RETOUR-%')
         AND (reference IS NULL OR reference NOT LIKE 'PO-%')
         ${txDateFilter}

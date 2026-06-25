@@ -197,6 +197,7 @@ router.get("/erp/dashboard/ventes", authenticate, requireStaff, requireStore, re
                SUM(CAST(t.amount AS numeric)) AS charges
         FROM transactions t
         WHERE t.type = 'expense'
+          AND t.category <> 'purchase'
           AND (t.reference IS NULL OR t.reference NOT LIKE 'RETOUR-%')
           AND (t.reference IS NULL OR t.reference NOT LIKE 'PO-%')
           ${chargesDateFilter}

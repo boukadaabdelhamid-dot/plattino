@@ -157,6 +157,9 @@ importers:
       '@replit/connectors-sdk':
         specifier: ^0.4.0
         version: 0.4.0
+      xlsx:
+        specifier: ^0.18.5
+        version: 0.18.5
     devDependencies:
       prettier:
         specifier: ^3.8.1
@@ -218,6 +221,9 @@ importers:
       ws:
         specifier: ^8.20.0
         version: 8.20.0
+      xlsx:
+        specifier: ^0.18.5
+        version: 0.18.5
       zod:
         specifier: 'catalog:'
         version: 3.25.76
@@ -249,6 +255,9 @@ importers:
       '@types/ws':
         specifier: ^8.18.1
         version: 8.18.1
+      '@types/xlsx':
+        specifier: ^0.0.36
+        version: 0.0.36
       esbuild:
         specifier: 0.27.3
         version: 0.27.3
@@ -1837,6 +1846,10 @@ packages:
 
   '@types/ws@8.18.1':
     resolution: {integrity: sha512-ThVF6DCVhA8kUGy+aazFQ4kXQ7E1Ty7A3ypFOe0IcJV8O/M511G99AW24irKrW56Wt44yG9+ij8FaqoBGkuBXg==}
+
+  '@types/xlsx@0.0.36':
+    resolution: {integrity: sha512-mvfrKiKKMErQzLMF8ElYEH21qxWCZtN59pHhWGmWCWFJStYdMWjkDSAy6mGowFxHXaXZWe5/TW7pBUiWclIVOw==}
+    deprecated: This is a stub types definition for xlsx (https://github.com/sheetjs/js-xlsx). xlsx provides its own type definitions, so you don't need @types/xlsx installed!
 
   '@vitejs/plugin-react@5.1.4':
     resolution: {integrity: sha512-VIcFLdRi/VYRU8OL/puL7QXMYafHmqOnwTZY50U1JPlCNj30PxCMx65c494b1K9be9hX83KVt0+gTEwTWLqToA==}
@@ -4970,6 +4983,10 @@ snapshots:
   '@types/ws@8.18.1':
     dependencies:
       '@types/node': 25.3.5
+
+  '@types/xlsx@0.0.36':
+    dependencies:
+      xlsx: 0.18.5
 
   '@vitejs/plugin-react@5.1.4(vite@7.3.2(@types/node@25.3.5)(jiti@2.6.1)(lightningcss@1.31.1)(tsx@4.21.0)(yaml@2.8.2))':
     dependencies:

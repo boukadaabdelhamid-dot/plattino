@@ -41,13 +41,14 @@ import {
   Trash2, Pencil, Plus, Search, Package, ImagePlus, X, Loader2,
   Smartphone, DollarSign, LayoutGrid, Image as ImageIcon, Eye, EyeOff,
   Columns3, Printer, Sparkles, MoreVertical, Copy, Info, Boxes,
-  ChevronDown, QrCode, Send, Star, ArrowUp, ArrowDown,
+  ChevronDown, QrCode, Send, Star, ArrowUp, ArrowDown, FileSpreadsheet,
 } from "lucide-react";
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import ProductDetailsDialog from "@/components/ProductDetailsDialog";
 import CopyToStoresModal from "@/components/CopyToStoresModal";
+import ImportExcelModal from "@/components/ImportExcelModal";
 
 // ── Store identity ──────────────────────────────────────────────────
 import { getStoreName } from "@/lib/store-settings";
@@ -327,6 +328,7 @@ export default function Products() {
   const [activeTab, setActiveTab] = useState("general");
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [copyModal, setCopyModal] = useState<{ open: boolean; productIds: number[] }>({ open: false, productIds: [] });
+  const [importModal, setImportModal] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [imageUrlDraft, setImageUrlDraft] = useState("");
@@ -677,9 +679,14 @@ export default function Products() {
             {productsRes?.total ?? 0} {t("article(s) au total", "منتج(ات) في المجموع")}
           </p>
         </div>
-        <Button onClick={openCreate} data-testid="button-add-product">
-          <Plus className="h-4 w-4 mr-2" /> {t("Nouvel article", "إضافة")}
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button variant="outline" onClick={() => setImportModal(true)}>
+            <FileSpreadsheet className="h-4 w-4 mr-2 text-green-600" /> {t("Import Excel", "استيراد Excel")}
+          </Button>
+          <Button onClick={openCreate} data-testid="button-add-product">
+            <Plus className="h-4 w-4 mr-2" /> {t("Nouvel article", "إضافة")}
+          </Button>
+        </div>
       </div>
 
       <div className="flex items-center gap-3">
@@ -1814,6 +1821,12 @@ export default function Products() {
         onClose={() => setCopyModal({ open: false, productIds: [] })}
         productIds={copyModal.productIds}
         products={products}
+      />
+
+      <ImportExcelModal
+        open={importModal}
+        onClose={() => setImportModal(false)}
+        onImported={() => { queryClient.invalidateQueries({ queryKey: getGetProductsQueryKey() }); }}
       />
     </div>
   );

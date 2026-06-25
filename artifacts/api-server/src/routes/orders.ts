@@ -721,6 +721,7 @@ router.get("/admin/analytics", authenticate, requireAdmin, requireStore, async (
         eq(schema.transactionsTable.type, "expense"),
         eq(schema.transactionsTable.storeId, storeId),
         sql`(reference IS NULL OR reference NOT LIKE 'RETOUR-%')`,
+        sql`(reference IS NULL OR reference NOT LIKE 'PO-%')`,
       ));
     const [{ pendingOrders }] = await db.select({ pendingOrders: sql<number>`count(*)` })
       .from(schema.ordersTable)
@@ -1824,9 +1825,9 @@ router.get("/admin/reports/monthly", authenticate, requireAdmin, requireStore, a
     }
 
     // Operating expenses (type = 'expense') grouped by month. Exclude RETOUR-%
-    // transactions: a refund's profit impact is captured via the retours query
-    // below (returned margin, deducted from grossProfit), so counting the cash
-    // refund here too would double-deduct.
+    // transactions (profit impact captured via retours query — double-deduct if
+    // counted here) and PO-% transactions (purchasing stock is an inventory asset
+    // acquisition, not an operating expense — profit recognised at sale via COGS).
     const expenseRows = await db.execute(sql`
       SELECT
         TO_CHAR(DATE_TRUNC('month', created_at), 'YYYY-MM') AS month,
@@ -1835,6 +1836,7 @@ router.get("/admin/reports/monthly", authenticate, requireAdmin, requireStore, a
       WHERE store_id = ${storeId}
         AND type = 'expense'
         AND (reference IS NULL OR reference NOT LIKE 'RETOUR-%')
+        AND (reference IS NULL OR reference NOT LIKE 'PO-%')
         ${txDateFilter}
       GROUP BY DATE_TRUNC('month', created_at)
       ORDER BY DATE_TRUNC('month', created_at)

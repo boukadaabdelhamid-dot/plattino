@@ -126,7 +126,7 @@ JWT_SECRET = "d952bc6cf967c4aba73081a26abb0a43017fe47f38c602f107b5ca43c6933bd8db
 PORT = "8080"
 
 [userenv.development]
-APP_URL = "https://c43ba022-7689-4454-974a-fe20c139f53c-00-11xp5tmivnd3i.janeway.replit.dev"
+APP_URL = "https://fccb435f-1d8b-42dd-b133-4f0125a27889-00-26fw7xiph8vew.worf.replit.dev"
 
 [nix]
 channel = "stable-25_05"

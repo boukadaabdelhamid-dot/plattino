@@ -1612,6 +1612,7 @@ function ImportCustomerDialog({
       });
       if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.error ?? "Erreur serveur"); }
       qc.invalidateQueries({ queryKey: getGetErpCustomersQueryKey() });
+      qc.invalidateQueries({ queryKey: getGetSuppliersQueryKey() });
       onOpenChange(false);
     } catch (err) {
       setError((err as Error).message);

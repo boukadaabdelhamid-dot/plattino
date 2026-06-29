@@ -2153,7 +2153,7 @@ router.post("/erp/customers/:id/import-to-stores", authenticate, requireStaff, r
       .where(eq(schema.userStoresTable.userId, req.user!.id));
     const accessibleStoreIds = new Set(memberships.map((m) => m.storeId));
 
-    type ImportResult = { targetStoreId: number; status: "created" | "already_linked" | "error"; message?: string };
+    type ImportResult = { targetStoreId: number; status: "created" | "linked_existing" | "already_linked" | "error"; message?: string };
     const results: ImportResult[] = [];
 
     await db.transaction(async (tx) => {
@@ -2199,10 +2199,36 @@ router.post("/erp/customers/:id/import-to-stores", authenticate, requireStaff, r
           .where(and(eq(schema.storesTable.id, targetStoreId), eq(schema.storesTable.isActive, true))).limit(1);
         if (!store) { results.push({ targetStoreId, status: "error", message: "Store not found or inactive" }); continue; }
 
-        const [alreadyLinked] = await tx.select({ id: schema.customerProfilesTable.id })
+        const [alreadyLinked] = await tx.select({ id: schema.customerProfilesTable.id, contactId: schema.customerProfilesTable.contactId })
           .from(schema.customerProfilesTable)
           .where(and(eq(schema.customerProfilesTable.userId, userId), eq(schema.customerProfilesTable.storeId, targetStoreId))).limit(1);
-        if (alreadyLinked) { results.push({ targetStoreId, status: "already_linked" }); continue; }
+        if (alreadyLinked) {
+          // Profile exists but has no contact link and source has one → wire the contact and return linked_existing.
+          if (alreadyLinked.contactId == null && srcContact && gcid) {
+            const [existingTc] = await tx.select({ id: schema.contactsTable.id })
+              .from(schema.contactsTable)
+              .where(and(eq(schema.contactsTable.globalContactId, gcid), eq(schema.contactsTable.storeId, targetStoreId))).limit(1);
+            let tcId: number;
+            if (existingTc) {
+              tcId = existingTc.id;
+            } else {
+              const [nc] = await tx.insert(schema.contactsTable).values({
+                storeId: targetStoreId,
+                name: srcContact.name, contactName: srcContact.contactName, email: srcContact.email,
+                phone: srcContact.phone, address: srcContact.address, notes: srcContact.notes,
+                contactType: srcContact.contactType, globalContactId: gcid,
+              }).returning({ id: schema.contactsTable.id });
+              tcId = nc.id;
+            }
+            await tx.update(schema.customerProfilesTable)
+              .set({ contactId: tcId, contactType: cpType })
+              .where(eq(schema.customerProfilesTable.id, alreadyLinked.id));
+            results.push({ targetStoreId, status: "linked_existing" });
+          } else {
+            results.push({ targetStoreId, status: "already_linked" });
+          }
+          continue;
+        }
 
         // ── Create/find a linked contact in the target store ──
         let targetContactId: number | undefined;

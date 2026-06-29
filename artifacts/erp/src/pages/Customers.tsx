@@ -8,6 +8,7 @@ import {
   useGetCustomerOperations, useCreateCustomerOperation,
   useUpdateCustomerOperation, useDeleteCustomerOperation,
   getGetCustomerOperationsQueryKey,
+  useGetErpStoresAll,
   type CustomerSummary, type CustomerNote, type CustomerClassification, type PriceTier,
   type CustomerOperation,
 } from "@workspace/api-client-react";
@@ -40,8 +41,9 @@ import {
   MapPin, Phone, Mail, Building2, Tag, Layers, CreditCard,
   Briefcase, Info, FileText, X, Printer, MoreVertical,
   Pencil, Eye, EyeOff, ShoppingBag, BarChart2, StickyNote, KeyRound,
-  ArrowDownCircle, ArrowUpCircle, Plus, ChevronLeft,
+  ArrowDownCircle, ArrowUpCircle, Plus, ChevronLeft, Store,
 } from "lucide-react";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
@@ -1572,6 +1574,108 @@ function exportXLSX(customers: ExtCustomer[], currency: string, lang: string) {
   XLSX.writeFile(wb, `clients-${new Date().toISOString().slice(0, 10)}.xlsx`);
 }
 
+type StoreLite = { id: number; nameAr: string; nameEn: string; isActive?: boolean };
+
+function ImportCustomerDialog({
+  customer, open, onOpenChange,
+}: { customer: { id: number; name: string } | null; open: boolean; onOpenChange: (v: boolean) => void }) {
+  const qc = useQueryClient();
+  const { lang } = useLang();
+  const t = (fr: string, ar: string) => lang === "ar" ? ar : fr;
+  const currentStore = useCurrentStore();
+  const { data: allStores } = useGetErpStoresAll();
+
+  const otherStores = ((allStores ?? []) as StoreLite[])
+    .filter((s) => s.id !== currentStore?.id && s.isActive !== false);
+
+  const [selected, setSelected] = React.useState<number[]>([]);
+  const [loading, setLoading] = React.useState(false);
+  const [error, setError] = React.useState("");
+
+  React.useEffect(() => {
+    if (open) { setSelected([]); setError(""); }
+  }, [open]);
+
+  const toggle = (id: number) =>
+    setSelected((prev) => prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]);
+
+  const handleImport = async () => {
+    if (!customer || selected.length === 0) return;
+    setLoading(true); setError("");
+    try {
+      const token = localStorage.getItem("midanic_token");
+      const apiBase = (import.meta.env.VITE_API_URL as string | undefined) ?? "";
+      const res = await fetch(`${apiBase}/api/erp/customers/${customer.id}/import-to-stores`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ targetStoreIds: selected }),
+      });
+      if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.error ?? "Erreur serveur"); }
+      qc.invalidateQueries({ queryKey: getGetErpCustomersQueryKey() });
+      onOpenChange(false);
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-sm">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <Store className="h-4 w-4 text-indigo-600" />
+            {t("Importer vers d'autres magasins", "استيراد إلى متاجر أخرى")}
+          </DialogTitle>
+        </DialogHeader>
+        {customer && (
+          <div className="text-sm text-muted-foreground mb-1 p-3 bg-indigo-50 rounded-md border border-indigo-100">
+            <span className="font-medium">{customer.name}</span>
+            <p className="text-xs mt-1">
+              {t(
+                "Le client sera disponible dans les magasins sélectionnés (soldes indépendants par magasin).",
+                "سيكون العميل متاحاً في المتاجر المختارة (الأرصدة مستقلة لكل متجر).",
+              )}
+            </p>
+          </div>
+        )}
+        <div className="space-y-2 max-h-64 overflow-y-auto">
+          {otherStores.length === 0 ? (
+            <p className="text-sm text-muted-foreground italic py-4 text-center">
+              {t("Aucun autre magasin disponible", "لا توجد متاجر أخرى متاحة")}
+            </p>
+          ) : (
+            otherStores.map((s) => (
+              <label
+                key={s.id}
+                className="flex items-center gap-3 p-2 rounded-md border hover:bg-slate-50 cursor-pointer"
+              >
+                <Checkbox
+                  checked={selected.includes(s.id)}
+                  onCheckedChange={() => toggle(s.id)}
+                />
+                <span className="text-sm font-medium">{lang === "ar" ? s.nameAr : s.nameEn}</span>
+              </label>
+            ))
+          )}
+        </div>
+        {error && <p className="text-xs text-rose-600 font-medium">{error}</p>}
+        <DialogFooter className="mt-2">
+          <Button variant="outline" onClick={() => onOpenChange(false)}>{t("Annuler", "إلغاء")}</Button>
+          <Button
+            onClick={handleImport}
+            disabled={loading || selected.length === 0}
+            className="bg-indigo-600 hover:bg-indigo-700 text-white"
+          >
+            {loading ? t("En cours…", "جارٍ…") : t("Importer", "استيراد")}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 export default function Customers() {
   const qc = useQueryClient();
   const { isAdmin } = useMe();
@@ -1598,6 +1702,7 @@ export default function Customers() {
     setDetailId(id);
   };
   const [opsCustomer, setOpsCustomer] = useState<{ id: number; name: string } | null>(null);
+  const [importCustomer, setImportCustomer] = useState<{ id: number; name: string } | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
   const createCustomer = useCreateErpCustomer();
@@ -1836,6 +1941,10 @@ export default function Customers() {
                                 <DropdownMenuItem onClick={(e) => { e.stopPropagation(); openSheet(c.id, "notes"); }}>
                                   <StickyNote className="h-4 w-4 mr-2" />{t("Notes", "الملاحظات")}
                                 </DropdownMenuItem>
+                                <DropdownMenuSeparator />
+                                <DropdownMenuItem onClick={(e) => { e.stopPropagation(); setImportCustomer({ id: c.id, name: c.name }); }}>
+                                  <Store className="h-4 w-4 mr-2" />{t("Importer vers magasins", "استيراد إلى متاجر")}
+                                </DropdownMenuItem>
                               </DropdownMenuContent>
                             </DropdownMenu>
                         ) : <span className="text-xs text-muted-foreground">—</span>}
@@ -1906,6 +2015,13 @@ export default function Customers() {
           )}
         </SheetContent>
       </Sheet>
+
+      {/* Import to stores dialog */}
+      <ImportCustomerDialog
+        customer={importCustomer}
+        open={!!importCustomer}
+        onOpenChange={(v) => { if (!v) setImportCustomer(null); }}
+      />
 
       {/* Create customer dialog — shared 4-tab contact form */}
       <ContactFormDialog

@@ -64,25 +64,37 @@ async function updateContactFields(tx: Tx, contactId: number, s: Partial<Contact
 // Ensure the customer-role extension (user + profile) exists for a contact.
 // Requires an email to create the login; throws HttpError otherwise. Idempotent.
 async function ensureCustomerRole(tx: Tx, storeId: number, contactId: number, s: ContactSharedInput): Promise<number> {
+  // Idempotency: scope check to (contactId, storeId) so a user imported to
+  // multiple stores can have one profile per store.
   const [existing] = await tx.select({ userId: schema.customerProfilesTable.userId })
     .from(schema.customerProfilesTable)
-    .where(eq(schema.customerProfilesTable.contactId, contactId)).limit(1);
+    .where(and(
+      eq(schema.customerProfilesTable.contactId, contactId),
+      eq(schema.customerProfilesTable.storeId, storeId),
+    )).limit(1);
   if (existing) return existing.userId;
   const email = (s.email ?? "").trim();
   if (!email) throw new HttpError(400, "email is required to create the customer side of a customer/supplier contact");
+  // If a user with this email already exists, reuse them and just create a
+  // profile for this store rather than throwing a 409.
   const [dup] = await tx.select({ id: schema.usersTable.id })
     .from(schema.usersTable).where(eq(schema.usersTable.email, email)).limit(1);
-  if (dup) throw new HttpError(409, "A user with this email already exists");
-  const passwordHash = await bcrypt.hash(Math.random().toString(36).slice(2, 12), 10);
-  const [user] = await tx.insert(schema.usersTable).values({
-    name: s.name, email, passwordHash, role: "customer", preferredLang: "ar",
-    phone: s.phone ?? null, address: s.address ?? null, notes: s.notes ?? null,
-  }).returning({ id: schema.usersTable.id });
+  let uid: number;
+  if (dup) {
+    uid = dup.id;
+  } else {
+    const passwordHash = await bcrypt.hash(Math.random().toString(36).slice(2, 12), 10);
+    const [user] = await tx.insert(schema.usersTable).values({
+      name: s.name, email, passwordHash, role: "customer", preferredLang: "ar",
+      phone: s.phone ?? null, address: s.address ?? null, notes: s.notes ?? null,
+    }).returning({ id: schema.usersTable.id });
+    uid = user.id;
+  }
   await tx.insert(schema.customerProfilesTable).values({
-    userId: user.id, storeId, contactId,
+    userId: uid, storeId, contactId,
     contactType: s.contactType === "customer_supplier" ? "customer_supplier" : "customer",
   }).onConflictDoNothing();
-  return user.id;
+  return uid;
 }
 
 // Ensure the supplier-role extension exists for a contact. Idempotent.
@@ -1651,7 +1663,7 @@ router.get("/erp/customers", authenticate, requireStaff, requireStore, requirePe
         ) ELSE NULL END as "priceTier"
       FROM users u
       LEFT JOIN orders o ON o.user_id = u.id AND o.store_id = ${storeId}
-      LEFT JOIN customer_profiles cp ON cp.user_id = u.id
+      LEFT JOIN customer_profiles cp ON cp.user_id = u.id AND cp.store_id = ${storeId}
       LEFT JOIN customer_classifications cc ON cc.id = cp.classification_id
       LEFT JOIN price_tiers pt ON pt.id = cp.price_tier_id
       WHERE u.role = 'customer'
@@ -1896,11 +1908,17 @@ router.put("/erp/customers/:id", authenticate, requireAdmin, requireStore, async
       }
       await tx.insert(schema.customerProfilesTable)
         .values(insertValues)
-        .onConflictDoUpdate({ target: schema.customerProfilesTable.userId, set: updateSet });
+        .onConflictDoUpdate({
+          target: [schema.customerProfilesTable.userId, schema.customerProfilesTable.storeId],
+          set: updateSet,
+        });
       const [u] = await tx.select().from(schema.usersTable)
         .where(eq(schema.usersTable.id, userId)).limit(1);
       const [prof] = await tx.select().from(schema.customerProfilesTable)
-        .where(eq(schema.customerProfilesTable.userId, userId)).limit(1);
+        .where(and(
+          eq(schema.customerProfilesTable.userId, userId),
+          eq(schema.customerProfilesTable.storeId, storeId),
+        )).limit(1);
       if (!u || !prof) return;
       const cStoreId = prof.storeId ?? storeId;
       let contactId = prof.contactId;
@@ -1915,7 +1933,7 @@ router.put("/erp/customers/:id", authenticate, requireAdmin, requireStore, async
         hasSupplierRole ? "customer_supplier" : (prof.contactType === "customer_supplier" ? "customer_supplier" : "customer");
       if (prof.contactType !== effType) {
         await tx.update(schema.customerProfilesTable).set({ contactType: effType })
-          .where(eq(schema.customerProfilesTable.userId, userId));
+          .where(and(eq(schema.customerProfilesTable.userId, userId), eq(schema.customerProfilesTable.storeId, storeId)));
       }
       const cShared: ContactSharedInput = {
         name: u.name, contactName: null, email: u.email,
@@ -1925,7 +1943,7 @@ router.put("/erp/customers/:id", authenticate, requireAdmin, requireStore, async
       if (contactId == null) {
         contactId = await insertContact(tx, cStoreId, cShared);
         await tx.update(schema.customerProfilesTable).set({ contactId })
-          .where(eq(schema.customerProfilesTable.userId, userId));
+          .where(and(eq(schema.customerProfilesTable.userId, userId), eq(schema.customerProfilesTable.storeId, storeId)));
       } else {
         await updateContactFields(tx, contactId, cShared);
       }
@@ -1946,7 +1964,7 @@ router.put("/erp/customers/:id", authenticate, requireAdmin, requireStore, async
       FROM customer_profiles cp
       LEFT JOIN customer_classifications cc ON cc.id = cp.classification_id
       LEFT JOIN price_tiers pt ON pt.id = cp.price_tier_id
-      WHERE cp.user_id = ${userId}
+      WHERE cp.user_id = ${userId} AND cp.store_id = ${storeId}
     `);
     const rawProfile = profileRows.rows[0] as Record<string, unknown> | undefined;
     let updatedProfile = null;
@@ -1984,6 +2002,106 @@ router.put("/erp/customers/:id", authenticate, requireAdmin, requireStore, async
     if (err instanceof HttpError) { res.status(err.status).json({ error: err.message }); return; }
     req.log.error(err); res.status(500).json({ error: "Internal server error" });
   }
+});
+
+// Import a customer into one or more additional stores.
+// Creates a new customer_profile row per target store (balances are independent — no sync).
+// For customer_supplier contacts, also creates a supplier record in the target store.
+router.post("/erp/customers/:id/import-to-stores", authenticate, requireStaff, requireStore, requirePermission("customers", "create"), async (req: AuthRequest, res) => {
+  try {
+    const storeId = req.currentStoreId!;
+    const userId = pid(req, "id");
+    const { targetStoreIds } = req.body as { targetStoreIds?: unknown };
+
+    if (!Array.isArray(targetStoreIds) || targetStoreIds.length === 0) {
+      res.status(400).json({ error: "targetStoreIds must be a non-empty array" });
+      return;
+    }
+    const tidArr = [...new Set((targetStoreIds as unknown[]).map(Number).filter((n) => Number.isInteger(n) && n !== storeId))];
+    if (tidArr.length === 0) {
+      res.status(400).json({ error: "No valid target stores (cannot import into the same store)" });
+      return;
+    }
+
+    const [srcUser] = await db.select({ id: schema.usersTable.id })
+      .from(schema.usersTable)
+      .where(and(eq(schema.usersTable.id, userId), eq(schema.usersTable.role, "customer"))).limit(1);
+    if (!srcUser) { res.status(404).json({ error: "Customer not found" }); return; }
+
+    const [srcProfile] = await db.select()
+      .from(schema.customerProfilesTable)
+      .where(and(eq(schema.customerProfilesTable.userId, userId), eq(schema.customerProfilesTable.storeId, storeId))).limit(1);
+    if (!srcProfile) {
+      const [hasOrder] = await db.select({ id: schema.ordersTable.id })
+        .from(schema.ordersTable)
+        .where(and(eq(schema.ordersTable.userId, userId), eq(schema.ordersTable.storeId, storeId))).limit(1);
+      if (!hasOrder) { res.status(404).json({ error: "Customer not associated with this store" }); return; }
+    }
+
+    const memberships = await db.select({ storeId: schema.userStoresTable.storeId })
+      .from(schema.userStoresTable)
+      .where(eq(schema.userStoresTable.userId, req.user!.id));
+    const accessibleStoreIds = new Set(memberships.map((m) => m.storeId));
+
+    type ImportResult = { targetStoreId: number; status: "created" | "already_linked" | "error"; message?: string };
+    const results: ImportResult[] = [];
+
+    await db.transaction(async (tx) => {
+      const cpType: "customer" | "customer_supplier" =
+        srcProfile?.contactType === "customer_supplier" ? "customer_supplier" : "customer";
+
+      let srcSupplier: typeof schema.suppliersTable.$inferSelect | undefined;
+      if (cpType === "customer_supplier" && srcProfile?.contactId != null) {
+        const [s] = await tx.select().from(schema.suppliersTable)
+          .where(and(eq(schema.suppliersTable.contactId, srcProfile.contactId), eq(schema.suppliersTable.storeId, storeId)))
+          .limit(1);
+        srcSupplier = s;
+      }
+
+      for (const targetStoreId of tidArr) {
+        if (!accessibleStoreIds.has(targetStoreId)) {
+          results.push({ targetStoreId, status: "error", message: "You do not have access to this store" });
+          continue;
+        }
+        const [store] = await tx.select({ id: schema.storesTable.id })
+          .from(schema.storesTable)
+          .where(and(eq(schema.storesTable.id, targetStoreId), eq(schema.storesTable.isActive, true))).limit(1);
+        if (!store) { results.push({ targetStoreId, status: "error", message: "Store not found or inactive" }); continue; }
+
+        const [alreadyLinked] = await tx.select({ id: schema.customerProfilesTable.id })
+          .from(schema.customerProfilesTable)
+          .where(and(eq(schema.customerProfilesTable.userId, userId), eq(schema.customerProfilesTable.storeId, targetStoreId))).limit(1);
+        if (alreadyLinked) { results.push({ targetStoreId, status: "already_linked" }); continue; }
+
+        await tx.insert(schema.customerProfilesTable).values({
+          userId, storeId: targetStoreId, contactType: cpType,
+        }).onConflictDoNothing();
+
+        if (cpType === "customer_supplier" && srcProfile?.contactId != null && srcSupplier) {
+          const [existingSupplier] = await tx.select({ id: schema.suppliersTable.id })
+            .from(schema.suppliersTable)
+            .where(and(eq(schema.suppliersTable.contactId, srcProfile.contactId), eq(schema.suppliersTable.storeId, targetStoreId))).limit(1);
+          if (!existingSupplier) {
+            await tx.insert(schema.suppliersTable).values({
+              storeId: targetStoreId,
+              name: srcSupplier.name,
+              contactName: srcSupplier.contactName,
+              email: srcSupplier.email,
+              phone: srcSupplier.phone,
+              address: srcSupplier.address,
+              notes: srcSupplier.notes,
+              contactType: "customer_supplier",
+              contactId: srcProfile.contactId,
+            });
+          }
+        }
+
+        results.push({ targetStoreId, status: "created" });
+      }
+    });
+
+    res.json({ results });
+  } catch (err) { req.log.error(err); res.status(500).json({ error: "Internal server error" }); }
 });
 
 router.post("/erp/customers/:id/notes", authenticate, requireAdmin, requireStore, async (req: AuthRequest, res) => {

@@ -202,8 +202,8 @@ export const contactsTable = pgTable("contacts", {
 // ─── Customer Profiles (ERP-specific data, separate from users table) ─────────
 export const customerProfilesTable = pgTable("customer_profiles", {
   id: serial("id").primaryKey(),
-  userId: integer("user_id").references(() => usersTable.id).notNull().unique(),
-  storeId: integer("store_id").references(() => storesTable.id),
+  userId: integer("user_id").references(() => usersTable.id).notNull(),
+  storeId: integer("store_id").references(() => storesTable.id).notNull(),
   contactType: contactTypeEnum("contact_type").notNull().default("customer"),
   wilaya: text("wilaya"),
   commune: text("commune"),
@@ -224,6 +224,8 @@ export const customerProfilesTable = pgTable("customer_profiles", {
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 }, (t) => ({
+  // Each user may have at most one profile per store.
+  uniqUserStore: uniqueIndex("customer_profiles_user_store_uniq").on(t.userId, t.storeId),
   // At most one customer profile per contact identity.
   uniqContact: uniqueIndex("customer_profiles_contact_id_uniq")
     .on(t.contactId)

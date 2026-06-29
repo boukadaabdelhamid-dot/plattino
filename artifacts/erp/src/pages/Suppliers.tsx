@@ -18,8 +18,9 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Plus, Pencil, CreditCard, TrendingDown, TrendingUp, FileText, RefreshCw, SlidersHorizontal, MoreVertical, Link2, Store } from "lucide-react";
+import { Plus, Pencil, CreditCard, TrendingDown, TrendingUp, FileText, RefreshCw, SlidersHorizontal, MoreVertical, Link2, Store, UserPlus } from "lucide-react";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { ContactFormDialog, emptyContactForm, type ContactFormState } from "@/components/ContactFormDialog";
 
 // The generated Supplier type predates the global-account feature; extend locally.
 type GlobalSupplier = Supplier & { globalSupplierId?: string | null };
@@ -438,8 +439,10 @@ function StatementSheet({
 }
 
 // ─── Supplier Form Dialog ─────────────────────────────────────────────────────
-type SupplierForm = { name: string; contactName: string; email: string; phone: string; address: string; notes: string; };
-const emptyForm: SupplierForm = { name: "", contactName: "", email: "", phone: "", address: "", notes: "" };
+// "Ajouter un fournisseur" reuses the same visual component as the Customers page
+// ("Nouveau client"). Only the common fields are persisted via the existing
+// supplier flow; "Type de contact" is shown + prefilled to "Fournisseur" only.
+const emptySupplierForm: ContactFormState = { ...emptyContactForm, contactType: "supplier" };
 
 // ─── Main Suppliers Page ──────────────────────────────────────────────────────
 export default function Suppliers() {
@@ -466,7 +469,7 @@ export default function Suppliers() {
   });
 
   const [dialog, setDialog] = useState<{ open: boolean; editing: Supplier | null }>({ open: false, editing: null });
-  const [form, setForm] = useState<SupplierForm>(emptyForm);
+  const [form, setForm] = useState<ContactFormState>(emptySupplierForm);
   const [statementSupplier, setStatementSupplier] = useState<Supplier | null>(null);
   const [statementOpen, setStatementOpen] = useState(false);
   const [paymentSupplier, setPaymentSupplier] = useState<Supplier | null>(null);
@@ -476,9 +479,13 @@ export default function Suppliers() {
   const [importSupplier, setImportSupplier] = useState<GlobalSupplier | null>(null);
   const [importOpen, setImportOpen] = useState(false);
 
-  const openCreate = () => { setForm(emptyForm); setDialog({ open: true, editing: null }); };
+  const openCreate = () => { setForm(emptySupplierForm); setDialog({ open: true, editing: null }); };
   const openEdit = (s: Supplier) => {
-    setForm({ name: s.name ?? "", contactName: s.contactName ?? "", email: s.email ?? "", phone: s.phone ?? "", address: s.address ?? "", notes: s.notes ?? "" });
+    setForm({
+      ...emptySupplierForm,
+      name: s.name ?? "", email: s.email ?? "", phone: s.phone ?? "",
+      address: s.address ?? "", notes: s.notes ?? "",
+    });
     setDialog({ open: true, editing: s });
   };
   const openStatement = (s: Supplier) => { setStatementSupplier(s); setStatementOpen(true); };
@@ -486,12 +493,23 @@ export default function Suppliers() {
   const openAdjust = (s: Supplier) => { setAdjustSupplier(s); setAdjustOpen(true); };
   const openImport = (s: GlobalSupplier) => { setImportSupplier(s); setImportOpen(true); };
 
+  // Keep the existing supplier flow: send only the fields the suppliers API
+  // supports. contactName is preserved on edit (the reused form has no input for
+  // it); the extra contact fields are display-only in this step.
   const handleSave = () => {
+    const payload = {
+      name: form.name,
+      contactName: dialog.editing?.contactName ?? "",
+      email: form.email,
+      phone: form.phone,
+      address: form.address,
+      notes: form.notes,
+    };
     const onSettled = () => { qc.invalidateQueries({ queryKey: getGetSuppliersQueryKey() }); setDialog({ open: false, editing: null }); };
     if (dialog.editing) {
-      updateSupplier.mutate({ id: dialog.editing.id, data: form }, { onSettled });
+      updateSupplier.mutate({ id: dialog.editing.id, data: payload }, { onSettled });
     } else {
-      createSupplier.mutate({ data: form }, { onSettled });
+      createSupplier.mutate({ data: payload }, { onSettled });
     }
   };
 
@@ -616,45 +634,28 @@ export default function Suppliers() {
         </CardContent>
       </Card>
 
-      {/* Create / Edit Dialog */}
-      <Dialog open={dialog.open} onOpenChange={(v) => setDialog((d) => ({ ...d, open: v }))}>
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle>
-              {dialog.editing ? t("Modifier le fournisseur", "تعديل المورد") : t("Ajouter un fournisseur", "إضافة مورد")}
-            </DialogTitle>
-          </DialogHeader>
-          <div className="grid grid-cols-2 gap-3 py-2">
-            {[
-              { label: t("Raison sociale", "اسم الشركة"), key: "name", full: true },
-              { label: t("Personne de contact", "جهة الاتصال"), key: "contactName" },
-              { label: "Email", key: "email" },
-              { label: t("Téléphone", "الهاتف"), key: "phone" },
-              { label: t("Adresse", "العنوان"), key: "address", full: true },
-              { label: t("Notes", "ملاحظات"), key: "notes", full: true },
-            ].map(({ label, key, full }) => (
-              <div key={key} className={full ? "col-span-2" : ""}>
-                <Label className="text-xs mb-1 block">{label}</Label>
-                <Input
-                  value={(form as any)[key]}
-                  onChange={(e) => setForm((f) => ({ ...f, [key]: e.target.value }))}
-                  className="h-8 text-sm"
-                />
-              </div>
-            ))}
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setDialog({ open: false, editing: null })}>{t("Annuler", "إلغاء")}</Button>
-            <Button
-              onClick={handleSave}
-              disabled={createSupplier.isPending || updateSupplier.isPending}
-              data-testid="button-save-supplier"
-            >
-              {t("Enregistrer", "حفظ")}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      {/* Create / Edit Dialog — reuses the shared "Nouveau client" 4-tab form */}
+      <ContactFormDialog
+        open={dialog.open}
+        onOpenChange={(v) => setDialog((d) => ({ ...d, open: v }))}
+        form={form}
+        setForm={setForm}
+        onSave={handleSave}
+        saving={createSupplier.isPending || updateSupplier.isPending}
+        error={null}
+        title={<><UserPlus className="h-4 w-4" />{dialog.editing ? t("Modifier le fournisseur", "تعديل المورد") : t("Ajouter un fournisseur", "إضافة مورد")}</>}
+        classifs={[]}
+        tiers={[]}
+        currency={lang === "ar" ? "دج" : "DA"}
+        lang={lang}
+        t={t}
+        contactTypeOptions={[
+          { value: "supplier", label: t("Fournisseur", "مورد") },
+          { value: "customer", label: t("Client", "عميل") },
+          { value: "customer_supplier", label: t("Client / Fournisseur", "عميل / مورد") },
+        ]}
+        saveButtonTestId="button-save-supplier"
+      />
 
       {/* Statement Sheet */}
       <StatementSheet

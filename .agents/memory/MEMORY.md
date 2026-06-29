@@ -14,3 +14,4 @@
 - [ERP permission module boundaries](erp-permission-module-boundaries.md) — caisse-transfers + account/me are shared all-staff Mon Compte ops (keep requireStaff, never caisse-gate); realtime is page-gated only (don't gate the shared WS).
 - [Staff password reset (ERP)](staff-password-reset.md) — admin-only PUT /erp/staff/:id/password; deliberately does NOT revoke existing JWTs (stateless auth, no session table).
 - [Orders revenue fan-out trap](orders-revenue-fanout.md) — SUM(orders.total_amount) over an orders⋈order_items join multiplies revenue by item count; aggregate order totals in a separate orders-only CTE. Dashboard Bénéfice net = rev−COGS−returns−expenses (mirrors Analytics/Rapport).
+- [Supplier save mass-assigns body](supplier-save-body-mass-assign.md) — /erp/suppliers POST+PUT persist raw req.body; PUT does NOT strip currentBalance (comment lies). Reused/rich forms must send only name/contactName/email/phone/address/notes.

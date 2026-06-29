@@ -196,6 +196,10 @@ export const contactsTable = pgTable("contacts", {
   // Shared identity across stores: contacts linked via the same globalContactId
   // (one mechanism for both customer-role and supplier-role cross-store linking).
   globalContactId: text("global_contact_id"),
+  // Single source of truth for net balance when contactType = 'customer_supplier'.
+  // Mirrored to customer_profiles.currentBalance and suppliers.currentBalance after
+  // every balance-changing operation so both role lists always show the same value.
+  currentBalance: numeric("current_balance", { precision: 12, scale: 2 }).notNull().default("0"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 }, (t) => ({

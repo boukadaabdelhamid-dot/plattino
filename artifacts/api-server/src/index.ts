@@ -641,7 +641,19 @@ DROP INDEX IF EXISTS "customer_profiles_user_id_unique";--> statement-breakpoint
 CREATE UNIQUE INDEX IF NOT EXISTS "customer_profiles_user_store_uniq" ON "customer_profiles" ("user_id","store_id");--> statement-breakpoint
 -- ─── Unified contact balance via global_contact_id (additive + idempotent) ───
 ALTER TABLE "contacts" ADD COLUMN IF NOT EXISTS "global_contact_id" text;--> statement-breakpoint
-CREATE INDEX IF NOT EXISTS "contacts_global_contact_id_idx" ON "contacts" ("global_contact_id") WHERE "global_contact_id" IS NOT NULL;`;
+CREATE INDEX IF NOT EXISTS "contacts_global_contact_id_idx" ON "contacts" ("global_contact_id") WHERE "global_contact_id" IS NOT NULL;--> statement-breakpoint
+-- ─── Net balance unified in contacts for customer_supplier contacts ───────────
+ALTER TABLE "contacts" ADD COLUMN IF NOT EXISTS "current_balance" numeric(12,2) NOT NULL DEFAULT 0;--> statement-breakpoint
+UPDATE contacts c SET current_balance = (
+  COALESCE((SELECT cp.current_balance FROM customer_profiles cp WHERE cp.contact_id = c.id), 0)
+  + COALESCE((SELECT s.current_balance FROM suppliers s WHERE s.contact_id = c.id), 0)
+) WHERE c.contact_type = 'customer_supplier';--> statement-breakpoint
+UPDATE customer_profiles SET current_balance = (
+  SELECT ct.current_balance FROM contacts ct WHERE ct.id = customer_profiles.contact_id
+) WHERE contact_id IN (SELECT id FROM contacts WHERE contact_type = 'customer_supplier') AND contact_id IS NOT NULL;--> statement-breakpoint
+UPDATE suppliers SET current_balance = (
+  SELECT ct.current_balance FROM contacts ct WHERE ct.id = suppliers.contact_id
+) WHERE contact_id IN (SELECT id FROM contacts WHERE contact_type = 'customer_supplier') AND contact_id IS NOT NULL;`;
 
 async function runMigrations() {
   const statements = MIGRATION_SQL

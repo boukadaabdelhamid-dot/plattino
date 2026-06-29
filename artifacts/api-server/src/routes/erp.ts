@@ -739,11 +739,9 @@ async function syncLinkedSupplierBalances(
     ));
 }
 
-// Contact-centric cross-store balance sync. Uses contacts.global_contact_id as the
-// single linking key for both customer-role and supplier-role rows — one mechanism
-// instead of separate globalSupplierId / globalCustomerId fields.
-// After any balance-changing operation, call this with the contact_id of the entity
-// that was just updated. No-op when the contact has no global_contact_id (single-store).
+// Cross-store balance sync for PURE customer contacts (no customer_supplier).
+// Copies customer_profiles.currentBalance to all sibling profiles sharing the same
+// global_contact_id. customer_supplier contacts use applyNetBalanceDelta instead.
 async function syncLinkedContactBalances(
   tx: DbLike,
   contactId: number,
@@ -760,7 +758,6 @@ async function syncLinkedContactBalances(
   const contactIds = linkedContacts.map((c) => c.id);
   if (contactIds.length <= 1) return;
 
-  // ── Customer-role sync: copy this contact's profile balance to all linked profiles ──
   const [updatedCp] = await tx.select({ currentBalance: schema.customerProfilesTable.currentBalance })
     .from(schema.customerProfilesTable)
     .where(eq(schema.customerProfilesTable.contactId, contactId))
@@ -773,19 +770,78 @@ async function syncLinkedContactBalances(
         ne(schema.customerProfilesTable.contactId, contactId),
       ));
   }
+}
 
-  // ── Supplier-role sync: copy this contact's supplier balance to all linked suppliers ──
-  const [updatedSup] = await tx.select({ currentBalance: schema.suppliersTable.currentBalance })
-    .from(schema.suppliersTable)
-    .where(eq(schema.suppliersTable.contactId, contactId))
-    .limit(1);
-  if (updatedSup?.currentBalance !== undefined && updatedSup.currentBalance !== null) {
-    await tx.update(schema.suppliersTable)
-      .set({ currentBalance: updatedSup.currentBalance })
-      .where(and(
-        inArray(schema.suppliersTable.contactId, contactIds),
-        ne(schema.suppliersTable.contactId, contactId),
-      ));
+// ─── Unified net-balance helpers for customer_supplier contacts ───────────────
+// contacts.current_balance is the single source of truth for customer_supplier
+// contacts. After any balance-changing operation (customer or supplier side), the
+// appropriate helper below updates contacts + mirrors the value to customer_profiles
+// AND suppliers so both role lists always show the same number.
+// Pure customer / pure supplier contacts are unaffected (early return).
+
+async function mirrorNetBalance(tx: DbLike, contactId: number, balance: string): Promise<void> {
+  await tx.update(schema.customerProfilesTable)
+    .set({ currentBalance: balance, updatedAt: new Date() })
+    .where(eq(schema.customerProfilesTable.contactId, contactId));
+  await tx.update(schema.suppliersTable)
+    .set({ currentBalance: balance })
+    .where(eq(schema.suppliersTable.contactId, contactId));
+}
+
+// Apply a signed delta to the unified balance and propagate across all stores.
+async function applyNetBalanceDelta(tx: DbLike, contactId: number, delta: number): Promise<void> {
+  const [contact] = await tx.select({
+    contactType: schema.contactsTable.contactType,
+    globalContactId: schema.contactsTable.globalContactId,
+  }).from(schema.contactsTable).where(eq(schema.contactsTable.id, contactId)).limit(1);
+  if (!contact || contact.contactType !== "customer_supplier") return;
+  if (delta === 0) return;
+
+  await tx.update(schema.contactsTable)
+    .set({ currentBalance: sql`COALESCE(current_balance, 0) + ${delta.toFixed(2)}`, updatedAt: new Date() })
+    .where(eq(schema.contactsTable.id, contactId));
+  const [updated] = await tx.select({ currentBalance: schema.contactsTable.currentBalance })
+    .from(schema.contactsTable).where(eq(schema.contactsTable.id, contactId)).limit(1);
+  const newBal = updated?.currentBalance ?? "0";
+
+  await mirrorNetBalance(tx, contactId, newBal);
+
+  if (!contact.globalContactId) return;
+  const siblings = await tx.select({ id: schema.contactsTable.id })
+    .from(schema.contactsTable)
+    .where(and(
+      eq(schema.contactsTable.globalContactId, contact.globalContactId),
+      ne(schema.contactsTable.id, contactId),
+    ));
+  for (const sib of siblings) {
+    await tx.update(schema.contactsTable)
+      .set({ currentBalance: newBal, updatedAt: new Date() })
+      .where(eq(schema.contactsTable.id, sib.id));
+    await mirrorNetBalance(tx, sib.id, newBal);
+  }
+}
+
+// Set the unified balance to an absolute value (used by supplier adjust).
+async function setNetBalance(tx: DbLike, contactId: number, newBalance: number): Promise<void> {
+  const [contact] = await tx.select({
+    contactType: schema.contactsTable.contactType,
+    globalContactId: schema.contactsTable.globalContactId,
+  }).from(schema.contactsTable).where(eq(schema.contactsTable.id, contactId)).limit(1);
+  if (!contact || contact.contactType !== "customer_supplier") return;
+  const newBalFixed = newBalance.toFixed(2);
+
+  const allIds: number[] = [contactId];
+  if (contact.globalContactId) {
+    const siblings = await tx.select({ id: schema.contactsTable.id })
+      .from(schema.contactsTable)
+      .where(eq(schema.contactsTable.globalContactId, contact.globalContactId));
+    siblings.forEach((s) => { if (s.id !== contactId) allIds.push(s.id); });
+  }
+  for (const cid of allIds) {
+    await tx.update(schema.contactsTable)
+      .set({ currentBalance: newBalFixed, updatedAt: new Date() })
+      .where(eq(schema.contactsTable.id, cid));
+    await mirrorNetBalance(tx, cid, newBalFixed);
   }
 }
 
@@ -1148,14 +1204,24 @@ router.post("/erp/suppliers/:id/operations", authenticate, requireStaff, require
       // Global model: the payment auto-debits the acting user's personal caisse.
       const payingCaisse = await ensureCaisse(null, actorUserId, tx);
 
-      // Payment increases balance (reduces debt): Solde = Versements - Achats
-      await tx.update(schema.suppliersTable)
-        .set({ currentBalance: sql`current_balance + ${amtFixed}` })
-        .where(eq(schema.suppliersTable.id, supplierId));
+      // Determine if this supplier is customer_supplier → unified balance path
+      const [_ctPay] = supplier.contactId
+        ? await tx.select({ contactType: schema.contactsTable.contactType })
+            .from(schema.contactsTable).where(eq(schema.contactsTable.id, supplier.contactId)).limit(1)
+        : [undefined];
+      const _isCSPay = _ctPay?.contactType === "customer_supplier";
 
-      // Global shared account: propagate new balance to linked stores' supplier records
-      await syncLinkedSupplierBalances(tx, supplierId, supplier.globalSupplierId);
-      if (supplier.contactId) await syncLinkedContactBalances(tx, supplier.contactId);
+      if (!_isCSPay) {
+        // Payment increases balance (reduces debt): Solde = Versements - Achats
+        await tx.update(schema.suppliersTable)
+          .set({ currentBalance: sql`current_balance + ${amtFixed}` })
+          .where(eq(schema.suppliersTable.id, supplierId));
+        await syncLinkedSupplierBalances(tx, supplierId, supplier.globalSupplierId);
+        if (supplier.contactId) await syncLinkedContactBalances(tx, supplier.contactId);
+      } else {
+        // Unified: payment → unified balance increases (reduces net debt to supplier)
+        await applyNetBalanceDelta(tx, supplier.contactId!, parsedAmount);
+      }
 
       // Record supplier operation — optionally linked to a specific PO
       const [operation] = await tx.insert(schema.supplierOperationsTable).values({
@@ -1214,13 +1280,22 @@ router.post("/erp/suppliers/:id/adjust", authenticate, requireStaff, requireStor
     const autoNote = `Ancien: ${oldBalance.toFixed(2)} DA → Nouveau: ${newBalanceFixed} DA${note ? ` — ${note}` : ""}`;
 
     const op = await db.transaction(async (tx) => {
-      await tx.update(schema.suppliersTable)
-        .set({ currentBalance: newBalanceFixed })
-        .where(eq(schema.suppliersTable.id, supplierId));
+      const [_ctAdj] = supplier.contactId
+        ? await tx.select({ contactType: schema.contactsTable.contactType })
+            .from(schema.contactsTable).where(eq(schema.contactsTable.id, supplier.contactId)).limit(1)
+        : [undefined];
+      const _isCSAdj = _ctAdj?.contactType === "customer_supplier";
 
-      // Global shared account: propagate new balance to linked stores' supplier records
-      await syncLinkedSupplierBalances(tx, supplierId, supplier.globalSupplierId);
-      if (supplier.contactId) await syncLinkedContactBalances(tx, supplier.contactId);
+      if (!_isCSAdj) {
+        await tx.update(schema.suppliersTable)
+          .set({ currentBalance: newBalanceFixed })
+          .where(eq(schema.suppliersTable.id, supplierId));
+        await syncLinkedSupplierBalances(tx, supplierId, supplier.globalSupplierId);
+        if (supplier.contactId) await syncLinkedContactBalances(tx, supplier.contactId);
+      } else {
+        // Unified: set absolute net balance (contacts.currentBalance + mirrors + all stores)
+        await setNetBalance(tx, supplier.contactId!, parsedTarget);
+      }
 
       const [operation] = await tx.insert(schema.supplierOperationsTable).values({
         supplierId,
@@ -1373,17 +1448,27 @@ router.put("/erp/purchase-orders/:id/receive", authenticate, requireStaff, requi
 
       // À terme only: purchase creates a supplier debt (Comptant = paid immediately, no debt)
       if (po.paymentMethod !== "comptant") {
-        await tx.update(schema.suppliersTable)
-          .set({ currentBalance: sql`current_balance - ${totalAmount.toFixed(2)}` })
-          .where(eq(schema.suppliersTable.id, po.supplierId));
-
-        // Global shared account: propagate new balance to linked stores' supplier records
         const [poSupplier] = await tx.select({ globalSupplierId: schema.suppliersTable.globalSupplierId, contactId: schema.suppliersTable.contactId })
           .from(schema.suppliersTable)
           .where(eq(schema.suppliersTable.id, po.supplierId))
           .limit(1);
-        await syncLinkedSupplierBalances(tx, po.supplierId, poSupplier?.globalSupplierId);
-        if (poSupplier?.contactId) await syncLinkedContactBalances(tx, poSupplier.contactId);
+
+        const [_ctPo] = poSupplier?.contactId
+          ? await tx.select({ contactType: schema.contactsTable.contactType })
+              .from(schema.contactsTable).where(eq(schema.contactsTable.id, poSupplier.contactId)).limit(1)
+          : [undefined];
+        const _isCSPo = _ctPo?.contactType === "customer_supplier";
+
+        if (!_isCSPo) {
+          await tx.update(schema.suppliersTable)
+            .set({ currentBalance: sql`current_balance - ${totalAmount.toFixed(2)}` })
+            .where(eq(schema.suppliersTable.id, po.supplierId));
+          await syncLinkedSupplierBalances(tx, po.supplierId, poSupplier?.globalSupplierId);
+          if (poSupplier?.contactId) await syncLinkedContactBalances(tx, poSupplier.contactId);
+        } else {
+          // Unified: PO receipt on credit → balance decreases (we owe them more)
+          await applyNetBalanceDelta(tx, poSupplier.contactId!, -totalAmount);
+        }
 
         await tx.insert(schema.supplierOperationsTable).values({
           supplierId: po.supplierId,
@@ -2458,12 +2543,20 @@ router.post("/erp/customers/:id/operations", authenticate, requireAdmin, require
           SET current_balance = COALESCE(customer_profiles.current_balance, 0) + ${delta.toFixed(2)},
               updated_at = NOW()
       `);
-      // ── Phase 5: cross-store balance sync via global_contact_id ──
+      // ── Phase 5: balance sync ──
       const [_cpPost] = await tx.select({ contactId: schema.customerProfilesTable.contactId })
         .from(schema.customerProfilesTable)
         .where(and(eq(schema.customerProfilesTable.userId, customerId), eq(schema.customerProfilesTable.storeId, storeId)))
         .limit(1);
-      if (_cpPost?.contactId) await syncLinkedContactBalances(tx, _cpPost.contactId);
+      if (_cpPost?.contactId) {
+        const [_ctPost] = await tx.select({ contactType: schema.contactsTable.contactType })
+          .from(schema.contactsTable).where(eq(schema.contactsTable.id, _cpPost.contactId)).limit(1);
+        if (_ctPost?.contactType === "customer_supplier") {
+          await applyNetBalanceDelta(tx, _cpPost.contactId, delta);
+        } else {
+          await syncLinkedContactBalances(tx, _cpPost.contactId);
+        }
+      }
       return inserted;
     });
     if (resolvedCaisseId !== null) {
@@ -2559,7 +2652,15 @@ router.put("/erp/customers/:id/operations/:opId", authenticate, requireAdmin, re
         .from(schema.customerProfilesTable)
         .where(and(eq(schema.customerProfilesTable.userId, customerId), eq(schema.customerProfilesTable.storeId, storeId)))
         .limit(1);
-      if (_cpPut?.contactId) await syncLinkedContactBalances(tx, _cpPut.contactId);
+      if (_cpPut?.contactId) {
+        const [_ctPut] = await tx.select({ contactType: schema.contactsTable.contactType })
+          .from(schema.contactsTable).where(eq(schema.contactsTable.id, _cpPut.contactId)).limit(1);
+        if (_ctPut?.contactType === "customer_supplier") {
+          await applyNetBalanceDelta(tx, _cpPut.contactId, balanceDiff);
+        } else {
+          await syncLinkedContactBalances(tx, _cpPut.contactId);
+        }
+      }
       return op;
     });
     if (!updated) { res.status(404).json({ error: "Operation not found" }); return; }
@@ -2632,7 +2733,15 @@ router.delete("/erp/customers/:id/operations/:opId", authenticate, requireAdmin,
         .from(schema.customerProfilesTable)
         .where(and(eq(schema.customerProfilesTable.userId, customerId), eq(schema.customerProfilesTable.storeId, storeId)))
         .limit(1);
-      if (_cpDel?.contactId) await syncLinkedContactBalances(tx, _cpDel.contactId);
+      if (_cpDel?.contactId) {
+        const [_ctDel] = await tx.select({ contactType: schema.contactsTable.contactType })
+          .from(schema.contactsTable).where(eq(schema.contactsTable.id, _cpDel.contactId)).limit(1);
+        if (_ctDel?.contactType === "customer_supplier") {
+          await applyNetBalanceDelta(tx, _cpDel.contactId, delta);
+        } else {
+          await syncLinkedContactBalances(tx, _cpDel.contactId);
+        }
+      }
 
       // Reverse caisse and accounting side effects for posted versement/remboursement
       if (existing.caisseId !== null && (existing.type === "versement" || existing.type === "remboursement")) {

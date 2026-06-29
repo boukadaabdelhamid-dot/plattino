@@ -1642,6 +1642,8 @@ export const GetSuppliersResponseItem = zod.object({
   phone: zod.string().nullish(),
   address: zod.string().nullish(),
   notes: zod.string().nullish(),
+  contactType: zod.enum(["supplier", "customer_supplier"]).optional(),
+  contactId: zod.number().nullish(),
   currentBalance: zod
     .string()
     .describe("Running debt balance (positive = owe supplier)"),
@@ -1659,6 +1661,7 @@ export const CreateSupplierBody = zod.object({
   phone: zod.string().optional(),
   address: zod.string().optional(),
   notes: zod.string().optional(),
+  contactType: zod.enum(["supplier", "customer_supplier"]).optional(),
 });
 
 /**
@@ -1675,6 +1678,7 @@ export const UpdateSupplierBody = zod.object({
   phone: zod.string().optional(),
   address: zod.string().optional(),
   notes: zod.string().optional(),
+  contactType: zod.enum(["supplier", "customer_supplier"]).optional(),
 });
 
 export const UpdateSupplierResponse = zod.object({
@@ -1685,6 +1689,8 @@ export const UpdateSupplierResponse = zod.object({
   phone: zod.string().nullish(),
   address: zod.string().nullish(),
   notes: zod.string().nullish(),
+  contactType: zod.enum(["supplier", "customer_supplier"]).optional(),
+  contactId: zod.number().nullish(),
   currentBalance: zod
     .string()
     .describe("Running debt balance (positive = owe supplier)"),
@@ -1707,6 +1713,8 @@ export const GetSupplierOperationsResponse = zod.object({
     phone: zod.string().nullish(),
     address: zod.string().nullish(),
     notes: zod.string().nullish(),
+    contactType: zod.enum(["supplier", "customer_supplier"]).optional(),
+    contactId: zod.number().nullish(),
     currentBalance: zod
       .string()
       .describe("Running debt balance (positive = owe supplier)"),

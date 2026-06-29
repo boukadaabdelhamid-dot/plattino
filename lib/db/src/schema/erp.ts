@@ -50,6 +50,9 @@ export const leavesTable = pgTable("leaves", {
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
+// Contact type shared by the unified contacts identity and the role tables.
+export const contactTypeEnum = pgEnum("contact_type", ["customer", "supplier", "customer_supplier"]);
+
 // ─── Suppliers ────────────────────────────────────────────────────────────────
 export const suppliersTable = pgTable("suppliers", {
   id: serial("id").primaryKey(),
@@ -60,6 +63,10 @@ export const suppliersTable = pgTable("suppliers", {
   phone: text("phone"),
   address: text("address"),
   notes: text("notes"),
+  // Role of the linked contact: 'supplier' (default) or 'customer_supplier'.
+  contactType: contactTypeEnum("contact_type").notNull().default("supplier"),
+  // Link to the unified contact identity (nullable — legacy rows stay NULL).
+  contactId: integer("contact_id").references(() => contactsTable.id),
   currentBalance: numeric("current_balance", { precision: 12, scale: 2 }).notNull().default("0"),
   // Shared identity across stores: suppliers linked via the same globalSupplierId
   // share a single global balance (synced on every balance-changing operation).
@@ -74,6 +81,10 @@ export const suppliersTable = pgTable("suppliers", {
   globalIdIdx: index("suppliers_global_id_idx")
     .on(t.globalSupplierId)
     .where(sql`${t.globalSupplierId} IS NOT NULL`),
+  // At most one supplier row per contact identity.
+  uniqContact: uniqueIndex("suppliers_contact_id_uniq")
+    .on(t.contactId)
+    .where(sql`${t.contactId} IS NOT NULL`),
 }));
 
 // ─── Supplier Operations (purchases / payments / ajustements) ─────────────────
@@ -166,9 +177,29 @@ export const priceTiersTable = pgTable("price_tiers", {
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
-// ─── Customer Profiles (ERP-specific data, separate from users table) ─────────
-export const contactTypeEnum = pgEnum("contact_type", ["customer", "customer_supplier"]);
+// ─── Contacts (unified identity — single source of truth for shared fields) ──
+// One contact represents a person/company. The customer role (users + customer_profiles)
+// and the supplier role (suppliers) link to it through a nullable contact_id. A contact
+// whose contactType is 'customer_supplier' surfaces in BOTH the customers and suppliers
+// lists (each list still reads its own native role row). Legacy customer/supplier rows
+// keep contact_id NULL and keep working exactly as before — this table is purely additive.
+export const contactsTable = pgTable("contacts", {
+  id: serial("id").primaryKey(),
+  storeId: integer("store_id").references(() => storesTable.id).notNull(),
+  name: text("name").notNull(),
+  contactName: text("contact_name"),
+  email: text("email"),
+  phone: text("phone"),
+  address: text("address"),
+  notes: text("notes"),
+  contactType: contactTypeEnum("contact_type").notNull().default("customer"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+}, (t) => ({
+  storeTypeIdx: index("contacts_store_type_idx").on(t.storeId, t.contactType),
+}));
 
+// ─── Customer Profiles (ERP-specific data, separate from users table) ─────────
 export const customerProfilesTable = pgTable("customer_profiles", {
   id: serial("id").primaryKey(),
   userId: integer("user_id").references(() => usersTable.id).notNull().unique(),
@@ -188,9 +219,16 @@ export const customerProfilesTable = pgTable("customer_profiles", {
   nif: text("nif"),
   ai: text("ai"),
   nis: text("nis"),
+  // Link to the unified contact identity (nullable — legacy rows stay NULL).
+  contactId: integer("contact_id").references(() => contactsTable.id),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
-});
+}, (t) => ({
+  // At most one customer profile per contact identity.
+  uniqContact: uniqueIndex("customer_profiles_contact_id_uniq")
+    .on(t.contactId)
+    .where(sql`${t.contactId} IS NOT NULL`),
+}));
 
 // ─── Customer Operations (Versements / Remboursements / …) ───────────────────
 // type is plain text (not enum) to allow adding new operation kinds without migrations.

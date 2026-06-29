@@ -4309,6 +4309,12 @@ components:
         notes:
           type: string
           nullable: true
+        contactType:
+          type: string
+          enum: [supplier, customer_supplier]
+        contactId:
+          type: integer
+          nullable: true
         currentBalance:
           type: string
           description: "Running debt balance (positive = owe supplier)"
@@ -4390,6 +4396,9 @@ components:
           type: string
         notes:
           type: string
+        contactType:
+          type: string
+          enum: [supplier, customer_supplier]
       required: [name]
 
     PurchaseOrder:

@@ -4,7 +4,7 @@ import {
   useGetErpCustomers, useGetErpCustomer, useCreateCustomerNote,
   useCreateErpCustomer, useUpdateErpCustomer,
   useGetErpCustomerClassifications, useGetErpPriceTiers,
-  getGetErpCustomersQueryKey, getGetErpCustomerQueryKey,
+  getGetErpCustomersQueryKey, getGetErpCustomerQueryKey, getGetSuppliersQueryKey,
   useGetCustomerOperations, useCreateCustomerOperation,
   useUpdateCustomerOperation, useDeleteCustomerOperation,
   getGetCustomerOperationsQueryKey,
@@ -150,6 +150,8 @@ function CustomerSheet({ customerId, onClose, t, lang, currency, initialTab = "b
       onSuccess: () => {
         qc.invalidateQueries({ queryKey: getGetErpCustomerQueryKey(customerId) });
         qc.invalidateQueries({ queryKey: getGetErpCustomersQueryKey() });
+        // Switching to customer_supplier creates the supplier side — refresh that list too.
+        qc.invalidateQueries({ queryKey: getGetSuppliersQueryKey() });
         setEditing(false);
       },
     });
@@ -1673,6 +1675,8 @@ export default function Customers() {
       {
         onSuccess: () => {
           qc.invalidateQueries({ queryKey: getGetErpCustomersQueryKey() });
+          // A customer_supplier also creates the supplier side — refresh that list too.
+          qc.invalidateQueries({ queryKey: getGetSuppliersQueryKey() });
           setCreateOpen(false);
           setCreateForm({ name: "", email: "", password: "", phone: "", address: "", commune: "", gps: "", notes: "", contactType: "customer", wilaya: "", classificationId: "", priceTierId: "", accountNumber: "", rc: "", nif: "", ai: "", nis: "", creditLimit: "", minBalanceAlert: "", currentBalance: "0", foreignCurrency: false });
         },

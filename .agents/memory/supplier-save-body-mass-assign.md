@@ -1,15 +1,25 @@
 ---
-name: Supplier save mass-assigns the request body
-description: /erp/suppliers POST+PUT persist whatever fields are in the body; currentBalance is NOT stripped on PUT despite the comment.
+name: Supplier save whitelists shared fields (no mass-assign)
+description: /erp/suppliers POST+PUT whitelist only shared contact fields + contactType; currentBalance/globalSupplierId/storeId are never assignable via create/edit.
 ---
 
-# Supplier create/update persist the raw request body
+# Supplier create/update must whitelist, never mass-assign
 
-- `POST /erp/suppliers` → `db.insert(suppliersTable).values({ ...req.body, storeId })` (only `globalSupplierId` is deleted).
-- `PUT /erp/suppliers/:id` → `db.update(...).set({ ...req.body })` deleting only `storeId` and `globalSupplierId`.
+`POST /erp/suppliers` and `PUT /erp/suppliers/:id` build an explicit `set`/insert
+object from ONLY the shared contact fields: `{ name, contactName, email, phone,
+address, notes, contactType }` (plus the managed `contactId` link). They do NOT
+spread `req.body`.
 
-**The PUT comment claims it protects balance from mass-assignment, but the code does NOT delete `currentBalance`** — so `currentBalance` (and any other supplier column present in the body) IS mass-assignable on edit.
+**Never assignable via create/edit:** `currentBalance`, `globalSupplierId`,
+`storeId`. Balance changes go exclusively through the dedicated adjust/operations
+routes.
 
-**Why:** when reusing a rich/shared contact form (e.g. the customer "Nouveau client" 4-tab form, now `components/ContactFormDialog.tsx`) for suppliers, sending the whole form would silently overwrite `current_balance` and persist unrelated fields, corrupting supplier ledgers.
+**Why:** suppliers and customers share a rich form (`components/ContactFormDialog.tsx`).
+Spreading the whole form body would silently overwrite `current_balance` and persist
+unrelated columns, corrupting supplier ledgers.
 
-**How to apply:** any supplier create/edit UI must map ONLY `{ name, contactName, email, phone, address, notes }` into the create/update payload. `contactType` is not a supplier column. Balance changes must go through the dedicated adjust/operations routes, never the generic create/PUT. (Same caution applies if customer save is ever refactored to a generic body insert.)
+**How to apply:** any supplier (or customer) create/edit must map only the
+whitelisted shared fields into the payload. `contactType` IS a valid supplier column
+now (enum: supplier | customer_supplier on that table) and drives the unified-contact
+role linkage — keep it in the whitelist. If you ever refactor customer save to a
+generic body insert, apply the same whitelist discipline.

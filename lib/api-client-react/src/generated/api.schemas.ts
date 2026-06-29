@@ -729,6 +729,14 @@ export interface CreateLeaveRequest {
   reason?: string;
 }
 
+export type SupplierContactType =
+  (typeof SupplierContactType)[keyof typeof SupplierContactType];
+
+export const SupplierContactType = {
+  supplier: "supplier",
+  customer_supplier: "customer_supplier",
+} as const;
+
 export interface Supplier {
   id: number;
   name: string;
@@ -737,6 +745,8 @@ export interface Supplier {
   phone?: string | null;
   address?: string | null;
   notes?: string | null;
+  contactType?: SupplierContactType;
+  contactId?: number | null;
   /** Running debt balance (positive = owe supplier) */
   currentBalance: string;
   createdAt?: string;
@@ -778,6 +788,14 @@ export interface CreateSupplierOperationRequest {
   note?: string;
 }
 
+export type CreateSupplierRequestContactType =
+  (typeof CreateSupplierRequestContactType)[keyof typeof CreateSupplierRequestContactType];
+
+export const CreateSupplierRequestContactType = {
+  supplier: "supplier",
+  customer_supplier: "customer_supplier",
+} as const;
+
 export interface CreateSupplierRequest {
   name: string;
   contactName?: string;
@@ -785,6 +803,7 @@ export interface CreateSupplierRequest {
   phone?: string;
   address?: string;
   notes?: string;
+  contactType?: CreateSupplierRequestContactType;
 }
 
 export type PurchaseOrderStatus =

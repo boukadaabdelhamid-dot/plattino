@@ -610,7 +610,31 @@ ALTER TABLE "product_brands" ADD CONSTRAINT "product_brands_store_id_stores_id_f
 ALTER TABLE "product_colors" ADD CONSTRAINT "product_colors_store_id_stores_id_fk" FOREIGN KEY ("store_id") REFERENCES "public"."stores"("id");--> statement-breakpoint
 ALTER TABLE "employees" ADD CONSTRAINT "employees_user_id_unique" UNIQUE("user_id");--> statement-breakpoint
 ALTER TABLE "employees" ADD CONSTRAINT "employees_user_id_users_id_fk" FOREIGN KEY ("user_id") REFERENCES "public"."users"("id");--> statement-breakpoint
-ALTER TABLE "products" ADD CONSTRAINT "stock_non_negative" CHECK ("stock" >= 0);`;
+ALTER TABLE "products" ADD CONSTRAINT "stock_non_negative" CHECK ("stock" >= 0);--> statement-breakpoint
+-- ─── Unified contacts identity (Phase 2, additive + idempotent) ───
+ALTER TYPE "public"."contact_type" ADD VALUE IF NOT EXISTS 'supplier';--> statement-breakpoint
+CREATE TABLE IF NOT EXISTS "contacts" (
+        "id" serial PRIMARY KEY NOT NULL,
+        "store_id" integer NOT NULL,
+        "name" text NOT NULL,
+        "contact_name" text,
+        "email" text,
+        "phone" text,
+        "address" text,
+        "notes" text,
+        "contact_type" "contact_type" DEFAULT 'customer' NOT NULL,
+        "created_at" timestamp DEFAULT now() NOT NULL,
+        "updated_at" timestamp DEFAULT now() NOT NULL
+);--> statement-breakpoint
+ALTER TABLE "contacts" ADD CONSTRAINT "contacts_store_id_stores_id_fk" FOREIGN KEY ("store_id") REFERENCES "public"."stores"("id");--> statement-breakpoint
+ALTER TABLE "customer_profiles" ADD COLUMN IF NOT EXISTS "contact_id" integer;--> statement-breakpoint
+ALTER TABLE "customer_profiles" ADD CONSTRAINT "customer_profiles_contact_id_contacts_id_fk" FOREIGN KEY ("contact_id") REFERENCES "public"."contacts"("id");--> statement-breakpoint
+ALTER TABLE "suppliers" ADD COLUMN IF NOT EXISTS "contact_id" integer;--> statement-breakpoint
+ALTER TABLE "suppliers" ADD COLUMN IF NOT EXISTS "contact_type" "contact_type" DEFAULT 'supplier' NOT NULL;--> statement-breakpoint
+ALTER TABLE "suppliers" ADD CONSTRAINT "suppliers_contact_id_contacts_id_fk" FOREIGN KEY ("contact_id") REFERENCES "public"."contacts"("id");--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "contacts_store_type_idx" ON "contacts" ("store_id","contact_type");--> statement-breakpoint
+CREATE UNIQUE INDEX IF NOT EXISTS "customer_profiles_contact_id_uniq" ON "customer_profiles" ("contact_id") WHERE "contact_id" IS NOT NULL;--> statement-breakpoint
+CREATE UNIQUE INDEX IF NOT EXISTS "suppliers_contact_id_uniq" ON "suppliers" ("contact_id") WHERE "contact_id" IS NOT NULL;`;
 
 async function runMigrations() {
   const statements = MIGRATION_SQL

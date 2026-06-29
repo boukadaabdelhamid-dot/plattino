@@ -3,7 +3,7 @@ import {
   useGetSuppliers, useCreateSupplier, useUpdateSupplier,
   useGetSupplierOperations, useCreateSupplierOperation,
   useGetErpStoresAll,
-  getGetSuppliersQueryKey, getGetSupplierOperationsQueryKey,
+  getGetSuppliersQueryKey, getGetSupplierOperationsQueryKey, getGetErpCustomersQueryKey,
 } from "@workspace/api-client-react";
 import type { Supplier, SupplierOperation } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
@@ -485,6 +485,7 @@ export default function Suppliers() {
       ...emptySupplierForm,
       name: s.name ?? "", email: s.email ?? "", phone: s.phone ?? "",
       address: s.address ?? "", notes: s.notes ?? "",
+      contactType: s.contactType ?? "supplier",
     });
     setDialog({ open: true, editing: s });
   };
@@ -504,8 +505,14 @@ export default function Suppliers() {
       phone: form.phone,
       address: form.address,
       notes: form.notes,
+      contactType: form.contactType as "supplier" | "customer_supplier",
     };
-    const onSettled = () => { qc.invalidateQueries({ queryKey: getGetSuppliersQueryKey() }); setDialog({ open: false, editing: null }); };
+    const onSettled = () => {
+      qc.invalidateQueries({ queryKey: getGetSuppliersQueryKey() });
+      // A customer_supplier also creates/refreshes the customer side — refresh that list too.
+      qc.invalidateQueries({ queryKey: getGetErpCustomersQueryKey() });
+      setDialog({ open: false, editing: null });
+    };
     if (dialog.editing) {
       updateSupplier.mutate({ id: dialog.editing.id, data: payload }, { onSettled });
     } else {
@@ -651,7 +658,6 @@ export default function Suppliers() {
         t={t}
         contactTypeOptions={[
           { value: "supplier", label: t("Fournisseur", "مورد") },
-          { value: "customer", label: t("Client", "عميل") },
           { value: "customer_supplier", label: t("Client / Fournisseur", "عميل / مورد") },
         ]}
         saveButtonTestId="button-save-supplier"

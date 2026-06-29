@@ -12,6 +12,94 @@ const router = Router();
 const pid = (req: { params: Record<string, string | string[]> }, key: string): number =>
   parseInt(req.params[key] as string);
 
+// ─── Unified contacts identity helpers (Phase 2, additive) ───────────────────
+// A `contacts` row is the single source of truth for shared fields (name, email,
+// phone, address, notes, contactType). The customer role (users + customer_profiles)
+// and the supplier role (suppliers) link to it via a nullable contact_id. Each role
+// keeps its own native row, so the existing customer/supplier list queries are
+// unchanged — a `customer_supplier` simply owns BOTH role rows under ONE contact.
+type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0];
+
+type ContactSharedInput = {
+  name: string;
+  contactName?: string | null;
+  email?: string | null;
+  phone?: string | null;
+  address?: string | null;
+  notes?: string | null;
+  contactType: "customer" | "supplier" | "customer_supplier";
+};
+
+// Thrown by role helpers to surface a specific HTTP status from inside a transaction.
+class HttpError extends Error {
+  constructor(public status: number, message: string) { super(message); }
+}
+
+async function insertContact(tx: Tx, storeId: number, s: ContactSharedInput): Promise<number> {
+  const [c] = await tx.insert(schema.contactsTable).values({
+    storeId,
+    name: s.name,
+    contactName: s.contactName ?? null,
+    email: s.email ?? null,
+    phone: s.phone ?? null,
+    address: s.address ?? null,
+    notes: s.notes ?? null,
+    contactType: s.contactType,
+  }).returning({ id: schema.contactsTable.id });
+  return c.id;
+}
+
+async function updateContactFields(tx: Tx, contactId: number, s: Partial<ContactSharedInput>): Promise<void> {
+  const set: Record<string, unknown> = { updatedAt: new Date() };
+  if (s.name !== undefined) set.name = s.name;
+  if (s.contactName !== undefined) set.contactName = s.contactName ?? null;
+  if (s.email !== undefined) set.email = s.email ?? null;
+  if (s.phone !== undefined) set.phone = s.phone ?? null;
+  if (s.address !== undefined) set.address = s.address ?? null;
+  if (s.notes !== undefined) set.notes = s.notes ?? null;
+  if (s.contactType !== undefined) set.contactType = s.contactType;
+  await tx.update(schema.contactsTable).set(set).where(eq(schema.contactsTable.id, contactId));
+}
+
+// Ensure the customer-role extension (user + profile) exists for a contact.
+// Requires an email to create the login; throws HttpError otherwise. Idempotent.
+async function ensureCustomerRole(tx: Tx, storeId: number, contactId: number, s: ContactSharedInput): Promise<number> {
+  const [existing] = await tx.select({ userId: schema.customerProfilesTable.userId })
+    .from(schema.customerProfilesTable)
+    .where(eq(schema.customerProfilesTable.contactId, contactId)).limit(1);
+  if (existing) return existing.userId;
+  const email = (s.email ?? "").trim();
+  if (!email) throw new HttpError(400, "email is required to create the customer side of a customer/supplier contact");
+  const [dup] = await tx.select({ id: schema.usersTable.id })
+    .from(schema.usersTable).where(eq(schema.usersTable.email, email)).limit(1);
+  if (dup) throw new HttpError(409, "A user with this email already exists");
+  const passwordHash = await bcrypt.hash(Math.random().toString(36).slice(2, 12), 10);
+  const [user] = await tx.insert(schema.usersTable).values({
+    name: s.name, email, passwordHash, role: "customer", preferredLang: "ar",
+    phone: s.phone ?? null, address: s.address ?? null, notes: s.notes ?? null,
+  }).returning({ id: schema.usersTable.id });
+  await tx.insert(schema.customerProfilesTable).values({
+    userId: user.id, storeId, contactId,
+    contactType: s.contactType === "customer_supplier" ? "customer_supplier" : "customer",
+  }).onConflictDoNothing();
+  return user.id;
+}
+
+// Ensure the supplier-role extension exists for a contact. Idempotent.
+async function ensureSupplierRole(tx: Tx, storeId: number, contactId: number, s: ContactSharedInput): Promise<number> {
+  const [existing] = await tx.select({ id: schema.suppliersTable.id })
+    .from(schema.suppliersTable)
+    .where(eq(schema.suppliersTable.contactId, contactId)).limit(1);
+  if (existing) return existing.id;
+  const [supplier] = await tx.insert(schema.suppliersTable).values({
+    storeId, name: s.name, contactName: s.contactName ?? null, email: s.email ?? null,
+    phone: s.phone ?? null, address: s.address ?? null, notes: s.notes ?? null,
+    contactType: s.contactType === "customer_supplier" ? "customer_supplier" : "supplier",
+    contactId,
+  }).returning({ id: schema.suppliersTable.id });
+  return supplier.id;
+}
+
 // ─── Dashboard — Général ───────────────────────────────────────────
 // Single endpoint for all KPIs shown in the "Général" dashboard tab.
 // Add new fields here as the tab grows (receivables, caisse balance, etc.)
@@ -651,25 +739,108 @@ router.get("/erp/suppliers", authenticate, requireStaff, requireStore, requirePe
 
 router.post("/erp/suppliers", authenticate, requireStaff, requireStore, requirePermission("suppliers", "create"), async (req: AuthRequest, res) => {
   try {
-    // globalSupplierId is managed exclusively by the import-to-stores flow —
-    // never allow callers to mass-assign it via the generic create route.
-    const body = { ...req.body, storeId: req.currentStoreId! }; delete body.globalSupplierId;
-    const [supplier] = await db.insert(schema.suppliersTable).values(body).returning();
+    const storeId = req.currentStoreId!;
+    const b = req.body || {};
+    // Whitelist shared fields only — currentBalance / globalSupplierId / storeId are
+    // never mass-assignable here (globalSupplierId is owned by the import-to-stores flow).
+    const name = typeof b.name === "string" ? b.name.trim() : "";
+    if (!name) { res.status(400).json({ error: "name is required" }); return; }
+    const contactType: "supplier" | "customer_supplier" =
+      b.contactType === "customer_supplier" ? "customer_supplier" : "supplier";
+    const shared: ContactSharedInput = {
+      name,
+      contactName: b.contactName ?? null,
+      email: b.email ?? null,
+      phone: b.phone ?? null,
+      address: b.address ?? null,
+      notes: b.notes ?? null,
+      contactType,
+    };
+    // A customer/supplier needs an email so the customer-side login can be created.
+    if (contactType === "customer_supplier" && !(typeof b.email === "string" && b.email.trim())) {
+      res.status(400).json({ error: "email is required for a customer/supplier contact" });
+      return;
+    }
+    const supplier = await db.transaction(async (tx) => {
+      const contactId = await insertContact(tx, storeId, shared);
+      const supplierId = await ensureSupplierRole(tx, storeId, contactId, shared);
+      if (contactType === "customer_supplier") {
+        await ensureCustomerRole(tx, storeId, contactId, shared);
+      }
+      const [row] = await tx.select().from(schema.suppliersTable)
+        .where(eq(schema.suppliersTable.id, supplierId)).limit(1);
+      return row;
+    });
     res.status(201).json(supplier);
-  } catch (err) { req.log.error(err); res.status(500).json({ error: "Internal server error" }); }
+  } catch (err) {
+    if (err instanceof HttpError) { res.status(err.status).json({ error: err.message }); return; }
+    req.log.error(err); res.status(500).json({ error: "Internal server error" });
+  }
 });
 
 router.put("/erp/suppliers/:id", authenticate, requireStaff, requireStore, requirePermission("suppliers", "edit"), async (req: AuthRequest, res) => {
   try {
     const storeId = req.currentStoreId!;
-    // Protect link membership + balance from mass-assignment on the generic edit route.
-    const body = { ...req.body }; delete body.storeId; delete body.globalSupplierId;
-    const [supplier] = await db.update(schema.suppliersTable).set(body)
-      .where(and(eq(schema.suppliersTable.id, pid(req, "id")), eq(schema.suppliersTable.storeId, storeId)))
-      .returning();
-    if (!supplier) { res.status(404).json({ error: "Not found" }); return; }
+    const id = pid(req, "id");
+    const b = req.body || {};
+    const [current] = await db.select().from(schema.suppliersTable)
+      .where(and(eq(schema.suppliersTable.id, id), eq(schema.suppliersTable.storeId, storeId))).limit(1);
+    if (!current) { res.status(404).json({ error: "Not found" }); return; }
+    // Whitelist editable shared fields — never storeId / globalSupplierId / currentBalance.
+    const set: Record<string, unknown> = {};
+    if (b.name !== undefined) set.name = b.name;
+    if (b.contactName !== undefined) set.contactName = b.contactName ?? null;
+    if (b.email !== undefined) set.email = b.email ?? null;
+    if (b.phone !== undefined) set.phone = b.phone ?? null;
+    if (b.address !== undefined) set.address = b.address ?? null;
+    if (b.notes !== undefined) set.notes = b.notes ?? null;
+    const newType: "supplier" | "customer_supplier" | undefined =
+      b.contactType === "customer_supplier" ? "customer_supplier"
+      : b.contactType === "supplier" ? "supplier" : undefined;
+    if (newType !== undefined) set.contactType = newType;
+
+    const supplier = await db.transaction(async (tx) => {
+      const requestedType: "supplier" | "customer_supplier" =
+        newType ?? (current.contactType === "customer_supplier" ? "customer_supplier" : "supplier");
+      // One-way role promotion: if this identity already owns a customer role, it must
+      // stay a customer_supplier — a role that may carry financial history is never stripped.
+      const hasCustomerRole = current.contactId != null && (await tx.select({ userId: schema.customerProfilesTable.userId })
+        .from(schema.customerProfilesTable)
+        .where(eq(schema.customerProfilesTable.contactId, current.contactId)).limit(1)).length > 0;
+      if (hasCustomerRole && requestedType === "supplier") {
+        throw new HttpError(409, "This contact is also a customer; its type cannot be reduced to supplier only.");
+      }
+      const effType: "supplier" | "customer_supplier" = hasCustomerRole ? "customer_supplier" : requestedType;
+      set.contactType = effType;
+      await tx.update(schema.suppliersTable).set(set).where(eq(schema.suppliersTable.id, id));
+      const shared: ContactSharedInput = {
+        name: (set.name as string | undefined) ?? current.name,
+        contactName: (set.contactName as string | null | undefined) ?? current.contactName,
+        email: (set.email as string | null | undefined) ?? current.email,
+        phone: (set.phone as string | null | undefined) ?? current.phone,
+        address: (set.address as string | null | undefined) ?? current.address,
+        notes: (set.notes as string | null | undefined) ?? current.notes,
+        contactType: effType,
+      };
+      let contactId = current.contactId;
+      if (contactId == null) {
+        contactId = await insertContact(tx, storeId, shared);
+        await tx.update(schema.suppliersTable).set({ contactId }).where(eq(schema.suppliersTable.id, id));
+      } else {
+        await updateContactFields(tx, contactId, shared);
+      }
+      if (effType === "customer_supplier") {
+        await ensureCustomerRole(tx, storeId, contactId, shared);
+      }
+      const [row] = await tx.select().from(schema.suppliersTable)
+        .where(eq(schema.suppliersTable.id, id)).limit(1);
+      return row;
+    });
     res.json(supplier);
-  } catch (err) { req.log.error(err); res.status(500).json({ error: "Internal server error" }); }
+  } catch (err) {
+    if (err instanceof HttpError) { res.status(err.status).json({ error: err.message }); return; }
+    req.log.error(err); res.status(500).json({ error: "Internal server error" });
+  }
 });
 
 // Supplier Operations (GET statement + POST payment)
@@ -1537,23 +1708,30 @@ router.post("/erp/customers", authenticate, requireStaff, requireStore, requireP
     }
     const pwd = (password && String(password).length >= 6) ? String(password) : Math.random().toString(36).slice(2, 12);
     const passwordHash = await bcrypt.hash(pwd, 10);
-    const [user] = await db.insert(schema.usersTable).values({
-      name, email, passwordHash,
-      role: "customer",
-      preferredLang: preferredLang === "en" ? "en" : "ar",
-      phone: phone || null,
-      address: address || null,
-      city: city || null,
-      notes: notes || null,
-    }).returning();
-    const hasProfileData = !!(contactType || wilaya || commune || gps || classificationId || priceTierId ||
-      accountNumber || creditLimit != null || minBalanceAlert != null || currentBalance || foreignCurrency ||
-      rc || nif || ai || nis);
-    if (hasProfileData) {
-      await db.insert(schema.customerProfilesTable).values({
-        userId: user.id,
+    const cpType: "customer" | "customer_supplier" =
+      contactType === "customer_supplier" ? "customer_supplier" : "customer";
+    const shared: ContactSharedInput = {
+      name, contactName: null, email,
+      phone: phone || null, address: address || null, notes: notes || null,
+      contactType: cpType,
+    };
+    const user = await db.transaction(async (tx) => {
+      // The unified contact identity is the single source of truth for shared fields.
+      const contactId = await insertContact(tx, storeId, shared);
+      const [u] = await tx.insert(schema.usersTable).values({
+        name, email, passwordHash,
+        role: "customer",
+        preferredLang: preferredLang === "en" ? "en" : "ar",
+        phone: phone || null,
+        address: address || null,
+        city: city || null,
+        notes: notes || null,
+      }).returning();
+      await tx.insert(schema.customerProfilesTable).values({
+        userId: u.id,
         storeId,
-        contactType: (contactType as "customer" | "customer_supplier") || "customer",
+        contactId,
+        contactType: cpType,
         wilaya: wilaya || null,
         commune: commune || null,
         gps: gps || null,
@@ -1566,14 +1744,22 @@ router.post("/erp/customers", authenticate, requireStaff, requireStore, requireP
         foreignCurrency: foreignCurrency ?? false,
         rc: rc || null, nif: nif || null, ai: ai || null, nis: nis || null,
       }).onConflictDoNothing();
-    }
+      // A customer_supplier surfaces in the suppliers list via a native supplier row.
+      if (cpType === "customer_supplier") {
+        await ensureSupplierRole(tx, storeId, contactId, shared);
+      }
+      return u;
+    });
     res.status(201).json({
       id: user.id, name: user.name, email: user.email,
       phone: user.phone, address: user.address, city: user.city,
       wilaya: wilaya || null, classification: null, priceTier: null,
       total_orders: 0, total_spent: "0",
     });
-  } catch (err) { req.log.error(err); res.status(500).json({ error: "Internal server error" }); }
+  } catch (err) {
+    if (err instanceof HttpError) { res.status(err.status).json({ error: err.message }); return; }
+    req.log.error(err); res.status(500).json({ error: "Internal server error" });
+  }
 });
 
 router.get("/erp/customers/:id", authenticate, requireAdmin, requireStore, async (req: AuthRequest, res) => {
@@ -1670,9 +1856,6 @@ router.put("/erp/customers/:id", authenticate, requireAdmin, requireStore, async
     if (password !== undefined && String(password).length >= 6) {
       userUpdate.passwordHash = await bcrypt.hash(String(password), 10);
     }
-    if (Object.keys(userUpdate).length > 0) {
-      await db.update(schema.usersTable).set(userUpdate).where(eq(schema.usersTable.id, userId));
-    }
     // Build partial update: only fields explicitly sent in the request body are updated
     const updateSet: Record<string, unknown> = { updatedAt: new Date() };
     if (contactType !== undefined) updateSet.contactType = contactType;
@@ -1704,9 +1887,52 @@ router.put("/erp/customers/:id", authenticate, requireAdmin, requireStore, async
       foreignCurrency: foreignCurrency ?? false,
       rc: rc ?? null, nif: nif ?? null, ai: ai ?? null, nis: nis ?? null,
     };
-    await db.insert(schema.customerProfilesTable)
-      .values(insertValues)
-      .onConflictDoUpdate({ target: schema.customerProfilesTable.userId, set: updateSet });
+    // Everything — user fields, profile upsert, and unified contact maintenance — runs in
+    // ONE transaction so the visible customer edit can never commit while the unified
+    // contact/role state fails (no drift).
+    await db.transaction(async (tx) => {
+      if (Object.keys(userUpdate).length > 0) {
+        await tx.update(schema.usersTable).set(userUpdate).where(eq(schema.usersTable.id, userId));
+      }
+      await tx.insert(schema.customerProfilesTable)
+        .values(insertValues)
+        .onConflictDoUpdate({ target: schema.customerProfilesTable.userId, set: updateSet });
+      const [u] = await tx.select().from(schema.usersTable)
+        .where(eq(schema.usersTable.id, userId)).limit(1);
+      const [prof] = await tx.select().from(schema.customerProfilesTable)
+        .where(eq(schema.customerProfilesTable.userId, userId)).limit(1);
+      if (!u || !prof) return;
+      const cStoreId = prof.storeId ?? storeId;
+      let contactId = prof.contactId;
+      // One-way role promotion: if this identity already owns a supplier role, it must
+      // stay a customer_supplier — a role that may carry financial history is never stripped.
+      const hasSupplierRole = contactId != null && (await tx.select({ id: schema.suppliersTable.id })
+        .from(schema.suppliersTable).where(eq(schema.suppliersTable.contactId, contactId)).limit(1)).length > 0;
+      if (hasSupplierRole && prof.contactType !== "customer_supplier") {
+        throw new HttpError(409, "This contact is also a supplier; its type cannot be reduced to customer only.");
+      }
+      const effType: "customer" | "customer_supplier" =
+        hasSupplierRole ? "customer_supplier" : (prof.contactType === "customer_supplier" ? "customer_supplier" : "customer");
+      if (prof.contactType !== effType) {
+        await tx.update(schema.customerProfilesTable).set({ contactType: effType })
+          .where(eq(schema.customerProfilesTable.userId, userId));
+      }
+      const cShared: ContactSharedInput = {
+        name: u.name, contactName: null, email: u.email,
+        phone: u.phone ?? null, address: u.address ?? null, notes: u.notes ?? null,
+        contactType: effType,
+      };
+      if (contactId == null) {
+        contactId = await insertContact(tx, cStoreId, cShared);
+        await tx.update(schema.customerProfilesTable).set({ contactId })
+          .where(eq(schema.customerProfilesTable.userId, userId));
+      } else {
+        await updateContactFields(tx, contactId, cShared);
+      }
+      if (effType === "customer_supplier") {
+        await ensureSupplierRole(tx, cStoreId, contactId, cShared);
+      }
+    });
     const profileRows = await db.execute(sql`
       SELECT cp.*,
         CASE WHEN cc.id IS NOT NULL THEN json_build_object(
@@ -1754,7 +1980,10 @@ router.put("/erp/customers/:id", authenticate, requireAdmin, requireStore, async
       created_at: updatedUser.createdAt,
       profile: updatedProfile, orders, notes,
     });
-  } catch (err) { req.log.error(err); res.status(500).json({ error: "Internal server error" }); }
+  } catch (err) {
+    if (err instanceof HttpError) { res.status(err.status).json({ error: err.message }); return; }
+    req.log.error(err); res.status(500).json({ error: "Internal server error" });
+  }
 });
 
 router.post("/erp/customers/:id/notes", authenticate, requireAdmin, requireStore, async (req: AuthRequest, res) => {

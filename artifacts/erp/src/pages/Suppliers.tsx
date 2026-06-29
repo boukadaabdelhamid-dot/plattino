@@ -334,6 +334,21 @@ export default function Suppliers() {
   const createSupplier = useCreateSupplier();
   const updateSupplier = useUpdateSupplier();
 
+  const [filterName, setFilterName] = useState("");
+  const [filterContact, setFilterContact] = useState("");
+  const [filterEmail, setFilterEmail] = useState("");
+  const [filterPhone, setFilterPhone] = useState("");
+  const [filterBalance, setFilterBalance] = useState("");
+
+  const filteredSuppliers = (suppliers ?? []).filter((s: Supplier) => {
+    if (filterName && !s.name?.toLowerCase().includes(filterName.toLowerCase())) return false;
+    if (filterContact && !s.contactName?.toLowerCase().includes(filterContact.toLowerCase())) return false;
+    if (filterEmail && !s.email?.toLowerCase().includes(filterEmail.toLowerCase())) return false;
+    if (filterPhone && !s.phone?.toLowerCase().includes(filterPhone.toLowerCase())) return false;
+    if (filterBalance && !String(parseFloat(s.currentBalance ?? "0").toFixed(2)).includes(filterBalance)) return false;
+    return true;
+  });
+
   const [dialog, setDialog] = useState<{ open: boolean; editing: Supplier | null }>({ open: false, editing: null });
   const [form, setForm] = useState<SupplierForm>(emptyForm);
   const [statementSupplier, setStatementSupplier] = useState<Supplier | null>(null);
@@ -389,9 +404,27 @@ export default function Suppliers() {
                     <TableHead className="font-semibold text-right">{t("Solde (DA)", "الرصيد (دج)")}</TableHead>
                     <TableHead className="font-semibold text-center">{t("Actions", "الإجراءات")}</TableHead>
                   </TableRow>
+                  <TableRow className="bg-white border-b">
+                    <TableHead className="py-1 px-2">
+                      <Input value={filterName} onChange={(e) => setFilterName(e.target.value)} placeholder={t("Filtre...", "بحث...")} className="h-7 text-xs" />
+                    </TableHead>
+                    <TableHead className="py-1 px-2">
+                      <Input value={filterContact} onChange={(e) => setFilterContact(e.target.value)} placeholder={t("Filtre...", "بحث...")} className="h-7 text-xs" />
+                    </TableHead>
+                    <TableHead className="py-1 px-2">
+                      <Input value={filterEmail} onChange={(e) => setFilterEmail(e.target.value)} placeholder={t("Filtre...", "بحث...")} className="h-7 text-xs" />
+                    </TableHead>
+                    <TableHead className="py-1 px-2">
+                      <Input value={filterPhone} onChange={(e) => setFilterPhone(e.target.value)} placeholder={t("Filtre...", "بحث...")} className="h-7 text-xs" />
+                    </TableHead>
+                    <TableHead className="py-1 px-2">
+                      <Input value={filterBalance} onChange={(e) => setFilterBalance(e.target.value)} placeholder={t("Filtre...", "بحث...")} className="h-7 text-xs text-right" />
+                    </TableHead>
+                    <TableHead />
+                  </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {(suppliers ?? []).map((s: Supplier) => {
+                  {filteredSuppliers.map((s: Supplier) => {
                     const balance = parseFloat(s.currentBalance ?? "0");
                     return (
                       <TableRow key={s.id} data-testid={`row-supplier-${s.id}`} className="hover:bg-slate-50/70">
@@ -434,7 +467,7 @@ export default function Suppliers() {
                       </TableRow>
                     );
                   })}
-                  {(!suppliers || suppliers.length === 0) && (
+                  {filteredSuppliers.length === 0 && (
                     <TableRow>
                       <TableCell colSpan={6} className="text-center py-8 text-muted-foreground">
                         {t("Aucun fournisseur", "لا يوجد موردون")}

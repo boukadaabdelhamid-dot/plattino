@@ -85,9 +85,8 @@ export default function PurchaseOrders() {
   const [invoiceShowTva, setInvoiceShowTva] = useState(false);
   const [invoiceBaseData, setInvoiceBaseData] = useState<Omit<import("@/components/InvoiceTemplate").InvoiceData, "showTva"> | null>(null);
   const [invoicePO, setInvoicePO] = useState<ExtendedPO | null>(null);
-  const { data: invoiceItems } = useGetPurchaseOrderItems(invoicePO?.id ?? 0, {
-    query: { enabled: !!invoicePO && invoiceOpen && !invoiceBaseData, queryKey: [] as unknown as readonly unknown[] },
-  });
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { data: invoiceItems } = useGetPurchaseOrderItems(invoicePO?.id ?? 0, { query: { enabled: !!invoicePO && invoiceOpen && !invoiceBaseData } } as any);
   const rowBaseData = useMemo((): Omit<import("@/components/InvoiceTemplate").InvoiceData, "showTva"> | null => {
     if (!invoicePO || !invoiceItems) return null;
     const sup = supplierMap[invoicePO.supplierId];

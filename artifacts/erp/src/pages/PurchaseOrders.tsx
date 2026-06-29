@@ -83,17 +83,16 @@ export default function PurchaseOrders() {
   const [editingPO, setEditingPO] = useState<PurchaseOrder | null>(null);
   const [invoiceOpen, setInvoiceOpen] = useState(false);
   const [invoiceShowTva, setInvoiceShowTva] = useState(false);
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const [invoiceBaseData, setInvoiceBaseData] = useState<Record<string, any> | null>(null);
+  const [invoiceBaseData, setInvoiceBaseData] = useState<Omit<import("@/components/InvoiceTemplate").InvoiceData, "showTva"> | null>(null);
   const [invoicePO, setInvoicePO] = useState<ExtendedPO | null>(null);
   const { data: invoiceItems } = useGetPurchaseOrderItems(invoicePO?.id ?? 0, {
-    query: { enabled: !!invoicePO && invoiceOpen && !invoiceBaseData },
+    query: { enabled: !!invoicePO && invoiceOpen && !invoiceBaseData, queryKey: [] as unknown as readonly unknown[] },
   });
-  const rowBaseData = useMemo(() => {
+  const rowBaseData = useMemo((): Omit<import("@/components/InvoiceTemplate").InvoiceData, "showTva"> | null => {
     if (!invoicePO || !invoiceItems) return null;
     const sup = supplierMap[invoicePO.supplierId];
     return {
-      kind: "purchase" as const,
+      kind: "purchase",
       number: `FA-${String(invoicePO.id).padStart(6, "0")}`,
       date: invoicePO.createdAt ? new Date(invoicePO.createdAt) : new Date(),
       store,
@@ -110,10 +109,12 @@ export default function PurchaseOrders() {
       tvaRate: parseFloat(store?.tvaRate ?? "19"),
     };
   }, [invoicePO, invoiceItems, supplierMap, store, products]);
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const finalInvoiceData = (invoiceBaseData ?? rowBaseData) ? { ...(invoiceBaseData ?? rowBaseData), showTva: invoiceShowTva } : null;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  function handlePrint(baseData: Record<string, any>) {
+  const finalInvoiceData = useMemo(() => {
+    const base = invoiceBaseData ?? rowBaseData;
+    if (!base) return null;
+    return { ...base, showTva: invoiceShowTva };
+  }, [invoiceBaseData, rowBaseData, invoiceShowTva]);
+  function handlePrint(baseData: Omit<import("@/components/InvoiceTemplate").InvoiceData, "showTva">) {
     setInvoiceBaseData(baseData);
     setInvoiceShowTva(!!store?.showTvaByDefault);
     setInvoiceOpen(true);
@@ -337,8 +338,7 @@ function PurchaseEditor({
   suppliers: Supplier[]; products: Product[];
   onSave: (payload: { supplierId: number; notes?: string; paymentMethod: string; items: { productId: number; quantity: number; unitCost: number }[] }) => void;
   onClose: (po: PurchaseOrder) => void; saving: boolean;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  onPrint: (baseData: Record<string, any>) => void;
+  onPrint: (baseData: Omit<import("@/components/InvoiceTemplate").InvoiceData, "showTva">) => void;
 }) {
   const { lang } = useLang();
   const t: TFn = (fr, ar) => lang === "ar" ? ar : fr;
@@ -756,26 +756,6 @@ function PurchaseEditor({
             </Button>
           )}
         </DialogFooter>
-
-        <InvoiceDialog
-          open={invoiceOpen}
-          onOpenChange={setInvoiceOpen}
-          onShowTvaChange={setInvoiceShowTva}
-          data={editing ? {
-            kind: "purchase",
-            number: `FA-${String(editing.id).padStart(6, "0")}`,
-            date: editing.createdAt ? new Date(editing.createdAt) : new Date(),
-            store,
-            party: { name: supplier?.name ?? "—", address: supplier?.address ?? null, phone: supplier?.phone ?? null },
-            lines: lines.map((l) => {
-              const p = products.find((x) => x.id === l.productId);
-              return { designation: l.designation, reference: p?.reference ?? p?.barcode ?? null, qty: l.qty, unitPrice: l.pu };
-            }),
-            showTva: invoiceShowTva,
-            tvaRate: parseFloat(store?.tvaRate ?? "19"),
-            notes: refAchat ? `Réf: ${refAchat}` : undefined,
-          } : null}
-        />
 
         <SupplierPickerDialog
           open={supplierPickerOpen}

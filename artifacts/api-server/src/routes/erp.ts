@@ -6,7 +6,7 @@ import { db, schema } from "../lib/db";
 import { authenticate, requireAdmin, requireStaff, requireStore, isAdmin, requirePermission, type AuthRequest } from "../lib/auth";
 import { broadcastToAdmins, broadcastCaisseChanged } from "../lib/ws";
 import { ensureCaisse } from "./caisses";
-import { applyNetBalanceDelta, applySupplierBalanceDelta, setSupplierBalance, type DbLike } from "../lib/balance-sync";
+import { applySupplierBalanceDelta, setSupplierBalance, type DbLike } from "../lib/balance-sync";
 
 const router = Router();
 
@@ -1936,7 +1936,7 @@ router.get("/erp/customers/:id", authenticate, requireAdmin, requireStore, async
       FROM customer_profiles cp
       LEFT JOIN customer_classifications cc ON cc.id = cp.classification_id
       LEFT JOIN price_tiers pt ON pt.id = cp.price_tier_id
-      WHERE cp.user_id = ${userId}
+      WHERE cp.user_id = ${userId} AND cp.store_id = ${storeId}
     `);
     const rawProfile = profileRows.rows[0] as Record<string, unknown> | undefined;
     let profile = null;
@@ -2232,7 +2232,10 @@ router.post("/erp/customers/:id/import-to-stores", authenticate, requireStaff, r
             });
             continue;
           }
-          // Wire contact link if missing
+
+          let linkedContactId = existing.contactId;
+
+          // Wire contact link if missing → this counts as linked_existing, not already_linked
           if (existing.contactId == null && srcContact) {
             const [nc] = await tx.insert(schema.contactsTable).values({
               storeId: targetStoreId,
@@ -2243,7 +2246,46 @@ router.post("/erp/customers/:id/import-to-stores", authenticate, requireStaff, r
             await tx.update(schema.customerProfilesTable)
               .set({ contactId: nc.id })
               .where(eq(schema.customerProfilesTable.id, existing.id));
+            linkedContactId = nc.id;
+
+            // Ensure supplier role for customer_supplier on existing profiles
+            if (cpType === "customer_supplier" && srcSupplier) {
+              const [existingSupplier] = await tx.select({ id: schema.suppliersTable.id })
+                .from(schema.suppliersTable)
+                .where(and(eq(schema.suppliersTable.contactId, nc.id), eq(schema.suppliersTable.storeId, targetStoreId)))
+                .limit(1);
+              if (!existingSupplier) {
+                await tx.insert(schema.suppliersTable).values({
+                  storeId: targetStoreId,
+                  name: srcSupplier.name, contactName: srcSupplier.contactName,
+                  email: srcSupplier.email, phone: srcSupplier.phone,
+                  address: srcSupplier.address, notes: srcSupplier.notes,
+                  contactType: "customer_supplier", contactId: nc.id,
+                });
+              }
+            }
+
+            results.push({ targetStoreId, status: "linked_existing", customerId: userId });
+            continue;
           }
+
+          // Profile already fully linked — also ensure supplier role if type matches
+          if (cpType === "customer_supplier" && srcSupplier && linkedContactId != null) {
+            const [existingSupplier] = await tx.select({ id: schema.suppliersTable.id })
+              .from(schema.suppliersTable)
+              .where(and(eq(schema.suppliersTable.contactId, linkedContactId), eq(schema.suppliersTable.storeId, targetStoreId)))
+              .limit(1);
+            if (!existingSupplier) {
+              await tx.insert(schema.suppliersTable).values({
+                storeId: targetStoreId,
+                name: srcSupplier.name, contactName: srcSupplier.contactName,
+                email: srcSupplier.email, phone: srcSupplier.phone,
+                address: srcSupplier.address, notes: srcSupplier.notes,
+                contactType: "customer_supplier", contactId: linkedContactId,
+              });
+            }
+          }
+
           results.push({ targetStoreId, status: "already_linked", customerId: userId });
           continue;
         }
@@ -2449,7 +2491,7 @@ router.post("/erp/customers/:id/operations", authenticate, requireAdmin, require
         });
       }
 
-      // ── Phase 4: update customer_profiles balance ──
+      // ── Phase 4: update customer_profiles balance (single path, no double-apply) ──
       await tx.execute(sql`
         INSERT INTO customer_profiles (user_id, store_id, current_balance, updated_at)
         VALUES (${customerId}, ${storeId}, ${delta.toFixed(2)}, NOW())
@@ -2457,14 +2499,6 @@ router.post("/erp/customers/:id/operations", authenticate, requireAdmin, require
           SET current_balance = COALESCE(customer_profiles.current_balance, 0) + ${delta.toFixed(2)},
               updated_at = NOW()
       `);
-      // ── Phase 5: balance sync ──
-      const [_cpPost] = await tx.select({ contactId: schema.customerProfilesTable.contactId })
-        .from(schema.customerProfilesTable)
-        .where(and(eq(schema.customerProfilesTable.userId, customerId), eq(schema.customerProfilesTable.storeId, storeId)))
-        .limit(1);
-      if (_cpPost?.contactId) {
-        await applyNetBalanceDelta(tx, _cpPost.contactId, delta);
-      }
       return inserted;
     });
     if (resolvedCaisseId !== null) {
@@ -2557,13 +2591,6 @@ router.put("/erp/customers/:id/operations/:opId", authenticate, requireAdmin, re
           SET current_balance = COALESCE(customer_profiles.current_balance, 0) + ${balanceDiff.toFixed(2)},
               updated_at = NOW()
       `);
-      const [_cpPut] = await tx.select({ contactId: schema.customerProfilesTable.contactId })
-        .from(schema.customerProfilesTable)
-        .where(and(eq(schema.customerProfilesTable.userId, customerId), eq(schema.customerProfilesTable.storeId, storeId)))
-        .limit(1);
-      if (_cpPut?.contactId) {
-        await applyNetBalanceDelta(tx, _cpPut.contactId, balanceDiff);
-      }
       return op;
     });
     if (!updated) { res.status(404).json({ error: "Operation not found" }); return; }
@@ -2632,14 +2659,6 @@ router.delete("/erp/customers/:id/operations/:opId", authenticate, requireAdmin,
           SET current_balance = COALESCE(customer_profiles.current_balance, 0) + ${delta.toFixed(2)},
               updated_at = NOW()
       `);
-      const [_cpDel] = await tx.select({ contactId: schema.customerProfilesTable.contactId })
-        .from(schema.customerProfilesTable)
-        .where(and(eq(schema.customerProfilesTable.userId, customerId), eq(schema.customerProfilesTable.storeId, storeId)))
-        .limit(1);
-      if (_cpDel?.contactId) {
-        await applyNetBalanceDelta(tx, _cpDel.contactId, delta);
-      }
-
       // Reverse caisse and accounting side effects for posted versement/remboursement
       if (existing.caisseId !== null && (existing.type === "versement" || existing.type === "remboursement")) {
         const actorUserId = (req as AuthRequest).user!.id;

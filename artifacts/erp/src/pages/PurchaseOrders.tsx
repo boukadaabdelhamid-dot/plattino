@@ -78,9 +78,46 @@ export default function PurchaseOrders() {
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
 
+  const store = useCurrentStore();
   const [editorOpen, setEditorOpen] = useState(false);
   const [editingPO, setEditingPO] = useState<PurchaseOrder | null>(null);
-  const [printOnOpen, setPrintOnOpen] = useState(false);
+  const [invoiceOpen, setInvoiceOpen] = useState(false);
+  const [invoiceShowTva, setInvoiceShowTva] = useState(false);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const [invoiceBaseData, setInvoiceBaseData] = useState<Record<string, any> | null>(null);
+  const [invoicePO, setInvoicePO] = useState<ExtendedPO | null>(null);
+  const { data: invoiceItems } = useGetPurchaseOrderItems(invoicePO?.id ?? 0, {
+    query: { enabled: !!invoicePO && invoiceOpen && !invoiceBaseData },
+  });
+  const rowBaseData = useMemo(() => {
+    if (!invoicePO || !invoiceItems) return null;
+    const sup = supplierMap[invoicePO.supplierId];
+    return {
+      kind: "purchase" as const,
+      number: `FA-${String(invoicePO.id).padStart(6, "0")}`,
+      date: invoicePO.createdAt ? new Date(invoicePO.createdAt) : new Date(),
+      store,
+      party: { name: sup?.name ?? "—", address: sup?.address ?? null, phone: sup?.phone ?? null },
+      lines: invoiceItems.map((it) => {
+        const p = products.find((x) => x.id === it.productId);
+        return {
+          designation: (it.productNameEn || it.productNameAr || `#${it.productId}`).toUpperCase(),
+          reference: p?.reference ?? p?.barcode ?? null,
+          qty: it.quantity,
+          unitPrice: parseFloat(it.unitCost ?? "0"),
+        };
+      }),
+      tvaRate: parseFloat(store?.tvaRate ?? "19"),
+    };
+  }, [invoicePO, invoiceItems, supplierMap, store, products]);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const finalInvoiceData = (invoiceBaseData ?? rowBaseData) ? { ...(invoiceBaseData ?? rowBaseData), showTva: invoiceShowTva } : null;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  function handlePrint(baseData: Record<string, any>) {
+    setInvoiceBaseData(baseData);
+    setInvoiceShowTva(!!store?.showTvaByDefault);
+    setInvoiceOpen(true);
+  }
 
   const filtered = useMemo(() => {
     return pos.filter((po) => {
@@ -214,7 +251,12 @@ export default function PurchaseOrders() {
                             </DropdownMenuTrigger>
                             <DropdownMenuContent align="end">
                               <DropdownMenuItem
-                                onClick={() => { setPrintOnOpen(true); openExisting(po); }}
+                                onClick={() => {
+                                  setInvoiceBaseData(null);
+                                  setInvoicePO(po);
+                                  setInvoiceShowTva(!!store?.showTvaByDefault);
+                                  setInvoiceOpen(true);
+                                }}
                               >
                                 <Printer className="h-4 w-4 mr-2" />
                                 {t("Imprimer la facture", "طباعة الفاتورة")}
@@ -245,9 +287,9 @@ export default function PurchaseOrders() {
 
       <PurchaseEditor
         open={editorOpen}
-        onOpenChange={(o) => { setEditorOpen(o); if (!o) setPrintOnOpen(false); }}
+        onOpenChange={setEditorOpen}
         editing={editingPO}
-        printOnOpen={printOnOpen}
+        onPrint={handlePrint}
         suppliers={suppliers ?? []}
         products={products}
         onSave={(payload) => {
@@ -263,6 +305,12 @@ export default function PurchaseOrders() {
           });
         }}
         saving={createPO.isPending || receivePO.isPending}
+      />
+      <InvoiceDialog
+        open={invoiceOpen}
+        onOpenChange={(o) => { setInvoiceOpen(o); if (!o) { setInvoicePO(null); setInvoiceBaseData(null); } }}
+        onShowTvaChange={setInvoiceShowTva}
+        data={finalInvoiceData}
       />
     </div>
   );
@@ -283,13 +331,14 @@ type EditLine = {
 };
 
 function PurchaseEditor({
-  open, onOpenChange, editing, suppliers, products, onSave, onClose, saving, printOnOpen,
+  open, onOpenChange, editing, suppliers, products, onSave, onClose, saving, onPrint,
 }: {
   open: boolean; onOpenChange: (o: boolean) => void; editing: ExtendedPO | null;
   suppliers: Supplier[]; products: Product[];
   onSave: (payload: { supplierId: number; notes?: string; paymentMethod: string; items: { productId: number; quantity: number; unitCost: number }[] }) => void;
   onClose: (po: PurchaseOrder) => void; saving: boolean;
-  printOnOpen?: boolean;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  onPrint: (baseData: Record<string, any>) => void;
 }) {
   const { lang } = useLang();
   const t: TFn = (fr, ar) => lang === "ar" ? ar : fr;
@@ -302,8 +351,6 @@ function PurchaseEditor({
   const [lines, setLines] = useState<EditLine[]>([]);
   const [code, setCode] = useState("");
   const [showMontant, setShowMontant] = useState(true);
-  const [invoiceShowTva, setInvoiceShowTva] = useState(false);
-  const [invoiceOpen, setInvoiceOpen] = useState(false);
   const store = useCurrentStore();
 
   const { data: existingItems } = useGetPurchaseOrderItems(editing?.id ?? 0, {
@@ -342,12 +389,6 @@ function PurchaseEditor({
     })));
   }, [open, editing, existingItems]);
 
-  // Auto-open InvoiceDialog when triggered from the table-row "Imprimer" action.
-  React.useEffect(() => {
-    if (!open || !printOnOpen || !supplier || lines.length === 0) return;
-    setInvoiceShowTva(!!store?.showTvaByDefault);
-    setInvoiceOpen(true);
-  }, [open, printOnOpen, supplier, lines.length]);
 
   const subtotal = lines.reduce((s, l) => s + l.pu * l.qty, 0);
 
@@ -678,7 +719,21 @@ function PurchaseEditor({
           <Button variant="outline" onClick={() => onOpenChange(false)}>{t("Annuler", "إلغاء")}</Button>
           {isExisting && (
             <Button variant="outline" className="border-[#1B3057] text-[#1B3057] hover:bg-blue-50"
-              onClick={() => { setInvoiceShowTva(!!store?.showTvaByDefault); setInvoiceOpen(true); }}
+              onClick={() => {
+                onPrint({
+                  kind: "purchase",
+                  number: `FA-${String(editing!.id).padStart(6, "0")}`,
+                  date: editing!.createdAt ? new Date(editing!.createdAt) : new Date(),
+                  store,
+                  party: { name: supplier?.name ?? "—", address: supplier?.address ?? null, phone: supplier?.phone ?? null },
+                  lines: lines.map((l) => {
+                    const p = products.find((x) => x.id === l.productId);
+                    return { designation: l.designation, reference: p?.reference ?? p?.barcode ?? null, qty: l.qty, unitPrice: l.pu };
+                  }),
+                  tvaRate: parseFloat(store?.tvaRate ?? "19"),
+                  notes: refAchat ? `Réf: ${refAchat}` : undefined,
+                });
+              }}
               disabled={!supplier || lines.length === 0}
               title={t("Imprimer la facture (TVA réglable dans l'aperçu)", "طباعة الفاتورة (TVA قابلة للتعديل)")}
               data-testid="button-print-purchase-invoice">

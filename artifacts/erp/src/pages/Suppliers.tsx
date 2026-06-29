@@ -315,6 +315,8 @@ function ImportDialog({
 }
 
 // ─── Statement Sheet ──────────────────────────────────────────────────────────
+type UnifiedOp = GlobalOperation & { source?: "supplier" | "customer" };
+
 function StatementSheet({
   supplier, open, onOpenChange,
 }: { supplier: Supplier | null; open: boolean; onOpenChange: (v: boolean) => void }) {
@@ -326,6 +328,97 @@ function StatementSheet({
     query: { enabled: open && !!supplier, queryKey: getGetSupplierOperationsQueryKey(supplier?.id ?? 0) },
   });
 
+  // contactBalance is the unified contacts.current_balance returned by the API for
+  // customer_supplier contacts. When present it is the canonical balance to display.
+  const contactBalance = (data as { contactBalance?: string | null } | undefined)?.contactBalance ?? null;
+  const isUnified = contactBalance != null;
+  const displayBalance = contactBalance ?? supplier?.currentBalance ?? "0";
+  const balanceNum = parseFloat(displayBalance);
+  // Unified sign: positive = contact owes us (good → green). Supplier-only sign: positive = we owe (bad → red).
+  const headerBalanceColor = isUnified
+    ? (balanceNum > 0 ? "text-emerald-600" : balanceNum < 0 ? "text-rose-600" : "text-muted-foreground")
+    : (balanceNum > 0 ? "text-rose-600" : balanceNum < 0 ? "text-emerald-600" : "text-muted-foreground");
+
+  // Unified delta: same formula as the API. Used to assign Débit/Crédit columns.
+  const unifiedDelta = (source: "supplier" | "customer" | undefined, type: string, amount: number): number => {
+    if ((source ?? "supplier") === "supplier") return type === "purchase" ? -amount : amount;
+    return (type === "versement" || type === "avoir_retour") ? -amount : amount;
+  };
+
+  const opTypeBadge = (op: UnifiedOp) => {
+    const src = op.source ?? "supplier";
+    const opType = op.type as string;
+    if (src === "customer") {
+      if (opType === "vente_a_terme") return (
+        <span className="inline-flex items-center gap-1 text-xs font-semibold text-blue-700 bg-blue-50 px-2 py-0.5 rounded-full">
+          <TrendingUp className="h-3 w-3" />{t("Vente à terme", "بيع بالدين")}
+        </span>
+      );
+      if (opType === "versement") return (
+        <span className="inline-flex items-center gap-1 text-xs font-semibold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full">
+          <TrendingDown className="h-3 w-3" />{t("Versement", "دفعة")}
+        </span>
+      );
+      if (opType === "avoir_retour") return (
+        <span className="inline-flex items-center gap-1 text-xs font-semibold text-amber-700 bg-amber-50 px-2 py-0.5 rounded-full">
+          <SlidersHorizontal className="h-3 w-3" />{t("Avoir retour", "أفوار")}
+        </span>
+      );
+      return (
+        <span className="inline-flex items-center gap-1 text-xs font-semibold text-slate-600 bg-slate-100 px-2 py-0.5 rounded-full">
+          {op.type}
+        </span>
+      );
+    }
+    if (op.type === "purchase") return (
+      <span className="inline-flex items-center gap-1 text-xs font-semibold text-rose-600 bg-rose-50 px-2 py-0.5 rounded-full">
+        <TrendingUp className="h-3 w-3" />{t("Achat", "شراء")}
+      </span>
+    );
+    if (op.type === "ajustement") return (
+      <span className="inline-flex items-center gap-1 text-xs font-semibold text-amber-700 bg-amber-50 px-2 py-0.5 rounded-full">
+        <SlidersHorizontal className="h-3 w-3" />{t("Ajustement", "تعديل")}
+      </span>
+    );
+    return (
+      <span className="inline-flex items-center gap-1 text-xs font-semibold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full">
+        <TrendingDown className="h-3 w-3" />{t("Règlement", "تسديد")}
+      </span>
+    );
+  };
+
+  const opDebit = (op: UnifiedOp): string | null => {
+    const amt = parseFloat(op.amount ?? "0");
+    if (isUnified) {
+      // Débit = operation that increases unified balance (contact owes us more)
+      return unifiedDelta(op.source, op.type, amt) > 0 ? op.amount : null;
+    }
+    // Pure supplier: purchase is debit; negative ajustement shown as debit
+    if (op.type === "purchase") return op.amount;
+    if (op.type === "ajustement" && amt < 0) return Math.abs(amt).toFixed(2);
+    return null;
+  };
+
+  const opCredit = (op: UnifiedOp): string | null => {
+    const amt = parseFloat(op.amount ?? "0");
+    if (isUnified) {
+      // Crédit = operation that decreases unified balance (we owe contact more)
+      return unifiedDelta(op.source, op.type, amt) < 0 ? op.amount : null;
+    }
+    // Pure supplier: payment is credit; positive ajustement shown as credit
+    if (op.type === "payment") return op.amount;
+    if (op.type === "ajustement" && amt >= 0) return op.amount;
+    return null;
+  };
+
+  const runningBalanceColor = (rb: string) => {
+    const v = parseFloat(rb);
+    if (isUnified) return v > 0 ? "text-emerald-600" : v < 0 ? "text-rose-600" : "text-muted-foreground";
+    return v > 0 ? "text-rose-600" : v < 0 ? "text-emerald-600" : "text-muted-foreground";
+  };
+
+  const colSpan = linked || isUnified ? 7 : 6;
+
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent side="right" className="w-full max-w-2xl p-0 overflow-y-auto">
@@ -334,6 +427,7 @@ function StatementSheet({
             <span className="flex items-center gap-2">
               <FileText className="h-4 w-4" />
               {t("Relevé de compte", "كشف حساب")} — {supplier?.name ?? ""}
+              {isUnified && <span className="text-xs font-normal bg-white/20 px-2 py-0.5 rounded-full">{t("Unifié", "موحّد")}</span>}
             </span>
             <Button
               size="icon" variant="ghost"
@@ -348,8 +442,8 @@ function StatementSheet({
         {supplier && (
           <div className="px-5 py-3 bg-slate-50 border-b flex items-center justify-between text-sm">
             <span className="text-muted-foreground">{t("Solde actuel", "الرصيد الحالي")}</span>
-            <span className={`font-bold text-lg ${parseFloat(supplier.currentBalance) > 0 ? "text-rose-600" : "text-emerald-600"}`}>
-              {fmt(supplier.currentBalance)} DA
+            <span className={`font-bold text-lg ${headerBalanceColor}`}>
+              {fmt(displayBalance)} DA
             </span>
           </div>
         )}
@@ -363,7 +457,7 @@ function StatementSheet({
                 <TableHeader className="bg-slate-50">
                   <TableRow>
                     <TableHead className="font-semibold">{t("Date", "التاريخ")}</TableHead>
-                    {linked && <TableHead className="font-semibold">{t("Magasin", "المتجر")}</TableHead>}
+                    {(linked || isUnified) && <TableHead className="font-semibold">{t("Magasin", "المتجر")}</TableHead>}
                     <TableHead className="font-semibold">{t("Type", "النوع")}</TableHead>
                     <TableHead className="font-semibold">{t("Référence / Note", "المرجع / ملاحظة")}</TableHead>
                     <TableHead className="font-semibold text-right">{t("Débit", "دين")}</TableHead>
@@ -374,59 +468,38 @@ function StatementSheet({
                 <TableBody>
                   {(!data?.operations || data.operations.length === 0) ? (
                     <TableRow>
-                      <TableCell colSpan={linked ? 7 : 6} className="text-center py-8 text-muted-foreground italic">
+                      <TableCell colSpan={colSpan} className="text-center py-8 text-muted-foreground italic">
                         {t("Aucune opération", "لا توجد عمليات")}
                       </TableCell>
                     </TableRow>
                   ) : (
-                    (data.operations as GlobalOperation[]).map((op) => (
-                      <TableRow key={op.id}>
-                        <TableCell className="text-sm tabular-nums">{op.date}</TableCell>
-                        {linked && (
-                          <TableCell className="text-xs text-muted-foreground">
-                            {(lang === "ar" ? op.storeNameAr : op.storeNameEn) ?? "—"}
-                          </TableCell>
-                        )}
-                        <TableCell>
-                          {op.type === "purchase" ? (
-                            <span className="inline-flex items-center gap-1 text-xs font-semibold text-rose-600 bg-rose-50 px-2 py-0.5 rounded-full">
-                              <TrendingUp className="h-3 w-3" />
-                              {t("Achat", "شراء")}
-                            </span>
-                          ) : op.type === "ajustement" ? (
-                            <span className="inline-flex items-center gap-1 text-xs font-semibold text-amber-700 bg-amber-50 px-2 py-0.5 rounded-full">
-                              <SlidersHorizontal className="h-3 w-3" />
-                              {t("Ajustement", "تعديل")}
-                            </span>
-                          ) : (
-                            <span className="inline-flex items-center gap-1 text-xs font-semibold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full">
-                              <TrendingDown className="h-3 w-3" />
-                              {t("Règlement", "تسديد")}
-                            </span>
+                    (data.operations as UnifiedOp[]).map((op) => {
+                      const debit = opDebit(op);
+                      const credit = opCredit(op);
+                      return (
+                        <TableRow key={`${op.source ?? "s"}-${op.id}`}>
+                          <TableCell className="text-sm tabular-nums">{op.date}</TableCell>
+                          {(linked || isUnified) && (
+                            <TableCell className="text-xs text-muted-foreground">
+                              {(lang === "ar" ? op.storeNameAr : op.storeNameEn) ?? "—"}
+                            </TableCell>
                           )}
-                        </TableCell>
-                        <TableCell className="text-xs text-muted-foreground max-w-[180px] truncate" title={op.reference ?? op.note ?? undefined}>
-                          {op.reference ?? op.note ?? "—"}
-                        </TableCell>
-                        <TableCell className="text-right tabular-nums font-medium text-rose-600">
-                          {op.type === "purchase"
-                            ? fmt(op.amount)
-                            : op.type === "ajustement" && parseFloat(op.amount ?? "0") < 0
-                            ? fmt(Math.abs(parseFloat(op.amount ?? "0")))
-                            : "—"}
-                        </TableCell>
-                        <TableCell className="text-right tabular-nums font-medium text-emerald-600">
-                          {op.type === "payment"
-                            ? fmt(op.amount)
-                            : op.type === "ajustement" && parseFloat(op.amount ?? "0") >= 0
-                            ? fmt(op.amount)
-                            : "—"}
-                        </TableCell>
-                        <TableCell className={`text-right tabular-nums font-bold ${parseFloat(op.runningBalance) > 0 ? "text-rose-600" : "text-emerald-600"}`}>
-                          {fmt(op.runningBalance)}
-                        </TableCell>
-                      </TableRow>
-                    ))
+                          <TableCell>{opTypeBadge(op)}</TableCell>
+                          <TableCell className="text-xs text-muted-foreground max-w-[180px] truncate" title={op.reference ?? op.note ?? undefined}>
+                            {op.reference ?? op.note ?? "—"}
+                          </TableCell>
+                          <TableCell className="text-right tabular-nums font-medium text-rose-600">
+                            {debit != null ? fmt(debit) : "—"}
+                          </TableCell>
+                          <TableCell className="text-right tabular-nums font-medium text-emerald-600">
+                            {credit != null ? fmt(credit) : "—"}
+                          </TableCell>
+                          <TableCell className={`text-right tabular-nums font-bold ${runningBalanceColor(op.runningBalance)}`}>
+                            {fmt(op.runningBalance)}
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })
                   )}
                 </TableBody>
               </Table>

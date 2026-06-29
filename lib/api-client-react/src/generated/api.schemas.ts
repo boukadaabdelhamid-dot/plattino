@@ -1448,6 +1448,19 @@ export interface UpsertCustomerProfileRequest {
   nis?: string | null;
 }
 
+/**
+ * Contact type from the unified contact identity (null for legacy rows)
+ */
+export type CustomerSummaryContactType =
+  | (typeof CustomerSummaryContactType)[keyof typeof CustomerSummaryContactType]
+  | null;
+
+export const CustomerSummaryContactType = {
+  customer: "customer",
+  supplier: "supplier",
+  customer_supplier: "customer_supplier",
+} as const;
+
 export interface CustomerSummary {
   id: number;
   name: string;
@@ -1459,6 +1472,8 @@ export interface CustomerSummary {
   created_at?: string;
   total_orders?: number;
   total_spent?: number;
+  /** Contact type from the unified contact identity (null for legacy rows) */
+  contact_type?: CustomerSummaryContactType;
   classification?: CustomerClassification | null;
   priceTier?: PriceTier | null;
 }

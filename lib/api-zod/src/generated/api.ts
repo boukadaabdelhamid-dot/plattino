@@ -2908,6 +2908,12 @@ export const GetErpCustomersResponseItem = zod.object({
   created_at: zod.string().optional(),
   total_orders: zod.number().optional(),
   total_spent: zod.number().optional(),
+  contact_type: zod
+    .enum(["customer", "supplier", "customer_supplier"])
+    .nullish()
+    .describe(
+      "Contact type from the unified contact identity (null for legacy rows)",
+    ),
   classification: zod
     .object({
       id: zod.number(),

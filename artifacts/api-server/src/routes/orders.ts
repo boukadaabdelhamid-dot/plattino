@@ -5,6 +5,7 @@ import { authenticate, requireAdmin, requireStaff, requireStore, optionalAuth, r
 import { resolvePublicStore } from "../lib/store-context";
 import { broadcastToAdmins, broadcastToStoreUsers, broadcastToStaffByStores, broadcastCaisseChanged } from "../lib/ws";
 import { ensureCaisse } from "./caisses";
+import { applyNetBalanceDelta } from "../lib/balance-sync";
 
 
 const router = Router();
@@ -352,6 +353,13 @@ async function handleCreateOrder(req: AuthRequest, res: import("express").Respon
             SET current_balance = COALESCE(customer_profiles.current_balance, 0) + ${amountStr}::numeric,
                 updated_at = NOW()
         `);
+        // Propagate to contacts.current_balance (and mirror to suppliers) for
+        // customer_supplier contacts. No-op for pure customers.
+        const [_cpTerme] = await tx.select({ contactId: schema.customerProfilesTable.contactId })
+          .from(schema.customerProfilesTable)
+          .where(and(eq(schema.customerProfilesTable.userId, posCustomerId), eq(schema.customerProfilesTable.storeId, storeId)))
+          .limit(1);
+        if (_cpTerme?.contactId) await applyNetBalanceDelta(tx, _cpTerme.contactId, receivable);
       }
 
       return { order, enrichedItems, totalAmount, sellerUserId, sellerCaisseId };
@@ -659,8 +667,14 @@ router.put("/admin/orders/:id/status", authenticate, requireStaff, requireStore,
                 UPDATE customer_profiles
                 SET current_balance = COALESCE(current_balance, 0) - ${recvStr}::numeric,
                     updated_at = NOW()
-                WHERE user_id = ${updated.userId}
+                WHERE user_id = ${updated.userId} AND store_id = ${storeId}
               `);
+              // Sync contacts.current_balance for customer_supplier contacts.
+              const [_cpCancel] = await tx.select({ contactId: schema.customerProfilesTable.contactId })
+                .from(schema.customerProfilesTable)
+                .where(and(eq(schema.customerProfilesTable.userId, updated.userId), eq(schema.customerProfilesTable.storeId, storeId)))
+                .limit(1);
+              if (_cpCancel?.contactId) await applyNetBalanceDelta(tx, _cpCancel.contactId, -receivable);
             }
           }
         }
@@ -1275,6 +1289,12 @@ router.post("/admin/orders/:id/retours", authenticate, requireStaff, requireStor
                 SET current_balance = COALESCE(customer_profiles.current_balance, 0) - ${retourTotal.toFixed(2)}::numeric,
                     updated_at = NOW()
             `);
+            // Sync contacts.current_balance for customer_supplier contacts.
+            const [_cpRetour] = await tx.select({ contactId: schema.customerProfilesTable.contactId })
+              .from(schema.customerProfilesTable)
+              .where(and(eq(schema.customerProfilesTable.userId, order.userId), eq(schema.customerProfilesTable.storeId, storeId)))
+              .limit(1);
+            if (_cpRetour?.contactId) await applyNetBalanceDelta(tx, _cpRetour.contactId, -retourTotal);
           }
         } else {
           await tx.insert(schema.transactionsTable).values({
@@ -1430,6 +1450,12 @@ router.post("/admin/retours", authenticate, requireStaff, requireStore, requireP
                 SET current_balance = COALESCE(customer_profiles.current_balance, 0) - ${retourTotal.toFixed(2)}::numeric,
                     updated_at = NOW()
             `);
+            // Sync contacts.current_balance for customer_supplier contacts.
+            const [_cpRetourComptoir] = await tx.select({ contactId: schema.customerProfilesTable.contactId })
+              .from(schema.customerProfilesTable)
+              .where(and(eq(schema.customerProfilesTable.userId, clientUserId), eq(schema.customerProfilesTable.storeId, storeId)))
+              .limit(1);
+            if (_cpRetourComptoir?.contactId) await applyNetBalanceDelta(tx, _cpRetourComptoir.contactId, -retourTotal);
           }
         } else {
           await tx.insert(schema.transactionsTable).values({

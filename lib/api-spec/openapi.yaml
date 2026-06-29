@@ -5282,6 +5282,11 @@ components:
           type: integer
         total_spent:
           type: number
+        contact_type:
+          type: string
+          enum: [customer, supplier, customer_supplier]
+          nullable: true
+          description: "Contact type from the unified contact identity (null for legacy rows)"
         classification:
           $ref: "#/components/schemas/CustomerClassification"
           nullable: true

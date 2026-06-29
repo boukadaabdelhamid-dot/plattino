@@ -6,6 +6,7 @@ import { db, schema } from "../lib/db";
 import { authenticate, requireAdmin, requireStaff, requireStore, isAdmin, requirePermission, type AuthRequest } from "../lib/auth";
 import { broadcastToAdmins, broadcastCaisseChanged } from "../lib/ws";
 import { ensureCaisse } from "./caisses";
+import { applyNetBalanceDelta, setNetBalance, type DbLike } from "../lib/balance-sync";
 
 const router = Router();
 
@@ -713,7 +714,7 @@ router.put("/erp/leaves/:id/status", authenticate, requireStaff, requireStore, r
 });
 
 // ─── Suppliers ─────────────────────────────────────────────────────
-type DbLike = Pick<typeof db, "select" | "insert" | "update" | "delete">;
+// DbLike, applyNetBalanceDelta, setNetBalance imported from lib/balance-sync.
 
 // Global shared supplier account: suppliers linked across stores via the same
 // globalSupplierId share ONE balance. After any balance-changing operation on a
@@ -773,77 +774,8 @@ async function syncLinkedContactBalances(
 }
 
 // ─── Unified net-balance helpers for customer_supplier contacts ───────────────
-// contacts.current_balance is the single source of truth for customer_supplier
-// contacts. After any balance-changing operation (customer or supplier side), the
-// appropriate helper below updates contacts + mirrors the value to customer_profiles
-// AND suppliers so both role lists always show the same number.
-// Pure customer / pure supplier contacts are unaffected (early return).
-
-async function mirrorNetBalance(tx: DbLike, contactId: number, balance: string): Promise<void> {
-  await tx.update(schema.customerProfilesTable)
-    .set({ currentBalance: balance, updatedAt: new Date() })
-    .where(eq(schema.customerProfilesTable.contactId, contactId));
-  await tx.update(schema.suppliersTable)
-    .set({ currentBalance: balance })
-    .where(eq(schema.suppliersTable.contactId, contactId));
-}
-
-// Apply a signed delta to the unified balance and propagate across all stores.
-async function applyNetBalanceDelta(tx: DbLike, contactId: number, delta: number): Promise<void> {
-  const [contact] = await tx.select({
-    contactType: schema.contactsTable.contactType,
-    globalContactId: schema.contactsTable.globalContactId,
-  }).from(schema.contactsTable).where(eq(schema.contactsTable.id, contactId)).limit(1);
-  if (!contact || contact.contactType !== "customer_supplier") return;
-  if (delta === 0) return;
-
-  await tx.update(schema.contactsTable)
-    .set({ currentBalance: sql`COALESCE(current_balance, 0) + ${delta.toFixed(2)}`, updatedAt: new Date() })
-    .where(eq(schema.contactsTable.id, contactId));
-  const [updated] = await tx.select({ currentBalance: schema.contactsTable.currentBalance })
-    .from(schema.contactsTable).where(eq(schema.contactsTable.id, contactId)).limit(1);
-  const newBal = updated?.currentBalance ?? "0";
-
-  await mirrorNetBalance(tx, contactId, newBal);
-
-  if (!contact.globalContactId) return;
-  const siblings = await tx.select({ id: schema.contactsTable.id })
-    .from(schema.contactsTable)
-    .where(and(
-      eq(schema.contactsTable.globalContactId, contact.globalContactId),
-      ne(schema.contactsTable.id, contactId),
-    ));
-  for (const sib of siblings) {
-    await tx.update(schema.contactsTable)
-      .set({ currentBalance: newBal, updatedAt: new Date() })
-      .where(eq(schema.contactsTable.id, sib.id));
-    await mirrorNetBalance(tx, sib.id, newBal);
-  }
-}
-
-// Set the unified balance to an absolute value (used by supplier adjust).
-async function setNetBalance(tx: DbLike, contactId: number, newBalance: number): Promise<void> {
-  const [contact] = await tx.select({
-    contactType: schema.contactsTable.contactType,
-    globalContactId: schema.contactsTable.globalContactId,
-  }).from(schema.contactsTable).where(eq(schema.contactsTable.id, contactId)).limit(1);
-  if (!contact || contact.contactType !== "customer_supplier") return;
-  const newBalFixed = newBalance.toFixed(2);
-
-  const allIds: number[] = [contactId];
-  if (contact.globalContactId) {
-    const siblings = await tx.select({ id: schema.contactsTable.id })
-      .from(schema.contactsTable)
-      .where(eq(schema.contactsTable.globalContactId, contact.globalContactId));
-    siblings.forEach((s) => { if (s.id !== contactId) allIds.push(s.id); });
-  }
-  for (const cid of allIds) {
-    await tx.update(schema.contactsTable)
-      .set({ currentBalance: newBalFixed, updatedAt: new Date() })
-      .where(eq(schema.contactsTable.id, cid));
-    await mirrorNetBalance(tx, cid, newBalFixed);
-  }
-}
+// applyNetBalanceDelta / setNetBalance / mirrorNetBalance are in lib/balance-sync.ts
+// (single source of truth — also used by orders.ts).
 
 router.get("/erp/suppliers", authenticate, requireStaff, requireStore, requirePermission("suppliers", "view"), async (req: AuthRequest, res) => {
   try {
@@ -961,7 +893,11 @@ router.put("/erp/suppliers/:id", authenticate, requireStaff, requireStore, requi
   }
 });
 
-// Supplier Operations (GET statement + POST payment)
+// Supplier Operations (GET unified statement + POST payment)
+// For customer_supplier contacts the statement merges supplier_operations AND
+// customer_operations so the ledger reflects the full net position.
+// contactBalance (from contacts.current_balance) is returned so the frontend can
+// display the canonical unified balance in the header.
 router.get("/erp/suppliers/:id/operations", authenticate, requireStaff, requireStore, requirePermission("suppliers", "view"), async (req: AuthRequest, res) => {
   try {
     const storeId = req.currentStoreId!;
@@ -970,8 +906,7 @@ router.get("/erp/suppliers/:id/operations", authenticate, requireStaff, requireS
       .where(and(eq(schema.suppliersTable.id, supplierId), eq(schema.suppliersTable.storeId, storeId))).limit(1);
     if (!supplier) { res.status(404).json({ error: "Supplier not found" }); return; }
 
-    // Global shared account: when linked, the statement pulls operations from EVERY
-    // store sharing the same globalSupplierId so the history + running balance are unified.
+    // Collect all supplier IDs sharing the same globalSupplierId (cross-store).
     let supplierIds = [supplierId];
     if (supplier.globalSupplierId) {
       const linked = await db.select({ id: schema.suppliersTable.id })
@@ -980,7 +915,7 @@ router.get("/erp/suppliers/:id/operations", authenticate, requireStaff, requireS
       if (linked.length > 0) supplierIds = linked.map((s) => s.id);
     }
 
-    const rows = await db.select({
+    const supplierRows = await db.select({
       op: schema.supplierOperationsTable,
       storeNameAr: schema.storesTable.nameAr,
       storeNameEn: schema.storesTable.nameEn,
@@ -990,15 +925,108 @@ router.get("/erp/suppliers/:id/operations", authenticate, requireStaff, requireS
       .where(inArray(schema.supplierOperationsTable.supplierId, supplierIds))
       .orderBy(asc(schema.supplierOperationsTable.date), asc(schema.supplierOperationsTable.createdAt));
 
+    // Unified delta: positive = contact owes us more (or our debt decreases).
+    // Supplier: purchase → −amount (we owe more). payment/ajustement → +amount.
+    // Customer: vente_a_terme/remboursement → +amount. versement/avoir_retour → −amount.
+    const unifiedDelta = (source: "supplier" | "customer", type: string, amount: number): number => {
+      if (source === "supplier") return type === "purchase" ? -amount : amount;
+      return (type === "versement" || type === "avoir_retour") ? -amount : amount;
+    };
+
+    type MergedEntry = {
+      id: number; date: string; type: string; amount: string | null;
+      reference: string | null; note: string | null;
+      storeNameAr: string | null; storeNameEn: string | null;
+      source: "supplier" | "customer"; createdAt: Date | string | null;
+      runningBalance: string;
+    };
+
+    let contactBalance: string | null = null;
+
+    // Check if the supplier is linked to a customer_supplier contact.
+    if (supplier.contactId) {
+      const [contact] = await db.select({
+        contactType: schema.contactsTable.contactType,
+        currentBalance: schema.contactsTable.currentBalance,
+        globalContactId: schema.contactsTable.globalContactId,
+      }).from(schema.contactsTable).where(eq(schema.contactsTable.id, supplier.contactId)).limit(1);
+
+      if (contact?.contactType === "customer_supplier") {
+        contactBalance = contact.currentBalance ?? null;
+
+        // All contact IDs in the same global group.
+        let contactIds = [supplier.contactId];
+        if (contact.globalContactId) {
+          const siblings = await db.select({ id: schema.contactsTable.id })
+            .from(schema.contactsTable)
+            .where(eq(schema.contactsTable.globalContactId, contact.globalContactId));
+          contactIds = siblings.map((s) => s.id);
+        }
+
+        // Customer user IDs linked to any of these contacts.
+        const cpRows = await db.select({ userId: schema.customerProfilesTable.userId })
+          .from(schema.customerProfilesTable)
+          .where(inArray(schema.customerProfilesTable.contactId, contactIds));
+        const customerUserIds = [...new Set(cpRows.map((r) => r.userId))];
+
+        type RawEntry = Omit<MergedEntry, "runningBalance">;
+        const allRaw: RawEntry[] = [];
+
+        // Supplier side
+        for (const { op, storeNameAr, storeNameEn } of supplierRows) {
+          allRaw.push({ id: op.id, date: op.date, type: op.type, amount: op.amount,
+            reference: op.reference ?? null, note: op.note ?? null,
+            storeNameAr: storeNameAr ?? null, storeNameEn: storeNameEn ?? null,
+            source: "supplier", createdAt: op.createdAt });
+        }
+
+        // Customer side
+        if (customerUserIds.length > 0) {
+          const custOpRows = await db.select({
+            op: schema.customerOperationsTable,
+            storeNameAr: schema.storesTable.nameAr,
+            storeNameEn: schema.storesTable.nameEn,
+          })
+            .from(schema.customerOperationsTable)
+            .leftJoin(schema.storesTable, eq(schema.customerOperationsTable.storeId, schema.storesTable.id))
+            .where(inArray(schema.customerOperationsTable.customerId, customerUserIds));
+          for (const { op, storeNameAr, storeNameEn } of custOpRows) {
+            allRaw.push({ id: op.id, date: op.date, type: op.type, amount: op.amount,
+              reference: op.reference ?? null, note: op.note ?? null,
+              storeNameAr: storeNameAr ?? null, storeNameEn: storeNameEn ?? null,
+              source: "customer", createdAt: op.createdAt });
+          }
+        }
+
+        allRaw.sort((a, b) => {
+          const d = a.date.localeCompare(b.date);
+          if (d !== 0) return d;
+          const ta = a.createdAt instanceof Date ? a.createdAt.getTime() : new Date(a.createdAt ?? 0).getTime();
+          const tb = b.createdAt instanceof Date ? b.createdAt.getTime() : new Date(b.createdAt ?? 0).getTime();
+          return ta - tb;
+        });
+
+        let running = 0;
+        const opsWithBalance: MergedEntry[] = allRaw.map((op) => {
+          running += unifiedDelta(op.source, op.type, parseFloat(op.amount ?? "0"));
+          return { ...op, runningBalance: running.toFixed(2) };
+        });
+
+        res.json({ supplier, operations: opsWithBalance, contactBalance });
+        return;
+      }
+    }
+
+    // Pure supplier (no customer_supplier contact): original sign convention
+    // (positive running balance = store owes the supplier).
     let running = 0;
-    const opsWithBalance = rows.map(({ op, storeNameAr, storeNameEn }) => {
+    const opsWithBalance = supplierRows.map(({ op, storeNameAr, storeNameEn }) => {
       const amt = parseFloat(op.amount ?? "0");
       if (op.type === "purchase") running += amt;
       else running -= amt;
-      return { ...op, storeNameAr, storeNameEn, runningBalance: running.toFixed(2) };
+      return { ...op, storeNameAr, storeNameEn, runningBalance: running.toFixed(2), source: "supplier" as const };
     });
-
-    res.json({ supplier, operations: opsWithBalance });
+    res.json({ supplier, operations: opsWithBalance, contactBalance: null });
   } catch (err) { req.log.error(err); res.status(500).json({ error: "Internal server error" }); }
 });
 

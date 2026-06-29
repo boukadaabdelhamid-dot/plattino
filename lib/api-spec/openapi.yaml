@@ -4333,7 +4333,7 @@ components:
           type: integer
         type:
           type: string
-          enum: [purchase, payment]
+          enum: [purchase, payment, ajustement]
         amount:
           type: string
         date:

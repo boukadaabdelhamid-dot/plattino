@@ -1725,7 +1725,7 @@ export const GetSupplierOperationsResponse = zod.object({
       id: zod.number(),
       supplierId: zod.number(),
       storeId: zod.number(),
-      type: zod.enum(["purchase", "payment"]),
+      type: zod.enum(["purchase", "payment", "ajustement"]),
       amount: zod.string(),
       date: zod.string(),
       reference: zod.string().nullish(),

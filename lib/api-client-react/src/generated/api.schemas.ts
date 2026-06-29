@@ -758,6 +758,7 @@ export type SupplierOperationType =
 export const SupplierOperationType = {
   purchase: "purchase",
   payment: "payment",
+  ajustement: "ajustement",
 } as const;
 
 export interface SupplierOperation {

@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { randomUUID } from "node:crypto";
 import { eq, desc, asc, sql, and, gt, ne, or, inArray, isNull, notLike } from "drizzle-orm";
 import bcrypt from "bcryptjs";
 import { db, schema } from "../lib/db";
@@ -612,6 +613,32 @@ router.put("/erp/leaves/:id/status", authenticate, requireStaff, requireStore, r
 });
 
 // ─── Suppliers ─────────────────────────────────────────────────────
+type DbLike = Pick<typeof db, "select" | "insert" | "update" | "delete">;
+
+// Global shared supplier account: suppliers linked across stores via the same
+// globalSupplierId share ONE balance. After any balance-changing operation on a
+// linked supplier, copy its new balance to every other linked record so the same
+// solde is visible in all stores. No-op for non-linked (globalSupplierId === null)
+// suppliers — keeps the per-store caisse/payment logic untouched.
+async function syncLinkedSupplierBalances(
+  tx: DbLike,
+  supplierId: number,
+  globalSupplierId: string | null | undefined,
+): Promise<void> {
+  if (!globalSupplierId) return;
+  const [updated] = await tx.select({ currentBalance: schema.suppliersTable.currentBalance })
+    .from(schema.suppliersTable)
+    .where(eq(schema.suppliersTable.id, supplierId))
+    .limit(1);
+  if (!updated) return;
+  await tx.update(schema.suppliersTable)
+    .set({ currentBalance: updated.currentBalance })
+    .where(and(
+      eq(schema.suppliersTable.globalSupplierId, globalSupplierId),
+      ne(schema.suppliersTable.id, supplierId),
+    ));
+}
+
 router.get("/erp/suppliers", authenticate, requireStaff, requireStore, requirePermission("suppliers", "view"), async (req: AuthRequest, res) => {
   try {
     const storeId = req.currentStoreId!;
@@ -624,7 +651,9 @@ router.get("/erp/suppliers", authenticate, requireStaff, requireStore, requirePe
 
 router.post("/erp/suppliers", authenticate, requireStaff, requireStore, requirePermission("suppliers", "create"), async (req: AuthRequest, res) => {
   try {
-    const body = { ...req.body, storeId: req.currentStoreId! };
+    // globalSupplierId is managed exclusively by the import-to-stores flow —
+    // never allow callers to mass-assign it via the generic create route.
+    const body = { ...req.body, storeId: req.currentStoreId! }; delete body.globalSupplierId;
     const [supplier] = await db.insert(schema.suppliersTable).values(body).returning();
     res.status(201).json(supplier);
   } catch (err) { req.log.error(err); res.status(500).json({ error: "Internal server error" }); }
@@ -633,7 +662,8 @@ router.post("/erp/suppliers", authenticate, requireStaff, requireStore, requireP
 router.put("/erp/suppliers/:id", authenticate, requireStaff, requireStore, requirePermission("suppliers", "edit"), async (req: AuthRequest, res) => {
   try {
     const storeId = req.currentStoreId!;
-    const body = { ...req.body }; delete body.storeId;
+    // Protect link membership + balance from mass-assignment on the generic edit route.
+    const body = { ...req.body }; delete body.storeId; delete body.globalSupplierId;
     const [supplier] = await db.update(schema.suppliersTable).set(body)
       .where(and(eq(schema.suppliersTable.id, pid(req, "id")), eq(schema.suppliersTable.storeId, storeId)))
       .returning();
@@ -651,19 +681,143 @@ router.get("/erp/suppliers/:id/operations", authenticate, requireStaff, requireS
       .where(and(eq(schema.suppliersTable.id, supplierId), eq(schema.suppliersTable.storeId, storeId))).limit(1);
     if (!supplier) { res.status(404).json({ error: "Supplier not found" }); return; }
 
-    const ops = await db.select().from(schema.supplierOperationsTable)
-      .where(and(eq(schema.supplierOperationsTable.supplierId, supplierId), eq(schema.supplierOperationsTable.storeId, storeId)))
+    // Global shared account: when linked, the statement pulls operations from EVERY
+    // store sharing the same globalSupplierId so the history + running balance are unified.
+    let supplierIds = [supplierId];
+    if (supplier.globalSupplierId) {
+      const linked = await db.select({ id: schema.suppliersTable.id })
+        .from(schema.suppliersTable)
+        .where(eq(schema.suppliersTable.globalSupplierId, supplier.globalSupplierId));
+      if (linked.length > 0) supplierIds = linked.map((s) => s.id);
+    }
+
+    const rows = await db.select({
+      op: schema.supplierOperationsTable,
+      storeNameAr: schema.storesTable.nameAr,
+      storeNameEn: schema.storesTable.nameEn,
+    })
+      .from(schema.supplierOperationsTable)
+      .leftJoin(schema.storesTable, eq(schema.supplierOperationsTable.storeId, schema.storesTable.id))
+      .where(inArray(schema.supplierOperationsTable.supplierId, supplierIds))
       .orderBy(asc(schema.supplierOperationsTable.date), asc(schema.supplierOperationsTable.createdAt));
 
     let running = 0;
-    const opsWithBalance = ops.map((op) => {
+    const opsWithBalance = rows.map(({ op, storeNameAr, storeNameEn }) => {
       const amt = parseFloat(op.amount ?? "0");
       if (op.type === "purchase") running += amt;
       else running -= amt;
-      return { ...op, runningBalance: running.toFixed(2) };
+      return { ...op, storeNameAr, storeNameEn, runningBalance: running.toFixed(2) };
     });
 
     res.json({ supplier, operations: opsWithBalance });
+  } catch (err) { req.log.error(err); res.status(500).json({ error: "Internal server error" }); }
+});
+
+// Import (link) a supplier into other stores — establishes a shared global account.
+// All linked records share one globalSupplierId + one synced balance.
+router.post("/erp/suppliers/:id/import-to-stores", authenticate, requireStaff, requireStore, requirePermission("suppliers", "create"), async (req: AuthRequest, res) => {
+  try {
+    const storeId = req.currentStoreId!;
+    const supplierId = pid(req, "id");
+    const { targetStoreIds } = req.body as { targetStoreIds?: unknown };
+
+    if (!Array.isArray(targetStoreIds) || targetStoreIds.length === 0) {
+      res.status(400).json({ error: "targetStoreIds must be a non-empty array" });
+      return;
+    }
+    const tidArr = [...new Set((targetStoreIds as unknown[]).map(Number).filter((n) => Number.isInteger(n) && n !== storeId))];
+    if (tidArr.length === 0) {
+      res.status(400).json({ error: "No valid target stores (cannot import into the same store)" });
+      return;
+    }
+
+    const [src] = await db.select().from(schema.suppliersTable)
+      .where(and(eq(schema.suppliersTable.id, supplierId), eq(schema.suppliersTable.storeId, storeId))).limit(1);
+    if (!src) { res.status(404).json({ error: "Supplier not found" }); return; }
+
+    // Authorization: a user may only import into stores they are a member of.
+    const memberships = await db.select({ storeId: schema.userStoresTable.storeId })
+      .from(schema.userStoresTable)
+      .where(eq(schema.userStoresTable.userId, req.user!.id));
+    const accessibleStoreIds = new Set(memberships.map((m) => m.storeId));
+
+    type ImportResult = {
+      targetStoreId: number;
+      status: "created" | "linked_existing" | "already_linked" | "conflict" | "error";
+      supplierId?: number;
+      message?: string;
+    };
+    const results: ImportResult[] = [];
+
+    const globalSupplierId = await db.transaction(async (tx) => {
+      // Lock the source row so concurrent first-imports can't generate split groups.
+      const [srcLocked] = await tx.select().from(schema.suppliersTable)
+        .where(eq(schema.suppliersTable.id, src.id)).for("update").limit(1);
+
+      // Generate a shared id on first import; reuse it on subsequent imports.
+      let gsid = srcLocked.globalSupplierId;
+      if (!gsid) {
+        gsid = randomUUID();
+        await tx.update(schema.suppliersTable)
+          .set({ globalSupplierId: gsid })
+          .where(eq(schema.suppliersTable.id, srcLocked.id));
+      }
+      const sharedBalance = srcLocked.currentBalance;
+
+      for (const targetStoreId of tidArr) {
+        if (!accessibleStoreIds.has(targetStoreId)) {
+          results.push({ targetStoreId, status: "error", message: "You do not have access to this store" });
+          continue;
+        }
+        const [store] = await tx.select({ id: schema.storesTable.id })
+          .from(schema.storesTable)
+          .where(and(eq(schema.storesTable.id, targetStoreId), eq(schema.storesTable.isActive, true)))
+          .limit(1);
+        if (!store) { results.push({ targetStoreId, status: "error", message: "Store not found or inactive" }); continue; }
+
+        // Already part of this global group in the target store?
+        const [alreadyLinked] = await tx.select({ id: schema.suppliersTable.id })
+          .from(schema.suppliersTable)
+          .where(and(eq(schema.suppliersTable.storeId, targetStoreId), eq(schema.suppliersTable.globalSupplierId, gsid)))
+          .limit(1);
+        if (alreadyLinked) { results.push({ targetStoreId, status: "already_linked", supplierId: alreadyLinked.id }); continue; }
+
+        // A same-name supplier already exists in the target store.
+        const [existingByName] = await tx.select().from(schema.suppliersTable)
+          .where(and(eq(schema.suppliersTable.storeId, targetStoreId), eq(schema.suppliersTable.name, src.name)))
+          .limit(1);
+        if (existingByName) {
+          if (existingByName.globalSupplierId && existingByName.globalSupplierId !== gsid) {
+            // Linked to a different global group — refuse to silently merge.
+            results.push({ targetStoreId, status: "conflict", supplierId: existingByName.id, message: "Same-name supplier already linked to another global account" });
+            continue;
+          }
+          await tx.update(schema.suppliersTable)
+            .set({ globalSupplierId: gsid, currentBalance: sharedBalance })
+            .where(eq(schema.suppliersTable.id, existingByName.id));
+          results.push({ targetStoreId, status: "linked_existing", supplierId: existingByName.id });
+          continue;
+        }
+
+        // Create a fresh linked supplier carrying the shared global balance.
+        const [created] = await tx.insert(schema.suppliersTable).values({
+          storeId: targetStoreId,
+          name: src.name,
+          contactName: src.contactName,
+          email: src.email,
+          phone: src.phone,
+          address: src.address,
+          notes: src.notes,
+          currentBalance: sharedBalance,
+          globalSupplierId: gsid,
+        }).returning();
+        results.push({ targetStoreId, status: "created", supplierId: created.id });
+      }
+
+      return gsid;
+    });
+
+    res.json({ globalSupplierId, results });
   } catch (err) { req.log.error(err); res.status(500).json({ error: "Internal server error" }); }
 });
 
@@ -708,6 +862,9 @@ router.post("/erp/suppliers/:id/operations", authenticate, requireStaff, require
       await tx.update(schema.suppliersTable)
         .set({ currentBalance: sql`current_balance + ${amtFixed}` })
         .where(eq(schema.suppliersTable.id, supplierId));
+
+      // Global shared account: propagate new balance to linked stores' supplier records
+      await syncLinkedSupplierBalances(tx, supplierId, supplier.globalSupplierId);
 
       // Record supplier operation — optionally linked to a specific PO
       const [operation] = await tx.insert(schema.supplierOperationsTable).values({
@@ -769,6 +926,9 @@ router.post("/erp/suppliers/:id/adjust", authenticate, requireStaff, requireStor
       await tx.update(schema.suppliersTable)
         .set({ currentBalance: newBalanceFixed })
         .where(eq(schema.suppliersTable.id, supplierId));
+
+      // Global shared account: propagate new balance to linked stores' supplier records
+      await syncLinkedSupplierBalances(tx, supplierId, supplier.globalSupplierId);
 
       const [operation] = await tx.insert(schema.supplierOperationsTable).values({
         supplierId,
@@ -924,6 +1084,13 @@ router.put("/erp/purchase-orders/:id/receive", authenticate, requireStaff, requi
         await tx.update(schema.suppliersTable)
           .set({ currentBalance: sql`current_balance - ${totalAmount.toFixed(2)}` })
           .where(eq(schema.suppliersTable.id, po.supplierId));
+
+        // Global shared account: propagate new balance to linked stores' supplier records
+        const [poSupplier] = await tx.select({ globalSupplierId: schema.suppliersTable.globalSupplierId })
+          .from(schema.suppliersTable)
+          .where(eq(schema.suppliersTable.id, po.supplierId))
+          .limit(1);
+        await syncLinkedSupplierBalances(tx, po.supplierId, poSupplier?.globalSupplierId);
 
         await tx.insert(schema.supplierOperationsTable).values({
           supplierId: po.supplierId,

@@ -2,21 +2,29 @@ import React, { useState } from "react";
 import {
   useGetSuppliers, useCreateSupplier, useUpdateSupplier,
   useGetSupplierOperations, useCreateSupplierOperation,
+  useGetErpStoresAll,
   getGetSuppliersQueryKey, getGetSupplierOperationsQueryKey,
 } from "@workspace/api-client-react";
 import type { Supplier, SupplierOperation } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useLang } from "@/hooks/use-lang";
+import { useStoreContext } from "@/hooks/use-store";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Plus, Pencil, CreditCard, TrendingDown, TrendingUp, FileText, RefreshCw, SlidersHorizontal, MoreVertical } from "lucide-react";
+import { Plus, Pencil, CreditCard, TrendingDown, TrendingUp, FileText, RefreshCw, SlidersHorizontal, MoreVertical, Link2, Store } from "lucide-react";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+
+// The generated Supplier type predates the global-account feature; extend locally.
+type GlobalSupplier = Supplier & { globalSupplierId?: string | null };
+type GlobalOperation = SupplierOperation & { runningBalance: string; storeNameAr?: string | null; storeNameEn?: string | null };
+type StoreLite = { id: number; nameEn: string; nameAr: string; isActive?: boolean };
 
 const fmt = (n: string | number | null | undefined) =>
   parseFloat(String(n ?? "0")).toLocaleString("fr-DZ", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -204,6 +212,107 @@ function AjustementDialog({
   );
 }
 
+// ─── Import to Stores Dialog ──────────────────────────────────────────────────
+function ImportDialog({
+  supplier, open, onOpenChange,
+}: { supplier: GlobalSupplier | null; open: boolean; onOpenChange: (v: boolean) => void }) {
+  const qc = useQueryClient();
+  const { lang } = useLang();
+  const t = (fr: string, ar: string) => lang === "ar" ? ar : fr;
+  const { currentStoreId } = useStoreContext();
+  const { data: allStores } = useGetErpStoresAll();
+
+  const otherStores = ((allStores ?? []) as StoreLite[])
+    .filter((s) => s.id !== currentStoreId && s.isActive !== false);
+
+  const [selected, setSelected] = React.useState<number[]>([]);
+  const [loading, setLoading] = React.useState(false);
+  const [error, setError] = React.useState("");
+
+  React.useEffect(() => {
+    if (open) { setSelected([]); setError(""); }
+  }, [open]);
+
+  const toggle = (id: number) =>
+    setSelected((prev) => prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]);
+
+  const handleImport = async () => {
+    if (!supplier || selected.length === 0) return;
+    setLoading(true); setError("");
+    try {
+      const token = localStorage.getItem("midanic_token");
+      const apiBase = (import.meta.env.VITE_API_URL as string | undefined) ?? "";
+      const res = await fetch(`${apiBase}/api/erp/suppliers/${supplier.id}/import-to-stores`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ targetStoreIds: selected }),
+      });
+      if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.error ?? "Erreur serveur"); }
+      qc.invalidateQueries({ queryKey: getGetSuppliersQueryKey() });
+      onOpenChange(false);
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-sm">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <Store className="h-4 w-4 text-indigo-600" />
+            {t("Importer vers d'autres magasins", "استيراد إلى متاجر أخرى")}
+          </DialogTitle>
+        </DialogHeader>
+        {supplier && (
+          <div className="text-sm text-muted-foreground mb-1 p-3 bg-indigo-50 rounded-md border border-indigo-100">
+            <span className="font-medium">{supplier.name}</span>
+            <p className="text-xs mt-1">
+              {t(
+                "Le solde devient partagé : une opération dans n'importe quel magasin affecte le solde dans tous.",
+                "يصبح الرصيد مشتركاً: أي عملية في أي متجر تؤثر على الرصيد في جميع المتاجر.",
+              )}
+            </p>
+          </div>
+        )}
+        <div className="space-y-2 max-h-64 overflow-y-auto">
+          {otherStores.length === 0 ? (
+            <p className="text-sm text-muted-foreground italic py-4 text-center">
+              {t("Aucun autre magasin disponible", "لا توجد متاجر أخرى متاحة")}
+            </p>
+          ) : (
+            otherStores.map((s) => (
+              <label
+                key={s.id}
+                className="flex items-center gap-3 p-2 rounded-md border hover:bg-slate-50 cursor-pointer"
+              >
+                <Checkbox
+                  checked={selected.includes(s.id)}
+                  onCheckedChange={() => toggle(s.id)}
+                />
+                <span className="text-sm font-medium">{lang === "ar" ? s.nameAr : s.nameEn}</span>
+              </label>
+            ))
+          )}
+        </div>
+        {error && <p className="text-xs text-rose-600 font-medium">{error}</p>}
+        <DialogFooter className="mt-2">
+          <Button variant="outline" onClick={() => onOpenChange(false)}>{t("Annuler", "إلغاء")}</Button>
+          <Button
+            onClick={handleImport}
+            disabled={loading || selected.length === 0}
+            className="bg-indigo-600 hover:bg-indigo-700 text-white"
+          >
+            {loading ? t("En cours…", "جارٍ…") : t("Importer", "استيراد")}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 // ─── Statement Sheet ──────────────────────────────────────────────────────────
 function StatementSheet({
   supplier, open, onOpenChange,
@@ -211,6 +320,7 @@ function StatementSheet({
   const { lang } = useLang();
   const t = (fr: string, ar: string) => lang === "ar" ? ar : fr;
   const qc = useQueryClient();
+  const linked = !!(supplier as GlobalSupplier | null)?.globalSupplierId;
   const { data, isLoading } = useGetSupplierOperations(supplier?.id ?? 0, {
     query: { enabled: open && !!supplier, queryKey: getGetSupplierOperationsQueryKey(supplier?.id ?? 0) },
   });
@@ -252,6 +362,7 @@ function StatementSheet({
                 <TableHeader className="bg-slate-50">
                   <TableRow>
                     <TableHead className="font-semibold">{t("Date", "التاريخ")}</TableHead>
+                    {linked && <TableHead className="font-semibold">{t("Magasin", "المتجر")}</TableHead>}
                     <TableHead className="font-semibold">{t("Type", "النوع")}</TableHead>
                     <TableHead className="font-semibold">{t("Référence / Note", "المرجع / ملاحظة")}</TableHead>
                     <TableHead className="font-semibold text-right">{t("Débit", "دين")}</TableHead>
@@ -262,14 +373,19 @@ function StatementSheet({
                 <TableBody>
                   {(!data?.operations || data.operations.length === 0) ? (
                     <TableRow>
-                      <TableCell colSpan={6} className="text-center py-8 text-muted-foreground italic">
+                      <TableCell colSpan={linked ? 7 : 6} className="text-center py-8 text-muted-foreground italic">
                         {t("Aucune opération", "لا توجد عمليات")}
                       </TableCell>
                     </TableRow>
                   ) : (
-                    (data.operations as (SupplierOperation & { runningBalance: string })[]).map((op) => (
+                    (data.operations as GlobalOperation[]).map((op) => (
                       <TableRow key={op.id}>
                         <TableCell className="text-sm tabular-nums">{op.date}</TableCell>
+                        {linked && (
+                          <TableCell className="text-xs text-muted-foreground">
+                            {(lang === "ar" ? op.storeNameAr : op.storeNameEn) ?? "—"}
+                          </TableCell>
+                        )}
                         <TableCell>
                           {op.type === "purchase" ? (
                             <span className="inline-flex items-center gap-1 text-xs font-semibold text-rose-600 bg-rose-50 px-2 py-0.5 rounded-full">
@@ -357,6 +473,8 @@ export default function Suppliers() {
   const [paymentOpen, setPaymentOpen] = useState(false);
   const [adjustSupplier, setAdjustSupplier] = useState<Supplier | null>(null);
   const [adjustOpen, setAdjustOpen] = useState(false);
+  const [importSupplier, setImportSupplier] = useState<GlobalSupplier | null>(null);
+  const [importOpen, setImportOpen] = useState(false);
 
   const openCreate = () => { setForm(emptyForm); setDialog({ open: true, editing: null }); };
   const openEdit = (s: Supplier) => {
@@ -366,6 +484,7 @@ export default function Suppliers() {
   const openStatement = (s: Supplier) => { setStatementSupplier(s); setStatementOpen(true); };
   const openPayment = (s: Supplier) => { setPaymentSupplier(s); setPaymentOpen(true); };
   const openAdjust = (s: Supplier) => { setAdjustSupplier(s); setAdjustOpen(true); };
+  const openImport = (s: GlobalSupplier) => { setImportSupplier(s); setImportOpen(true); };
 
   const handleSave = () => {
     const onSettled = () => { qc.invalidateQueries({ queryKey: getGetSuppliersQueryKey() }); setDialog({ open: false, editing: null }); };
@@ -428,7 +547,19 @@ export default function Suppliers() {
                     const balance = parseFloat(s.currentBalance ?? "0");
                     return (
                       <TableRow key={s.id} data-testid={`row-supplier-${s.id}`} className="hover:bg-slate-50/70">
-                        <TableCell className="font-medium">{s.name}</TableCell>
+                        <TableCell className="font-medium">
+                          <span className="inline-flex items-center gap-1.5">
+                            {s.name}
+                            {(s as GlobalSupplier).globalSupplierId && (
+                              <span
+                                className="inline-flex items-center text-indigo-600"
+                                title={t("Compte partagé entre magasins", "حساب مشترك بين المتاجر")}
+                              >
+                                <Link2 className="h-3.5 w-3.5" />
+                              </span>
+                            )}
+                          </span>
+                        </TableCell>
                         <TableCell className="text-muted-foreground text-sm">{s.contactName ?? "—"}</TableCell>
                         <TableCell className="text-sm text-muted-foreground">{s.email ?? "—"}</TableCell>
                         <TableCell className="text-sm text-muted-foreground">{s.phone ?? "—"}</TableCell>
@@ -460,6 +591,10 @@ export default function Suppliers() {
                               <DropdownMenuItem onClick={() => openAdjust(s)}>
                                 <SlidersHorizontal className="h-4 w-4 mr-2 text-amber-600" />
                                 {t("Ajustement de solde", "تعديل الرصيد")}
+                              </DropdownMenuItem>
+                              <DropdownMenuItem onClick={() => openImport(s as GlobalSupplier)}>
+                                <Store className="h-4 w-4 mr-2 text-indigo-600" />
+                                {t("Importer vers d'autres magasins", "استيراد إلى متاجر أخرى")}
                               </DropdownMenuItem>
                             </DropdownMenuContent>
                           </DropdownMenu>
@@ -540,6 +675,13 @@ export default function Suppliers() {
         supplier={adjustSupplier}
         open={adjustOpen}
         onOpenChange={setAdjustOpen}
+      />
+
+      {/* Import to Stores Dialog */}
+      <ImportDialog
+        supplier={importSupplier}
+        open={importOpen}
+        onOpenChange={setImportOpen}
       />
     </div>
   );

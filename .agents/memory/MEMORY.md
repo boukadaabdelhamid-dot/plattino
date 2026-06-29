@@ -6,6 +6,7 @@
 - [ERP typecheck & api-server](erp-typecheck-and-apiserver.md) — erp typecheck has pre-existing orval queryKey errors (app still runs); api-server is bundled (no HMR), restart for backend changes.
 - [MIGRATION_SQL drift](migration-sql-drift.md) — hand-maintained boot MIGRATION_SQL drifts behind schema.ts (Replit-only; Railway uses drizzle push). Regenerate by diffing live DB vs a drizzle-push scratch DB; runMigrations tolerates "already exists".
 - [Cross-store product linkage](cross-store-product-link.md) — same SKU across stores linked by single key reference||barcode (no link table); copy/transfer/cross-store-stock must stay consistent; WS stock events are store-scoped.
+- [Cross-store global supplier account](cross-store-supplier-account.md) — suppliers share ONE balance via global_supplier_id; sync copies balance to siblings (no-op if null); debt is NEGATIVE; import-only gsid; cross-store race → clean rollback not corruption.
 - [API store context (testing)](api-store-context-testing.md) — ERP store comes from JWT claim (POST /auth/select-store), not a header; storefront uses ?store=/X-Store-Slug. No /api/stores route.
 - [Upload image URL resolution](upload-image-url-resolution.md) — storage falls back to local when object-storage vars absent; upload publicUrl MUST be absolute (frontends <img src> have no proxy/api-base across ports).
 - [Web store config slug — always default principal](web-store-config-slug.md) — StoreConfigProvider must never gate on slug (no enabled:!!slug); getSlug() falls back to "principal" so config is always fetched.

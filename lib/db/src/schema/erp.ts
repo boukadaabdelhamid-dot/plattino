@@ -1,4 +1,4 @@
-import { pgTable, serial, text, timestamp, integer, numeric, pgEnum, boolean, date, uniqueIndex, doublePrecision } from "drizzle-orm/pg-core";
+import { pgTable, serial, text, timestamp, integer, numeric, pgEnum, boolean, date, uniqueIndex, index, doublePrecision } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 import { usersTable } from "./users";
 import { productsTable } from "./products";
@@ -61,8 +61,20 @@ export const suppliersTable = pgTable("suppliers", {
   address: text("address"),
   notes: text("notes"),
   currentBalance: numeric("current_balance", { precision: 12, scale: 2 }).notNull().default("0"),
+  // Shared identity across stores: suppliers linked via the same globalSupplierId
+  // share a single global balance (synced on every balance-changing operation).
+  globalSupplierId: text("global_supplier_id"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
-});
+}, (t) => ({
+  // A store may hold at most one record per global supplier account (no split groups).
+  uniqGlobalPerStore: uniqueIndex("suppliers_one_global_per_store")
+    .on(t.storeId, t.globalSupplierId)
+    .where(sql`${t.globalSupplierId} IS NOT NULL`),
+  // Fast lookup of all linked records when syncing balances / aggregating operations.
+  globalIdIdx: index("suppliers_global_id_idx")
+    .on(t.globalSupplierId)
+    .where(sql`${t.globalSupplierId} IS NOT NULL`),
+}));
 
 // ─── Supplier Operations (purchases / payments / ajustements) ─────────────────
 export const supplierOperationsTable = pgTable("supplier_operations", {

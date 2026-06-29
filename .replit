@@ -51,7 +51,7 @@ outputType = "webview"
 
 [[workflows.workflow.tasks]]
 task = "shell.exec"
-args = "PORT=5000 BASE_PATH=/ pnpm --filter @workspace/web-store dev"
+args = "PORT=5000 BASE_PATH=/ pnpm --filter @workspace/web-store run dev"
 waitForPort = 5000
 
 [[workflows.workflow]]
@@ -63,7 +63,7 @@ outputType = "console"
 
 [[workflows.workflow.tasks]]
 task = "shell.exec"
-args = "PORT=3001 BASE_PATH=/erp pnpm --filter @workspace/erp dev"
+args = "PORT=3001 BASE_PATH=/erp pnpm --filter @workspace/erp run dev"
 waitForPort = 3001
 
 [agent]

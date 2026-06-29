@@ -15,4 +15,5 @@
 - [Staff password reset (ERP)](staff-password-reset.md) — admin-only PUT /erp/staff/:id/password; deliberately does NOT revoke existing JWTs (stateless auth, no session table).
 - [Unified contact roles](unified-contact-roles.md) — contacts = identity; customer/supplier are native role rows linked by nullable contact_id; roles only promote (downgrade→409), never delete.
 - [Orders revenue fan-out trap](orders-revenue-fanout.md) — SUM(orders.total_amount) over an orders⋈order_items join multiplies revenue by item count; aggregate order totals in a separate orders-only CTE. Dashboard Bénéfice net = rev−COGS−returns−expenses (mirrors Analytics/Rapport).
+- [Global contact ID balance sync](global-contact-id-balance-sync.md) — contacts.global_contact_id is the cross-store linking key; syncLinkedContactBalances propagates balance to all siblings; ON CONFLICT bug fixed in customer ops.
 - [Supplier save whitelists fields](supplier-save-body-mass-assign.md) — /erp/suppliers POST+PUT whitelist {name,contactName,email,phone,address,notes,contactType}+contactId; currentBalance/globalSupplierId/storeId never mass-assignable.

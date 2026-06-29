@@ -638,7 +638,10 @@ CREATE UNIQUE INDEX IF NOT EXISTS "suppliers_contact_id_uniq" ON "suppliers" ("c
 ALTER TABLE "customer_profiles" ALTER COLUMN "store_id" SET NOT NULL;--> statement-breakpoint
 ALTER TABLE "customer_profiles" DROP CONSTRAINT IF EXISTS "customer_profiles_user_id_unique";--> statement-breakpoint
 DROP INDEX IF EXISTS "customer_profiles_user_id_unique";--> statement-breakpoint
-CREATE UNIQUE INDEX IF NOT EXISTS "customer_profiles_user_store_uniq" ON "customer_profiles" ("user_id","store_id")`;
+CREATE UNIQUE INDEX IF NOT EXISTS "customer_profiles_user_store_uniq" ON "customer_profiles" ("user_id","store_id");--> statement-breakpoint
+-- ─── Unified contact balance via global_contact_id (additive + idempotent) ───
+ALTER TABLE "contacts" ADD COLUMN IF NOT EXISTS "global_contact_id" text;--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "contacts_global_contact_id_idx" ON "contacts" ("global_contact_id") WHERE "global_contact_id" IS NOT NULL;`;
 
 async function runMigrations() {
   const statements = MIGRATION_SQL

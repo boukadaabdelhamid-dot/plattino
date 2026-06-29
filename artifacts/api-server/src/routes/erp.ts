@@ -2430,20 +2430,27 @@ router.post("/erp/customers/:id/operations", authenticate, requireAdmin, require
       res.status(400).json({ error: "amount must be a positive number" });
       return;
     }
-    // Credit limit check for vente_a_terme
+    // Credit limit check for vente_a_terme.
+    // For customer_supplier contacts, contacts.current_balance is the unified net
+    // balance across all stores and roles — use it so the decision is always
+    // coherent regardless of which store or list the operation originates from.
+    // Pure customers fall back to customer_profiles.current_balance.
+    // Rule: allow when projected = currentBalance + amount ≤ creditLimit.
+    // Negative currentBalance (store owes the customer) gives effective headroom
+    // even when creditLimit = 0, so those sales are correctly allowed.
     if (type === "vente_a_terme") {
       const profileResult = await db.execute(sql`
-        SELECT credit_limit, current_balance FROM customer_profiles
-        WHERE user_id = ${customerId} AND store_id = ${storeId}
+        SELECT cp.credit_limit,
+               CASE WHEN c.id IS NOT NULL THEN c.current_balance
+                    ELSE cp.current_balance END AS current_balance
+        FROM customer_profiles cp
+        LEFT JOIN contacts c ON c.id = cp.contact_id AND c.contact_type = 'customer_supplier'
+        WHERE cp.user_id = ${customerId} AND cp.store_id = ${storeId}
         LIMIT 1
       `);
       const profile = profileResult.rows[0] as { credit_limit: string | null; current_balance: string | null } | undefined;
       const creditLimit = Number(profile?.credit_limit ?? 0);
       const currentBalance = Number(profile?.current_balance ?? 0);
-      if (creditLimit === 0) {
-        res.status(400).json({ error: "Le client n'est pas autorisé à acheter à terme. Plafond de crédit = 0 DA" });
-        return;
-      }
       if (currentBalance + numAmount > creditLimit) {
         res.status(400).json({ error: "Plafond de crédit dépassé." });
         return;
@@ -2618,19 +2625,20 @@ router.put("/erp/customers/:id/operations/:opId", authenticate, requireAdmin, re
       // Compute balance delta: reverse old effect, apply new effect
       const oldDelta = existing.type === "versement" ? -Number(existing.amount) : Number(existing.amount);
       const newDelta = type === "versement" ? -numAmount : numAmount;
-      // Credit limit check for vente_a_terme
+      // Credit limit check for vente_a_terme — same unified-balance logic as POST.
       if (type === "vente_a_terme") {
         const profileResult = await tx.execute(sql`
-          SELECT credit_limit, current_balance FROM customer_profiles
-          WHERE user_id = ${customerId} AND store_id = ${storeId}
+          SELECT cp.credit_limit,
+                 CASE WHEN c.id IS NOT NULL THEN c.current_balance
+                      ELSE cp.current_balance END AS current_balance
+          FROM customer_profiles cp
+          LEFT JOIN contacts c ON c.id = cp.contact_id AND c.contact_type = 'customer_supplier'
+          WHERE cp.user_id = ${customerId} AND cp.store_id = ${storeId}
           LIMIT 1
         `);
         const profile = profileResult.rows[0] as { credit_limit: string | null; current_balance: string | null } | undefined;
         const creditLimit = Number(profile?.credit_limit ?? 0);
         const currentBalance = Number(profile?.current_balance ?? 0);
-        if (creditLimit === 0) {
-          throw Object.assign(new Error("Le client n'est pas autorisé à acheter à terme. Plafond de crédit = 0 DA"), { statusCode: 400 });
-        }
         const projected = currentBalance - oldDelta + numAmount;
         if (projected > creditLimit) {
           throw Object.assign(new Error("Plafond de crédit dépassé."), { statusCode: 400 });

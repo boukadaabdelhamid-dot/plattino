@@ -348,7 +348,7 @@ async function handleCreateOrder(req: AuthRequest, res: import("express").Respon
         await tx.execute(sql`
           INSERT INTO customer_profiles (user_id, store_id, current_balance, updated_at)
           VALUES (${posCustomerId}, ${storeId}, ${amountStr}, NOW())
-          ON CONFLICT (user_id) DO UPDATE
+          ON CONFLICT (user_id, store_id) DO UPDATE
             SET current_balance = COALESCE(customer_profiles.current_balance, 0) + ${amountStr}::numeric,
                 updated_at = NOW()
         `);
@@ -1271,7 +1271,7 @@ router.post("/admin/orders/:id/retours", authenticate, requireStaff, requireStor
             await tx.execute(sql`
               INSERT INTO customer_profiles (user_id, store_id, current_balance, updated_at)
               VALUES (${order.userId}, ${storeId}, ${(-retourTotal).toFixed(2)}, NOW())
-              ON CONFLICT (user_id) DO UPDATE
+              ON CONFLICT (user_id, store_id) DO UPDATE
                 SET current_balance = COALESCE(customer_profiles.current_balance, 0) - ${retourTotal.toFixed(2)}::numeric,
                     updated_at = NOW()
             `);
@@ -1426,7 +1426,7 @@ router.post("/admin/retours", authenticate, requireStaff, requireStore, requireP
             await tx.execute(sql`
               INSERT INTO customer_profiles (user_id, store_id, current_balance, updated_at)
               VALUES (${clientUserId}, ${storeId}, ${(-retourTotal).toFixed(2)}, NOW())
-              ON CONFLICT (user_id) DO UPDATE
+              ON CONFLICT (user_id, store_id) DO UPDATE
                 SET current_balance = COALESCE(customer_profiles.current_balance, 0) - ${retourTotal.toFixed(2)}::numeric,
                     updated_at = NOW()
             `);

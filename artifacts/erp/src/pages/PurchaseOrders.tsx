@@ -251,6 +251,23 @@ export default function PurchaseOrders() {
                             </DropdownMenuTrigger>
                             <DropdownMenuContent align="end">
                               <DropdownMenuItem
+                                onClick={() => openExisting(po)}
+                              >
+                                <Pencil className="h-4 w-4 mr-2" />
+                                {t("Ouvrir", "فتح")}
+                              </DropdownMenuItem>
+                              <DropdownMenuItem
+                                onClick={() => {
+                                  setInvoiceBaseData(null);
+                                  setInvoicePO(po);
+                                  setInvoiceShowTva(!!store?.showTvaByDefault);
+                                  setInvoiceOpen(true);
+                                }}
+                              >
+                                <Eye className="h-4 w-4 mr-2" />
+                                {t("Voir", "عرض")}
+                              </DropdownMenuItem>
+                              <DropdownMenuItem
                                 onClick={() => {
                                   setInvoiceBaseData(null);
                                   setInvoicePO(po);

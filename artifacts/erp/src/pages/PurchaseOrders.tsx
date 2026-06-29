@@ -18,6 +18,9 @@ import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
 } from "@/components/ui/dialog";
 import {
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
 import {
@@ -77,6 +80,7 @@ export default function PurchaseOrders() {
 
   const [editorOpen, setEditorOpen] = useState(false);
   const [editingPO, setEditingPO] = useState<PurchaseOrder | null>(null);
+  const [printOnOpen, setPrintOnOpen] = useState(false);
 
   const filtered = useMemo(() => {
     return pos.filter((po) => {
@@ -201,11 +205,33 @@ export default function PurchaseOrders() {
                         <TableCell className="text-right font-bold tabular-nums">
                           {fmt(parseFloat(po.totalAmount ?? "0"))}
                         </TableCell>
-                        <TableCell className="text-center">
-                          <Button size="icon" variant="ghost" className="h-7 w-7"
-                            onClick={(e) => { e.stopPropagation(); openExisting(po); }} aria-label={t("Détails", "التفاصيل")}>
-                            <span className="text-lg leading-none">⋮</span>
-                          </Button>
+                        <TableCell className="text-center" onClick={(e) => e.stopPropagation()}>
+                          <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                              <Button size="icon" variant="ghost" className="h-7 w-7" aria-label={t("Actions", "الإجراءات")}>
+                                <span className="text-lg leading-none">⋮</span>
+                              </Button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end">
+                              <DropdownMenuItem
+                                onClick={() => { setPrintOnOpen(true); openExisting(po); }}
+                              >
+                                <Printer className="h-4 w-4 mr-2" />
+                                {t("Imprimer la facture", "طباعة الفاتورة")}
+                              </DropdownMenuItem>
+                              <DropdownMenuItem
+                                disabled={po.status !== "pending"}
+                                onClick={() => {
+                                  receivePO.mutate({ id: po.id }, {
+                                    onSettled: () => qc.invalidateQueries({ queryKey: getGetPurchaseOrdersQueryKey() }),
+                                  });
+                                }}
+                              >
+                                <Check className="h-4 w-4 mr-2" />
+                                {t("Clôturer le bon", "إغلاق البون")}
+                              </DropdownMenuItem>
+                            </DropdownMenuContent>
+                          </DropdownMenu>
                         </TableCell>
                       </TableRow>
                     ))
@@ -219,8 +245,9 @@ export default function PurchaseOrders() {
 
       <PurchaseEditor
         open={editorOpen}
-        onOpenChange={setEditorOpen}
+        onOpenChange={(o) => { setEditorOpen(o); if (!o) setPrintOnOpen(false); }}
         editing={editingPO}
+        printOnOpen={printOnOpen}
         suppliers={suppliers ?? []}
         products={products}
         onSave={(payload) => {
@@ -256,12 +283,13 @@ type EditLine = {
 };
 
 function PurchaseEditor({
-  open, onOpenChange, editing, suppliers, products, onSave, onClose, saving,
+  open, onOpenChange, editing, suppliers, products, onSave, onClose, saving, printOnOpen,
 }: {
   open: boolean; onOpenChange: (o: boolean) => void; editing: ExtendedPO | null;
   suppliers: Supplier[]; products: Product[];
   onSave: (payload: { supplierId: number; notes?: string; paymentMethod: string; items: { productId: number; quantity: number; unitCost: number }[] }) => void;
   onClose: (po: PurchaseOrder) => void; saving: boolean;
+  printOnOpen?: boolean;
 }) {
   const { lang } = useLang();
   const t: TFn = (fr, ar) => lang === "ar" ? ar : fr;
@@ -313,6 +341,13 @@ function PurchaseEditor({
       pu: parseFloat(it.unitCost ?? "0"),
     })));
   }, [open, editing, existingItems]);
+
+  // Auto-open InvoiceDialog when triggered from the table-row "Imprimer" action.
+  React.useEffect(() => {
+    if (!open || !printOnOpen || !supplier || lines.length === 0) return;
+    setInvoiceShowTva(!!store?.showTvaByDefault);
+    setInvoiceOpen(true);
+  }, [open, printOnOpen, supplier, lines.length]);
 
   const subtotal = lines.reduce((s, l) => s + l.pu * l.qty, 0);
 

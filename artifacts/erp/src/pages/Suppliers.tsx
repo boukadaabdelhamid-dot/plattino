@@ -15,7 +15,8 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Plus, Pencil, CreditCard, TrendingDown, TrendingUp, FileText, RefreshCw, SlidersHorizontal } from "lucide-react";
+import { Plus, Pencil, CreditCard, TrendingDown, TrendingUp, FileText, RefreshCw, SlidersHorizontal, MoreVertical } from "lucide-react";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 
 const fmt = (n: string | number | null | undefined) =>
   parseFloat(String(n ?? "0")).toLocaleString("fr-DZ", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -404,36 +405,31 @@ export default function Suppliers() {
                           </span>
                         </TableCell>
                         <TableCell className="text-center">
-                          <div className="flex items-center justify-center gap-1">
-                            <Button
-                              size="icon" variant="ghost" className="h-7 w-7 text-blue-600"
-                              onClick={() => openStatement(s)}
-                              title={t("Relevé de compte", "كشف الحساب")}
-                            >
-                              <FileText className="h-3.5 w-3.5" />
-                            </Button>
-                            <Button
-                              size="icon" variant="ghost" className="h-7 w-7 text-emerald-600"
-                              onClick={() => openPayment(s)}
-                              title={t("Enregistrer un règlement", "تسجيل تسديد")}
-                            >
-                              <CreditCard className="h-3.5 w-3.5" />
-                            </Button>
-                            <Button
-                              size="icon" variant="ghost" className="h-7 w-7 text-amber-600"
-                              onClick={() => openAdjust(s)}
-                              title={t("Ajuster le solde", "تعديل الرصيد")}
-                            >
-                              <SlidersHorizontal className="h-3.5 w-3.5" />
-                            </Button>
-                            <Button
-                              size="icon" variant="ghost" className="h-7 w-7"
-                              onClick={() => openEdit(s)}
-                              title={t("Modifier", "تعديل")}
-                            >
-                              <Pencil className="h-3.5 w-3.5" />
-                            </Button>
-                          </div>
+                          <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                              <Button size="icon" variant="ghost" className="h-7 w-7">
+                                <MoreVertical className="h-4 w-4" />
+                              </Button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end">
+                              <DropdownMenuItem onClick={() => openEdit(s)}>
+                                <Pencil className="h-4 w-4 mr-2 text-slate-600" />
+                                {t("Modifier", "تعديل")}
+                              </DropdownMenuItem>
+                              <DropdownMenuItem onClick={() => openStatement(s)}>
+                                <FileText className="h-4 w-4 mr-2 text-blue-600" />
+                                {t("Relevé de compte", "كشف الحساب")}
+                              </DropdownMenuItem>
+                              <DropdownMenuItem onClick={() => openPayment(s)}>
+                                <CreditCard className="h-4 w-4 mr-2 text-emerald-600" />
+                                {t("Règlement", "تسديد")}
+                              </DropdownMenuItem>
+                              <DropdownMenuItem onClick={() => openAdjust(s)}>
+                                <SlidersHorizontal className="h-4 w-4 mr-2 text-amber-600" />
+                                {t("Ajustement de solde", "تعديل الرصيد")}
+                              </DropdownMenuItem>
+                            </DropdownMenuContent>
+                          </DropdownMenu>
                         </TableCell>
                       </TableRow>
                     );

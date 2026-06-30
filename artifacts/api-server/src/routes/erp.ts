@@ -748,6 +748,20 @@ router.get("/erp/suppliers", authenticate, requireStaff, requireStore, requirePe
     const suppliers = await db.select().from(schema.suppliersTable)
       .where(eq(schema.suppliersTable.storeId, storeId))
       .orderBy(schema.suppliersTable.name);
+    const csContactIds = suppliers
+      .filter((s) => s.contactType === "customer_supplier" && s.contactId != null)
+      .map((s) => s.contactId!);
+    if (csContactIds.length > 0) {
+      const contactRows = await db.select({ id: schema.contactsTable.id, currentBalance: schema.contactsTable.currentBalance })
+        .from(schema.contactsTable).where(inArray(schema.contactsTable.id, csContactIds));
+      const balMap = new Map(contactRows.map((c) => [c.id, c.currentBalance]));
+      res.json(suppliers.map((s) =>
+        s.contactType === "customer_supplier" && s.contactId != null && balMap.has(s.contactId)
+          ? { ...s, currentBalance: balMap.get(s.contactId)! }
+          : s
+      ));
+      return;
+    }
     res.json(suppliers);
   } catch (err) { req.log.error(err); res.status(500).json({ error: "Internal server error" }); }
 });
@@ -1774,7 +1788,8 @@ router.get("/erp/customers", authenticate, requireStaff, requireStore, requirePe
         COUNT(o.id) as total_orders,
         COALESCE(SUM(o.total_amount), 0) as total_spent,
         cp.contact_id, cp.wilaya, cp.contact_type, cp.rc, cp.nif, cp.ai, cp.nis,
-        cp.account_number, cp.credit_limit, cp.current_balance,
+        cp.account_number, cp.credit_limit,
+        COALESCE(CASE WHEN cp.contact_type = 'customer_supplier' AND cp.contact_id IS NOT NULL THEN (SELECT current_balance FROM contacts WHERE id = cp.contact_id LIMIT 1) ELSE NULL END, cp.current_balance, 0) as current_balance,
         cp.min_balance_alert, cp.foreign_currency,
         CASE WHEN cc.id IS NOT NULL THEN json_build_object(
           'id', cc.id, 'labelFr', cc.label_fr, 'labelAr', cc.label_ar,
@@ -1927,6 +1942,7 @@ router.get("/erp/customers/:id", authenticate, requireAdmin, requireStore, async
       .where(and(eq(schema.customerNotesTable.userId, userId), eq(schema.customerNotesTable.storeId, storeId)));
     const profileRows = await db.execute(sql`
       SELECT cp.*,
+        COALESCE(CASE WHEN cp.contact_type = 'customer_supplier' AND cp.contact_id IS NOT NULL THEN (SELECT current_balance FROM contacts WHERE id = cp.contact_id LIMIT 1) ELSE NULL END, cp.current_balance, 0) as canonical_current_balance,
         CASE WHEN cc.id IS NOT NULL THEN json_build_object(
           'id', cc.id, 'labelFr', cc.label_fr, 'labelAr', cc.label_ar,
           'color', cc.color, 'sortOrder', cc.sort_order
@@ -1956,7 +1972,7 @@ router.get("/erp/customers/:id", authenticate, requireAdmin, requireStore, async
         accountNumber: rawProfile.account_number,
         creditLimit: rawProfile.credit_limit,
         minBalanceAlert: rawProfile.min_balance_alert,
-        currentBalance: rawProfile.current_balance,
+        currentBalance: rawProfile.canonical_current_balance ?? rawProfile.current_balance,
         foreignCurrency: rawProfile.foreign_currency,
         rc: rawProfile.rc,
         nif: rawProfile.nif,
@@ -2084,9 +2100,13 @@ router.put("/erp/customers/:id", authenticate, requireAdmin, requireStore, async
       if (effType === "customer_supplier") {
         await ensureSupplierRole(tx, cStoreId, contactId, cShared);
       }
+      if (contactId != null && currentBalance !== undefined) {
+        await recomputeContactBalance(tx, contactId);
+      }
     });
     const profileRows = await db.execute(sql`
       SELECT cp.*,
+        COALESCE(CASE WHEN cp.contact_type = 'customer_supplier' AND cp.contact_id IS NOT NULL THEN (SELECT current_balance FROM contacts WHERE id = cp.contact_id LIMIT 1) ELSE NULL END, cp.current_balance, 0) as canonical_current_balance,
         CASE WHEN cc.id IS NOT NULL THEN json_build_object(
           'id', cc.id, 'labelFr', cc.label_fr, 'labelAr', cc.label_ar,
           'color', cc.color, 'sortOrder', cc.sort_order
@@ -2116,7 +2136,7 @@ router.put("/erp/customers/:id", authenticate, requireAdmin, requireStore, async
         accountNumber: rawProfile.account_number,
         creditLimit: rawProfile.credit_limit,
         minBalanceAlert: rawProfile.min_balance_alert,
-        currentBalance: rawProfile.current_balance,
+        currentBalance: rawProfile.canonical_current_balance ?? rawProfile.current_balance,
         foreignCurrency: rawProfile.foreign_currency,
         rc: rawProfile.rc, nif: rawProfile.nif, ai: rawProfile.ai, nis: rawProfile.nis,
       };

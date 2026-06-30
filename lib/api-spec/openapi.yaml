@@ -5147,6 +5147,9 @@ components:
         contactType:
           type: string
           enum: [customer, customer_supplier]
+        contactId:
+          type: integer
+          nullable: true
         wilaya:
           type: string
           nullable: true

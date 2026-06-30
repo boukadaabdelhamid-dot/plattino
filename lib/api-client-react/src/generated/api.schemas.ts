@@ -1400,6 +1400,7 @@ export const CustomerProfileContactType = {
 
 export interface CustomerProfile {
   contactType: CustomerProfileContactType;
+  contactId?: number | null;
   wilaya?: string | null;
   commune?: string | null;
   gps?: string | null;

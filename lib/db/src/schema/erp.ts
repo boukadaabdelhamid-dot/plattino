@@ -193,6 +193,7 @@ export const contactsTable = pgTable("contacts", {
   address: text("address"),
   notes: text("notes"),
   contactType: contactTypeEnum("contact_type").notNull().default("customer"),
+  currentBalance: numeric("current_balance", { precision: 12, scale: 2 }).notNull().default("0"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 }, (t) => ({

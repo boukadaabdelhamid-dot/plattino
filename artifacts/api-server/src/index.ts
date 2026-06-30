@@ -635,6 +635,7 @@ ALTER TABLE "suppliers" ADD CONSTRAINT "suppliers_contact_id_contacts_id_fk" FOR
 CREATE INDEX IF NOT EXISTS "contacts_store_type_idx" ON "contacts" ("store_id","contact_type");--> statement-breakpoint
 CREATE UNIQUE INDEX IF NOT EXISTS "customer_profiles_contact_id_uniq" ON "customer_profiles" ("contact_id") WHERE "contact_id" IS NOT NULL;--> statement-breakpoint
 CREATE UNIQUE INDEX IF NOT EXISTS "suppliers_contact_id_uniq" ON "suppliers" ("contact_id") WHERE "contact_id" IS NOT NULL;--> statement-breakpoint
+ALTER TABLE "contacts" ADD COLUMN IF NOT EXISTS "current_balance" numeric(12, 2) NOT NULL DEFAULT '0';--> statement-breakpoint
 ALTER TABLE "customer_profiles" ALTER COLUMN "store_id" SET NOT NULL;--> statement-breakpoint
 ALTER TABLE "customer_profiles" DROP CONSTRAINT IF EXISTS "customer_profiles_user_id_unique";--> statement-breakpoint
 DROP INDEX IF EXISTS "customer_profiles_user_id_unique";--> statement-breakpoint

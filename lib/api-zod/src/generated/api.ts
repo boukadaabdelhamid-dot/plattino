@@ -2982,6 +2982,7 @@ export const GetErpCustomerResponse = zod.object({
   profile: zod
     .object({
       contactType: zod.enum(["customer", "customer_supplier"]),
+      contactId: zod.number().nullish(),
       wilaya: zod.string().nullish(),
       commune: zod.string().nullish(),
       gps: zod.string().nullish(),
@@ -3099,6 +3100,7 @@ export const UpdateErpCustomerResponse = zod.object({
   profile: zod
     .object({
       contactType: zod.enum(["customer", "customer_supplier"]),
+      contactId: zod.number().nullish(),
       wilaya: zod.string().nullish(),
       commune: zod.string().nullish(),
       gps: zod.string().nullish(),

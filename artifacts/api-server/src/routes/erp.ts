@@ -6,7 +6,7 @@ import { db, schema } from "../lib/db";
 import { authenticate, requireAdmin, requireStaff, requireStore, isAdmin, requirePermission, type AuthRequest } from "../lib/auth";
 import { broadcastToAdmins, broadcastCaisseChanged } from "../lib/ws";
 import { ensureCaisse } from "./caisses";
-import { applySupplierBalanceDelta, setSupplierBalance, type DbLike } from "../lib/balance-sync";
+import { applySupplierBalanceDelta, setSupplierBalance, applyContactDelta, recomputeContactBalance, type DbLike } from "../lib/balance-sync";
 
 const router = Router();
 
@@ -912,14 +912,12 @@ router.get("/erp/suppliers/:id/operations", authenticate, requireStaff, requireS
     if (supplier.contactId) {
       const [contact] = await db.select({
         contactType: schema.contactsTable.contactType,
+        currentBalance: schema.contactsTable.currentBalance,
       }).from(schema.contactsTable).where(eq(schema.contactsTable.id, supplier.contactId)).limit(1);
 
       if (contact?.contactType === "customer_supplier") {
-        // Get the customer balance from customer_profiles linked to this contact
-        const [cpBal] = await db.select({ currentBalance: schema.customerProfilesTable.currentBalance })
-          .from(schema.customerProfilesTable)
-          .where(eq(schema.customerProfilesTable.contactId, supplier.contactId)).limit(1);
-        contactBalance = cpBal?.currentBalance ?? null;
+        // Read canonical unified balance directly from contacts.current_balance.
+        contactBalance = contact.currentBalance ?? null;
 
         const contactIds = [supplier.contactId];
 
@@ -1173,6 +1171,7 @@ router.post("/erp/suppliers/:id/operations", authenticate, requireStaff, require
         .set({ currentBalance: sql`current_balance + ${amtFixed}` })
         .where(eq(schema.suppliersTable.id, supplierId));
       await syncLinkedSupplierBalances(tx, supplierId, supplier.globalSupplierId);
+      if (supplier.contactId) await applyContactDelta(tx, supplier.contactId, parsedAmount);
 
       // Record supplier operation — optionally linked to a specific PO
       const [operation] = await tx.insert(schema.supplierOperationsTable).values({
@@ -1235,6 +1234,7 @@ router.post("/erp/suppliers/:id/adjust", authenticate, requireStaff, requireStor
         .set({ currentBalance: newBalanceFixed })
         .where(eq(schema.suppliersTable.id, supplierId));
       await syncLinkedSupplierBalances(tx, supplierId, supplier.globalSupplierId);
+      if (supplier.contactId) await recomputeContactBalance(tx, supplier.contactId);
 
       const [operation] = await tx.insert(schema.supplierOperationsTable).values({
         supplierId,
@@ -1396,6 +1396,7 @@ router.put("/erp/purchase-orders/:id/receive", authenticate, requireStaff, requi
           .set({ currentBalance: sql`current_balance - ${totalAmount.toFixed(2)}` })
           .where(eq(schema.suppliersTable.id, po.supplierId));
         await syncLinkedSupplierBalances(tx, po.supplierId, poSupplier?.globalSupplierId);
+        if (poSupplier?.contactId) await applyContactDelta(tx, poSupplier.contactId, -totalAmount);
 
         await tx.insert(schema.supplierOperationsTable).values({
           supplierId: po.supplierId,
@@ -1772,7 +1773,7 @@ router.get("/erp/customers", authenticate, requireStaff, requireStore, requirePe
       SELECT u.id, u.name, u.email, u.phone, u.address, u.city, u.created_at,
         COUNT(o.id) as total_orders,
         COALESCE(SUM(o.total_amount), 0) as total_spent,
-        cp.wilaya, cp.contact_type, cp.rc, cp.nif, cp.ai, cp.nis,
+        cp.contact_id, cp.wilaya, cp.contact_type, cp.rc, cp.nif, cp.ai, cp.nis,
         cp.account_number, cp.credit_limit, cp.current_balance,
         cp.min_balance_alert, cp.foreign_currency,
         CASE WHEN cc.id IS NOT NULL THEN json_build_object(
@@ -1789,6 +1790,7 @@ router.get("/erp/customers", authenticate, requireStaff, requireStore, requirePe
       LEFT JOIN customer_classifications cc ON cc.id = cp.classification_id
       LEFT JOIN price_tiers pt ON pt.id = cp.price_tier_id
       WHERE u.role = 'customer'
+        AND COALESCE(cp.contact_type, 'customer') IN ('customer', 'customer_supplier')
         AND (
           ${search ? sql`(lower(u.name) LIKE ${'%' + search.toLowerCase() + '%'} OR lower(u.email) LIKE ${'%' + search.toLowerCase() + '%'} OR lower(coalesce(u.phone,'')) LIKE ${'%' + search.toLowerCase() + '%'})` : sql`true`}
         )
@@ -1802,7 +1804,7 @@ router.get("/erp/customers", authenticate, requireStaff, requireStore, requirePe
           ${priceTierId ? sql`cp.price_tier_id = ${parseInt(priceTierId)}` : sql`true`}
         )
       GROUP BY u.id, u.name, u.email, u.phone, u.address, u.city, u.created_at,
-        cp.wilaya, cp.contact_type, cp.rc, cp.nif, cp.ai, cp.nis,
+        cp.contact_id, cp.wilaya, cp.contact_type, cp.rc, cp.nif, cp.ai, cp.nis,
         cp.account_number, cp.credit_limit, cp.current_balance,
         cp.min_balance_alert, cp.foreign_currency, cp.store_id,
         cc.id, cc.label_fr, cc.label_ar, cc.color, cc.sort_order,
@@ -1943,6 +1945,7 @@ router.get("/erp/customers/:id", authenticate, requireAdmin, requireStore, async
     if (rawProfile) {
       profile = {
         contactType: rawProfile.contact_type,
+        contactId: rawProfile.contact_id ?? null,
         wilaya: rawProfile.wilaya,
         commune: rawProfile.commune,
         gps: rawProfile.gps,
@@ -2102,6 +2105,7 @@ router.put("/erp/customers/:id", authenticate, requireAdmin, requireStore, async
     if (rawProfile) {
       updatedProfile = {
         contactType: rawProfile.contact_type,
+        contactId: rawProfile.contact_id ?? null,
         wilaya: rawProfile.wilaya,
         commune: rawProfile.commune,
         gps: rawProfile.gps,
@@ -2499,6 +2503,12 @@ router.post("/erp/customers/:id/operations", authenticate, requireAdmin, require
           SET current_balance = COALESCE(customer_profiles.current_balance, 0) + ${delta.toFixed(2)},
               updated_at = NOW()
       `);
+      // Sync contacts.current_balance for customer_supplier contacts.
+      const [_cpPost] = await tx.select({ contactId: schema.customerProfilesTable.contactId })
+        .from(schema.customerProfilesTable)
+        .where(and(eq(schema.customerProfilesTable.userId, customerId), eq(schema.customerProfilesTable.storeId, storeId)))
+        .limit(1);
+      if (_cpPost?.contactId) await applyContactDelta(tx, _cpPost.contactId, delta);
       return inserted;
     });
     if (resolvedCaisseId !== null) {
@@ -2591,6 +2601,12 @@ router.put("/erp/customers/:id/operations/:opId", authenticate, requireAdmin, re
           SET current_balance = COALESCE(customer_profiles.current_balance, 0) + ${balanceDiff.toFixed(2)},
               updated_at = NOW()
       `);
+      // Sync contacts.current_balance for customer_supplier contacts.
+      const [_cpPut] = await tx.select({ contactId: schema.customerProfilesTable.contactId })
+        .from(schema.customerProfilesTable)
+        .where(and(eq(schema.customerProfilesTable.userId, customerId), eq(schema.customerProfilesTable.storeId, storeId)))
+        .limit(1);
+      if (_cpPut?.contactId) await applyContactDelta(tx, _cpPut.contactId, balanceDiff);
       return op;
     });
     if (!updated) { res.status(404).json({ error: "Operation not found" }); return; }
@@ -2659,6 +2675,12 @@ router.delete("/erp/customers/:id/operations/:opId", authenticate, requireAdmin,
           SET current_balance = COALESCE(customer_profiles.current_balance, 0) + ${delta.toFixed(2)},
               updated_at = NOW()
       `);
+      // Sync contacts.current_balance for customer_supplier contacts.
+      const [_cpDel] = await tx.select({ contactId: schema.customerProfilesTable.contactId })
+        .from(schema.customerProfilesTable)
+        .where(and(eq(schema.customerProfilesTable.userId, customerId), eq(schema.customerProfilesTable.storeId, storeId)))
+        .limit(1);
+      if (_cpDel?.contactId) await applyContactDelta(tx, _cpDel.contactId, delta);
       // Reverse caisse and accounting side effects for posted versement/remboursement
       if (existing.caisseId !== null && (existing.type === "versement" || existing.type === "remboursement")) {
         const actorUserId = (req as AuthRequest).user!.id;

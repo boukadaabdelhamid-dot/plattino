@@ -640,6 +640,10 @@ ALTER TABLE "customer_profiles" ALTER COLUMN "store_id" SET NOT NULL;--> stateme
 ALTER TABLE "customer_profiles" DROP CONSTRAINT IF EXISTS "customer_profiles_user_id_unique";--> statement-breakpoint
 DROP INDEX IF EXISTS "customer_profiles_user_id_unique";--> statement-breakpoint
 CREATE UNIQUE INDEX IF NOT EXISTS "customer_profiles_user_store_uniq" ON "customer_profiles" ("user_id","store_id");--> statement-breakpoint
+UPDATE contacts SET current_balance = (
+  COALESCE((SELECT current_balance FROM customer_profiles WHERE contact_id = contacts.id LIMIT 1)::numeric, 0) +
+  COALESCE((SELECT current_balance FROM suppliers WHERE contact_id = contacts.id LIMIT 1)::numeric, 0)
+), updated_at = NOW() WHERE contact_type = 'customer_supplier';--> statement-breakpoint
 `;
 
 

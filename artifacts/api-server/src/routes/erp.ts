@@ -877,15 +877,7 @@ router.get("/erp/suppliers/:id/operations", authenticate, requireStaff, requireS
       .where(and(eq(schema.suppliersTable.id, supplierId), eq(schema.suppliersTable.storeId, storeId))).limit(1);
     if (!supplier) { res.status(404).json({ error: "Supplier not found" }); return; }
 
-    // Collect all supplier IDs sharing the same globalSupplierId (cross-store).
-    let supplierIds = [supplierId];
-    if (supplier.globalSupplierId) {
-      const linked = await db.select({ id: schema.suppliersTable.id })
-        .from(schema.suppliersTable)
-        .where(eq(schema.suppliersTable.globalSupplierId, supplier.globalSupplierId));
-      if (linked.length > 0) supplierIds = linked.map((s) => s.id);
-    }
-
+    // Phase 2: balances are store-scoped — statement shows only this store's operations.
     const supplierRows = await db.select({
       op: schema.supplierOperationsTable,
       storeNameAr: schema.storesTable.nameAr,
@@ -893,7 +885,7 @@ router.get("/erp/suppliers/:id/operations", authenticate, requireStaff, requireS
     })
       .from(schema.supplierOperationsTable)
       .leftJoin(schema.storesTable, eq(schema.supplierOperationsTable.storeId, schema.storesTable.id))
-      .where(inArray(schema.supplierOperationsTable.supplierId, supplierIds))
+      .where(eq(schema.supplierOperationsTable.supplierId, supplierId))
       .orderBy(asc(schema.supplierOperationsTable.date), asc(schema.supplierOperationsTable.createdAt));
 
     // Unified delta: positive = contact owes us more (or our debt decreases).

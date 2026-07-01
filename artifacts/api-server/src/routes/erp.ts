@@ -721,15 +721,29 @@ router.put("/erp/leaves/:id/status", authenticate, requireStaff, requireStore, r
 // linked supplier, copy its new balance to every other linked record so the same
 // solde is visible in all stores. No-op for non-linked (globalSupplierId === null)
 // suppliers — keeps the per-store caisse/payment logic untouched.
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
 async function syncLinkedSupplierBalances(
-  _tx: DbLike,
-  _supplierId: number,
-  _globalSupplierId: string | null | undefined,
+  tx: DbLike,
+  supplierId: number,
+  globalSupplierId: string | null | undefined,
 ): Promise<void> {
-  // Phase 2 unified contact model: balances are store-scoped.
-  // Each store owns its own suppliers.current_balance independently.
-  // Cross-store balance propagation is disabled — a new-store import starts at 0.
+  if (!globalSupplierId) return;
+  const [source] = await tx.select({ currentBalance: schema.suppliersTable.currentBalance })
+    .from(schema.suppliersTable)
+    .where(eq(schema.suppliersTable.id, supplierId))
+    .limit(1);
+  if (!source) return;
+  const linked = await tx.select({ id: schema.suppliersTable.id, contactId: schema.suppliersTable.contactId })
+    .from(schema.suppliersTable)
+    .where(and(
+      eq(schema.suppliersTable.globalSupplierId, globalSupplierId),
+      ne(schema.suppliersTable.id, supplierId),
+    ));
+  for (const row of linked) {
+    await tx.update(schema.suppliersTable)
+      .set({ currentBalance: source.currentBalance })
+      .where(eq(schema.suppliersTable.id, row.id));
+    if (row.contactId) await recomputeContactBalance(tx, row.contactId);
+  }
 }
 
 // applyNetBalanceDelta / applySupplierBalanceDelta / setSupplierBalance imported from lib/balance-sync.ts
@@ -1035,7 +1049,8 @@ router.post("/erp/suppliers/:id/import-to-stores", authenticate, requireStaff, r
           .set({ globalSupplierId: gsid })
           .where(eq(schema.suppliersTable.id, srcLocked.id));
       }
-      // Each target store starts with a zero balance — balances are store-scoped.
+      // Copy source balance so all linked stores start with the same shared balance.
+      const sharedBalance = srcLocked.currentBalance ?? "0.00";
 
       // Load source contact identity (for copying fields into the target store contact)
       let srcContact: typeof schema.contactsTable.$inferSelect | undefined;
@@ -1076,12 +1091,12 @@ router.post("/erp/suppliers/:id/import-to-stores", authenticate, requireStaff, r
             continue;
           }
           await tx.update(schema.suppliersTable)
-            .set({ globalSupplierId: gsid })
+            .set({ globalSupplierId: gsid, currentBalance: sharedBalance })
             .where(eq(schema.suppliersTable.id, existingByName.id));
           results.push({ targetStoreId, status: "linked_existing", supplierId: existingByName.id });
           targetSupplierId = existingByName.id;
         } else {
-          // Create a fresh linked supplier with zero balance (store-scoped).
+          // Create a fresh linked supplier carrying the shared global balance.
           const [created] = await tx.insert(schema.suppliersTable).values({
             storeId: targetStoreId,
             name: src.name,
@@ -1090,7 +1105,7 @@ router.post("/erp/suppliers/:id/import-to-stores", authenticate, requireStaff, r
             phone: src.phone,
             address: src.address,
             notes: src.notes,
-            currentBalance: "0.00",
+            currentBalance: sharedBalance,
             globalSupplierId: gsid,
           }).returning();
           results.push({ targetStoreId, status: "created", supplierId: created.id });
@@ -1117,6 +1132,8 @@ router.post("/erp/suppliers/:id/import-to-stores", authenticate, requireStaff, r
               eq(schema.suppliersTable.id, targetSupplierId),
               isNull(schema.suppliersTable.contactId),
             ));
+          // Sync canonical contact balance from the copied supplier balance.
+          await recomputeContactBalance(tx, newContact.id);
         }
       }
 

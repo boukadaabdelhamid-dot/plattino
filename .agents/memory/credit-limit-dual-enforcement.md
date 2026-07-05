@@ -1,17 +1,22 @@
 ---
 name: Credit-limit (plafond) dual enforcement
-description: à-terme credit-limit is enforced in TWO independent code paths that must stay in sync; the projected-balance rule already covers plafond=0 with a creditor balance.
+description: à-terme credit-limit is enforced in THREE separate layers (two backend + one frontend gate) that must stay in sync; the projected-balance rule already covers plafond=0 with a creditor balance.
 ---
 
 # Credit-limit (plafond) dual enforcement
 
-à-terme (credit) sales are limit-checked in TWO separate places that do NOT
+à-terme (credit) sales are limit-checked in THREE separate layers that do NOT
 share code:
-- POS sale: `orders.ts` `handleCreateOrder` — a cheap pre-transaction check AND
-  an authoritative in-transaction check (customer_profiles row `FOR UPDATE`).
-- Manual CRM ops: `erp.ts` `/erp/customers/:id/operations` POST and PUT.
+- POS sale backend: `orders.ts` `handleCreateOrder` — a cheap pre-transaction
+  check AND an authoritative in-transaction check (customer_profiles `FOR UPDATE`).
+- Manual CRM ops backend: `erp.ts` `/erp/customers/:id/operations` POST and PUT.
+- POS frontend gate: `artifacts/erp/src/components/pos/PaymentDialog.tsx` — a
+  client-side `termeBlocked` that disables the "À terme" button and shows the
+  block message. This is a SEPARATE copy of the rule; the button never fires the
+  API when it is disabled, so a backend-only fix is invisible until this is
+  updated too (exactly the regression that shipped).
 
-## Rule (the single correct rule for all four sites)
+## Rule (the single correct rule for all five sites)
 Allow when projected = `current_balance + amount ≤ credit_limit`
 (with a +0.001 float tolerance in orders.ts).
 
@@ -29,8 +34,10 @@ removed from erp.ts (relying on the projected rule) but left in orders.ts, so
 POS credit sales were wrongly blocked for customers the store owed money to.
 
 **How to apply:** any change to the credit-limit rule must be mirrored across
-ALL four sites (orders.ts ×2, erp.ts ×2), or the POS path and the CRM path
-diverge again.
+ALL five sites (orders.ts ×2, erp.ts ×2, AND the PaymentDialog.tsx client gate),
+or the POS path, the CRM path, and the button-enable state diverge again. The
+frontend gate is UX-only (backend stays authoritative), but if it is stale the
+disabled button hides an otherwise-valid sale — a backend-only fix looks broken.
 
 ## Known residual (out of scope, watch for it)
 erp.ts reads the unified contact balance for customer_supplier contacts

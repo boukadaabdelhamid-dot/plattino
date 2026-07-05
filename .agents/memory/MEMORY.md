@@ -18,4 +18,4 @@
 - [Global contact ID balance sync](global-contact-id-balance-sync.md) — contacts.global_contact_id is the cross-store linking key; syncLinkedContactBalances propagates balance to all siblings; ON CONFLICT bug fixed in customer ops.
 - [Supplier save whitelists fields](supplier-save-body-mass-assign.md) — /erp/suppliers POST+PUT whitelist {name,contactName,email,phone,address,notes,contactType}+contactId; currentBalance/globalSupplierId/storeId never mass-assignable.
 - [Cross-store customer balance unify](cross-store-customer-balance-unify.md) — customer_profiles.user_id links customers cross-store; PUSH on mutation, ADOPT-from-sibling on create (never push 0).
-- [Credit-limit dual enforcement](credit-limit-dual-enforcement.md) — à-terme plafond enforced independently in orders.ts (POS ×2) + erp.ts (ops ×2); mirror rule changes. Never hard-reject creditLimit===0 — projected≤limit already allows creditor-balance buys.
+- [Credit-limit dual enforcement](credit-limit-dual-enforcement.md) — à-terme plafond enforced in 3 layers: orders.ts (POS), erp.ts (ops), erp PaymentDialog.tsx (button gate); mirror rule changes. Never hard-reject creditLimit===0.

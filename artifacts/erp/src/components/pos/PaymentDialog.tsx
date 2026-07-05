@@ -45,9 +45,12 @@ export function PaymentDialog({
   const depassement = Math.max(0, nouveauSolde - seuilCredit);
   const versementMinNecessaire = Math.max(0, soldeClient + net - seuilCredit);
   // À-terme is allowed only when the remaining debt keeps the customer within
-  // their authorized credit limit. A versement that fully covers the sale
-  // (reste === 0) never creates debt, so it is always allowed.
-  const termeBlocked = reste > 0 && (seuilCredit === 0 || depassement > 0.001);
+  // their authorized credit limit. A negative balance means the store owes the
+  // customer (creditor balance), so even at plafond = 0 a purchase is allowed up
+  // to that credit balance — mirrors the authoritative backend rule. A versement
+  // that fully covers the sale (reste === 0) never creates debt, so it is always
+  // allowed.
+  const termeBlocked = reste > 0 && depassement > 0.001;
 
   useEffect(() => {
     if (open) { setLocalAmount(""); setVersement(0); setVersementOn(false); }
@@ -155,7 +158,7 @@ export function PaymentDialog({
         {/* Credit limit exceeded — block à-terme and tell the cashier the minimum versement */}
         {client && termeBlocked && (
           <p className="text-xs text-red-700 bg-red-50 border border-red-200 rounded px-2 py-1.5 text-center">
-            {seuilCredit === 0
+            {seuilCredit === 0 && soldeClient >= 0
               ? t(
                   "Ce client n'est pas autorisé à acheter à terme (plafond = 0).",
                   "هذا العميل غير مخوّل للشراء بالأجل (الحد = 0).",

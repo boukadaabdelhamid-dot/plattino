@@ -2337,7 +2337,8 @@ router.post("/erp/customers/:id/import-to-stores", authenticate, requireStaff, r
         }
 
         // Create a new contact + customer_profile (and optionally supplier) in the target store.
-        // Balances start at zero in each store — no cross-store balance propagation.
+        // The new profile starts at zero here; the unified balance is propagated from the
+        // source store after the loop (see syncLinkedCustomerBalances below).
         let targetContactId: number | undefined;
         if (srcContact) {
           const [nc] = await tx.insert(schema.contactsTable).values({

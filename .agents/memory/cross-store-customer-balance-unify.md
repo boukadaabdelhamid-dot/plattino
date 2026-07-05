@@ -1,48 +1,47 @@
 ---
 name: Cross-store customer balance unification
-description: How the same person's balance is kept identical across linked stores (customer-side mirror of the supplier sync).
+description: Decisions/heuristics for keeping the same person's balance identical across linked stores (customer-side mirror of the supplier sync).
 ---
 
 # Cross-store customer balance unification
 
-`customer_profiles.user_id` is the global cross-store link key for customers
-(the same person always has the same `user_id` in every store) — the
-customer-side analogue of `suppliers.globalSupplierId`. There is no link table.
+`customer_profiles.user_id` is the global cross-store link key for customers (the
+same person has the same user_id in every store) — the customer-side analogue of
+`suppliers.globalSupplierId`. There is no link table. The canonical per-store
+balance is `contacts.current_balance = customer_profiles + suppliers`.
 
-`syncLinkedCustomerBalances(tx, userId, sourceStoreId)` in
-`artifacts/api-server/src/lib/balance-sync.ts` COPIES the source store's
-`customer_profiles.current_balance` to the same user's profile in every OTHER
-store, then recomputes `contacts.current_balance` (= cp + supplier) for each
-linked profile with a contact. No-op when the customer exists in only one store.
+## Rule: after any customer balance mutation, unify the linked stores
+Copy the just-updated store's `customer_profiles.current_balance` to the same
+user's profile in every other store, then recompute each linked contact.
+**Why:** without this, each store accumulates its own balance and the same person
+shows different balances per store.
+**How to apply:** every writer of `customer_profiles.current_balance` (grep for
+them) must be followed, in the same tx, by the sync helper.
 
-## Direction rule (push vs adopt) — apply at every balance-mutation site
-- **PUSH from current store** after a DELTA or explicit balance set: orders.ts
-  (POS vente a terme, cancel, retour, retour comptoir) and erp.ts customer
-  operations POST/PUT/DELETE and customer PUT when `currentBalance` is provided.
-- **ADOPT from a sibling** (query a profile with same `userId`, `storeId !=`
-  current, then push from that sibling) when creating/linking WITHOUT an
-  authoritative balance: erp.ts customer create and customer PUT with
-  `currentBalance===undefined`. import-to-stores pushes from the source store.
+## Rule: PUSH on delta/explicit-set, ADOPT-from-sibling on create/link
+- Delta or explicit-balance-set op → PUSH from the current store.
+- Create/link WITHOUT an authoritative balance → query a sibling profile (same
+  userId, different store) and push from IT (adopt), never from the new store.
+**Why:** pushing a new store's zero opening balance outward would clobber a real
+unified value in sibling stores (data loss). Never push 0 over a real value.
 
-**Why:** pushing this store's zero opening balance outward would clobber a real
-unified value in sibling stores → data loss. Never push 0 over a real value.
-
-## Backfill (pre-existing divergence)
-One-time SUM: set each linked profile = SUM of per-store balances for that user,
-then recompute contacts. Per-store balances are disjoint activity, so SUM = true
-total. NOT naturally idempotent — gate on divergent groups
-(`COUNT(*)>1 AND COUNT(DISTINCT current_balance)>1`) so re-runs are safe, and run
-in a single transaction. Run a pre-report first: PUT absolute-set can create
-manually-offset balances where SUM would double-count (eyeball before running).
-Prod (Railway) backfill is a separate run-once step (data migration before
-drizzle push per railway migration ordering note).
+## Rule: the SUM backfill for legacy divergence is run-once, gated, eyeballed
+Set each linked profile = SUM of per-store balances (disjoint activity → sum is
+the true total), then recompute contacts. Committed as a standalone runbook
+script (not auto-wired into deploy/boot).
+**Why not auto-run:** a PUT absolute-set can create the same debt in two stores as
+two different values; SUM would double-count. So run the pre-divergence report
+and eyeball groups with >1 nonzero balance before the first prod run.
+**How it stays safe on re-run:** gate on divergent groups
+(`COUNT(*)>1 AND COUNT(DISTINCT current_balance)>1`) → no-op once unified.
 
 ## Known limitation
-import-to-stores creates a supplier row for a customer_supplier WITHOUT assigning
+Customer import-to-stores creates a supplier row for a customer_supplier WITHOUT
 `globalSupplierId`, so the supplier side is not cross-store-linked by that flow —
 use the supplier import-to-stores flow for supplier linkage.
 
 ## Concurrency note
 Simultaneous same-person balance ops in two stores lock the two profile rows in
-opposite order → Postgres may abort one with a deadlock (500). Inherent to the
-copy-on-sync design; low probability. Watch for it if 500s appear on POS terme.
+opposite order → Postgres may abort one with a deadlock (surfaces as 500).
+Inherent to the copy-on-sync design; low probability. Watch for it if 500s appear
+on POS terme sales.

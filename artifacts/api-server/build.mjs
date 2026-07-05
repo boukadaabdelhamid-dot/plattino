@@ -19,6 +19,8 @@ async function buildAll() {
       path.resolve(artifactDir, "src/index.ts"),
       // Standalone pre-push caisse consolidation runner (see railway.json).
       path.resolve(artifactDir, "src/consolidate-caisses.ts"),
+      // Standalone one-time cross-store customer-balance unification runner.
+      path.resolve(artifactDir, "src/unify-customer-balances.ts"),
     ],
     platform: "node",
     bundle: true,

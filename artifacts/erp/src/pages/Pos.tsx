@@ -287,7 +287,7 @@ export default function Pos() {
       {
         data: {
           customerName,
-          customerPhone: buyer.phone ?? "0000000000",
+          customerPhone: buyer.phone?.trim() || "0000000000",
           customerAddress: "Vente comptoir",
           items,
           linkedCustomerId: buyer.id,

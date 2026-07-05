@@ -101,12 +101,10 @@ async function handleCreateOrder(req: AuthRequest, res: import("express").Respon
         const approxTotal = (items as { productId: number; quantity: number }[])
           .reduce((s, i) => s + (priceMap.get(i.productId) ?? 0) * i.quantity, 0);
         const approxReceivable = Math.max(0, approxTotal - versement);
-        // A down-payment that covers the whole sale generates no debt, so credit
-        // authorization is only required when there is a remaining receivable.
-        if (approxReceivable > 0 && creditLimit === 0) {
-          res.status(400).json({ error: "Ce client n'est pas autorisé à acheter à terme (plafond = 0 DA)." });
-          return;
-        }
+        // Rule: allow when projected = currentBalance + receivable ≤ creditLimit.
+        // A negative current_balance means the store owes the customer (creditor
+        // balance), so even when creditLimit = 0 a purchase is allowed up to that
+        // credit balance; the projected check below enforces exactly that.
         if (currentBalance + approxReceivable > creditLimit + 0.001) {
           res.status(400).json({ error: `Plafond de crédit dépassé. Nouveau solde: ${(currentBalance + approxReceivable).toFixed(2)} DA, Plafond: ${creditLimit.toFixed(2)} DA.` });
           return;
@@ -221,9 +219,10 @@ async function handleCreateOrder(req: AuthRequest, res: import("express").Respon
         const prof = profRes.rows[0] as { credit_limit: string | null; current_balance: string | null } | undefined;
         const creditLimit = Number(prof?.credit_limit ?? 0);
         const currentBalance = Number(prof?.current_balance ?? 0);
-        if (creditLimit === 0) {
-          throw Object.assign(new Error("Ce client n'est pas autorisé à acheter à terme (plafond = 0 DA)."), { status: 400 });
-        }
+        // Rule: allow when projected = currentBalance + receivable ≤ creditLimit.
+        // A negative current_balance means the store owes the customer (creditor
+        // balance), so even when creditLimit = 0 a purchase is allowed up to that
+        // credit balance; the projected check below enforces exactly that.
         const newBalance = currentBalance + receivable;
         if (newBalance > creditLimit + 0.001) {
           throw Object.assign(

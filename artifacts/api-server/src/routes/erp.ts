@@ -193,13 +193,22 @@ router.get("/erp/dashboard/supplier-debts", authenticate, requireStaff, requireS
   try {
     const sid = dashboardStoreId(req);
     const storeFilter = sid !== null ? sql` AND store_id = ${sid}` : sql``;
+    // Cross-store linked suppliers (same global_supplier_id) exist as one row per
+    // store, each carrying the SAME synced balance. When viewing all stores,
+    // collapse every unified supplier to a single row (DISTINCT ON) so the count
+    // and Total Dettes are not multiplied by the number of linked stores. Unlinked
+    // suppliers (global_supplier_id IS NULL) stay distinct, keyed by their own id.
     const result = await db.execute(sql`
-      SELECT id, name,
-             ROUND(CAST(current_balance AS numeric), 2) AS balance
-      FROM suppliers
-      WHERE CAST(current_balance AS numeric) < 0
-      ${storeFilter}
-      ORDER BY CAST(current_balance AS numeric) ASC
+      SELECT id, name, balance FROM (
+        SELECT DISTINCT ON (COALESCE(global_supplier_id::text, 'id:' || id::text))
+               id, name,
+               ROUND(CAST(current_balance AS numeric), 2) AS balance
+        FROM suppliers
+        WHERE CAST(current_balance AS numeric) < 0
+        ${storeFilter}
+        ORDER BY COALESCE(global_supplier_id::text, 'id:' || id::text), id
+      ) deduped
+      ORDER BY balance ASC
     `);
     res.json(result.rows);
   } catch (err) { req.log.error(err); res.status(500).json({ error: "Internal server error" }); }

@@ -20,3 +20,4 @@
 - [Cross-store customer balance unify](cross-store-customer-balance-unify.md) — customer_profiles.user_id links customers cross-store; PUSH on mutation, ADOPT-from-sibling on create (never push 0).
 - [Credit-limit dual enforcement](credit-limit-dual-enforcement.md) — à-terme plafond enforced in 3 layers (orders/erp/PaymentDialog gate); mirror changes; never hard-reject creditLimit===0.
 - [Order payload empty-string fallbacks](order-payload-empty-string-fallbacks.md) — contact phone can be '' not null; order/draft required-field fallbacks must use `|| default`/trim, not `??`, or API 400s.
+- [Dashboard cross-store dedup](dashboard-cross-store-dedup.md) — all-stores dashboard SUM/COUNT over synced cross-store rows (supplier gsid, customer user_id) must DISTINCT ON the unifying key or it ×store-count.

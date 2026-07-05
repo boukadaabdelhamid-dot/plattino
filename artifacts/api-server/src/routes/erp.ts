@@ -6,7 +6,7 @@ import { db, schema } from "../lib/db";
 import { authenticate, requireAdmin, requireStaff, requireStore, isAdmin, requirePermission, type AuthRequest } from "../lib/auth";
 import { broadcastToAdmins, broadcastCaisseChanged } from "../lib/ws";
 import { ensureCaisse } from "./caisses";
-import { applySupplierBalanceDelta, setSupplierBalance, applyContactDelta, recomputeContactBalance, type DbLike } from "../lib/balance-sync";
+import { applySupplierBalanceDelta, setSupplierBalance, applyContactDelta, recomputeContactBalance, syncLinkedCustomerBalances, type DbLike } from "../lib/balance-sync";
 
 const router = Router();
 
@@ -1909,6 +1909,14 @@ router.post("/erp/customers", authenticate, requireStaff, requireStore, requireP
       if (cpType === "customer_supplier") {
         await ensureSupplierRole(tx, storeId, contactId, shared);
       }
+      // Cross-store: if this person already exists in another store, the new profile
+      // must carry the same unified balance (never diverge). Adopt it from a sibling
+      // store rather than pushing this store's (possibly zero) opening balance outward.
+      const [balSibling] = await tx.select({ storeId: schema.customerProfilesTable.storeId })
+        .from(schema.customerProfilesTable)
+        .where(and(eq(schema.customerProfilesTable.userId, u.id), ne(schema.customerProfilesTable.storeId, storeId)))
+        .limit(1);
+      if (balSibling) await syncLinkedCustomerBalances(tx, u.id, balSibling.storeId);
       return u;
     });
     res.status(201).json({
@@ -2103,6 +2111,19 @@ router.put("/erp/customers/:id", authenticate, requireAdmin, requireStore, async
       }
       if (contactId != null && currentBalance !== undefined) {
         await recomputeContactBalance(tx, contactId);
+      }
+      // Cross-store balance unification for the same person across linked stores.
+      if (currentBalance !== undefined) {
+        // Explicit balance override → becomes the unified value in every linked store.
+        await syncLinkedCustomerBalances(tx, userId, storeId);
+      } else {
+        // Balance untouched → a newly-created cross-store profile adopts the unified
+        // value from a sibling store (no-op when balances are already equal).
+        const [balSibling] = await tx.select({ storeId: schema.customerProfilesTable.storeId })
+          .from(schema.customerProfilesTable)
+          .where(and(eq(schema.customerProfilesTable.userId, userId), ne(schema.customerProfilesTable.storeId, storeId)))
+          .limit(1);
+        if (balSibling) await syncLinkedCustomerBalances(tx, userId, balSibling.storeId);
       }
     });
     const profileRows = await db.execute(sql`
@@ -2351,6 +2372,13 @@ router.post("/erp/customers/:id/import-to-stores", authenticate, requireStaff, r
 
         results.push({ targetStoreId, status: "created", customerId: userId });
       }
+      // Propagate the unified balance from the source store to every newly linked
+      // store so a linked customer shows the same balance everywhere immediately
+      // (not only after their next operation).
+      // KNOWN LIMITATION: the supplier row created above for a customer_supplier is
+      // not assigned a globalSupplierId here, so its supplier-side balance is not
+      // cross-store-linked by this flow — use the supplier import-to-stores flow for that.
+      await syncLinkedCustomerBalances(tx, userId, storeId);
     });
 
     res.json({ results });
@@ -2530,6 +2558,8 @@ router.post("/erp/customers/:id/operations", authenticate, requireAdmin, require
         .where(and(eq(schema.customerProfilesTable.userId, customerId), eq(schema.customerProfilesTable.storeId, storeId)))
         .limit(1);
       if (_cpPost?.contactId) await applyContactDelta(tx, _cpPost.contactId, delta);
+      // Cross-store: propagate the new balance to this customer's profile in every other linked store.
+      await syncLinkedCustomerBalances(tx, customerId, storeId);
       return inserted;
     });
     if (resolvedCaisseId !== null) {
@@ -2628,6 +2658,8 @@ router.put("/erp/customers/:id/operations/:opId", authenticate, requireAdmin, re
         .where(and(eq(schema.customerProfilesTable.userId, customerId), eq(schema.customerProfilesTable.storeId, storeId)))
         .limit(1);
       if (_cpPut?.contactId) await applyContactDelta(tx, _cpPut.contactId, balanceDiff);
+      // Cross-store: propagate the new balance to this customer's profile in every other linked store.
+      await syncLinkedCustomerBalances(tx, customerId, storeId);
       return op;
     });
     if (!updated) { res.status(404).json({ error: "Operation not found" }); return; }
@@ -2702,6 +2734,8 @@ router.delete("/erp/customers/:id/operations/:opId", authenticate, requireAdmin,
         .where(and(eq(schema.customerProfilesTable.userId, customerId), eq(schema.customerProfilesTable.storeId, storeId)))
         .limit(1);
       if (_cpDel?.contactId) await applyContactDelta(tx, _cpDel.contactId, delta);
+      // Cross-store: propagate the new balance to this customer's profile in every other linked store.
+      await syncLinkedCustomerBalances(tx, customerId, storeId);
       // Reverse caisse and accounting side effects for posted versement/remboursement
       if (existing.caisseId !== null && (existing.type === "versement" || existing.type === "remboursement")) {
         const actorUserId = (req as AuthRequest).user!.id;

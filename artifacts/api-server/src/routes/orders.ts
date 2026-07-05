@@ -5,7 +5,7 @@ import { authenticate, requireAdmin, requireStaff, requireStore, optionalAuth, r
 import { resolvePublicStore } from "../lib/store-context";
 import { broadcastToAdmins, broadcastToStoreUsers, broadcastToStaffByStores, broadcastCaisseChanged } from "../lib/ws";
 import { ensureCaisse } from "./caisses";
-import { applyNetBalanceDelta } from "../lib/balance-sync";
+import { applyNetBalanceDelta, syncLinkedCustomerBalances } from "../lib/balance-sync";
 
 
 const router = Router();
@@ -360,6 +360,8 @@ async function handleCreateOrder(req: AuthRequest, res: import("express").Respon
           .where(and(eq(schema.customerProfilesTable.userId, posCustomerId), eq(schema.customerProfilesTable.storeId, storeId)))
           .limit(1);
         if (_cpTerme?.contactId) await applyNetBalanceDelta(tx, _cpTerme.contactId, receivable);
+        // Cross-store: propagate the new balance to this customer's profile in every other linked store.
+        await syncLinkedCustomerBalances(tx, posCustomerId, storeId);
       }
 
       return { order, enrichedItems, totalAmount, sellerUserId, sellerCaisseId };
@@ -675,6 +677,8 @@ router.put("/admin/orders/:id/status", authenticate, requireStaff, requireStore,
                 .where(and(eq(schema.customerProfilesTable.userId, updated.userId), eq(schema.customerProfilesTable.storeId, storeId)))
                 .limit(1);
               if (_cpCancel?.contactId) await applyNetBalanceDelta(tx, _cpCancel.contactId, -receivable);
+              // Cross-store: propagate the new balance to this customer's profile in every other linked store.
+              await syncLinkedCustomerBalances(tx, updated.userId, storeId);
             }
           }
         }
@@ -1295,6 +1299,8 @@ router.post("/admin/orders/:id/retours", authenticate, requireStaff, requireStor
               .where(and(eq(schema.customerProfilesTable.userId, order.userId), eq(schema.customerProfilesTable.storeId, storeId)))
               .limit(1);
             if (_cpRetour?.contactId) await applyNetBalanceDelta(tx, _cpRetour.contactId, -retourTotal);
+            // Cross-store: propagate the new balance to this customer's profile in every other linked store.
+            await syncLinkedCustomerBalances(tx, order.userId, storeId);
           }
         } else {
           await tx.insert(schema.transactionsTable).values({
@@ -1456,6 +1462,8 @@ router.post("/admin/retours", authenticate, requireStaff, requireStore, requireP
               .where(and(eq(schema.customerProfilesTable.userId, clientUserId), eq(schema.customerProfilesTable.storeId, storeId)))
               .limit(1);
             if (_cpRetourComptoir?.contactId) await applyNetBalanceDelta(tx, _cpRetourComptoir.contactId, -retourTotal);
+            // Cross-store: propagate the new balance to this customer's profile in every other linked store.
+            await syncLinkedCustomerBalances(tx, clientUserId, storeId);
           }
         } else {
           await tx.insert(schema.transactionsTable).values({

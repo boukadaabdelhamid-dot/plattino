@@ -2047,7 +2047,11 @@ router.put("/erp/customers/:id", authenticate, requireAdmin, requireStore, async
     if (accountNumber !== undefined) updateSet.accountNumber = accountNumber ?? null;
     if (creditLimit !== undefined) updateSet.creditLimit = creditLimit != null ? String(creditLimit) : null;
     if (minBalanceAlert !== undefined) updateSet.minBalanceAlert = minBalanceAlert != null ? String(minBalanceAlert) : null;
-    if (currentBalance !== undefined) updateSet.currentBalance = currentBalance != null ? String(currentBalance) : null;
+    // currentBalance is intentionally NOT mass-assignable on a profile edit. The GET
+    // returns the canonical contact balance (customer-side + supplier-side for
+    // customer_supplier contacts); writing it back into customer_profiles.current_balance
+    // here would corrupt the customer-side column. Balance changes go through the dedicated
+    // customer operations. The recompute/sync calls below are left untouched.
     if (foreignCurrency !== undefined) updateSet.foreignCurrency = foreignCurrency;
     if (rc !== undefined) updateSet.rc = rc ?? null;
     if (nif !== undefined) updateSet.nif = nif ?? null;

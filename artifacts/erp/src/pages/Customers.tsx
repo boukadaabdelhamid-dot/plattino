@@ -406,9 +406,9 @@ function CustomerSheet({ customerId, onClose, t, lang, currency, initialTab = "b
               </div>
               <div>
                 <Label className="text-xs text-muted-foreground mb-1.5 block">{t("Solde actuel", "الرصيد الحالي")} ({currency})</Label>
-                {editing
-                  ? <Input type="number" value={String(form.currentBalance ?? "0")} onChange={(e) => setForm((f) => ({ ...f, currentBalance: e.target.value }))} className="h-8 text-sm" />
-                  : <p className="text-sm py-1 font-semibold text-primary">{Number(profile.currentBalance ?? 0).toFixed(2)} {currency}</p>}
+                {/* Read-only even in edit mode: the balance is derived from customer operations,
+                    never set via the profile form. Editing a profile field must not change it. */}
+                <p className="text-sm py-1 font-semibold text-primary">{Number(profile.currentBalance ?? 0).toFixed(2)} {currency}</p>
               </div>
               <div>
                 <Label className="text-xs text-muted-foreground mb-1.5 block">{t("Plafond crédit", "سقف الائتمان")} ({currency})</Label>

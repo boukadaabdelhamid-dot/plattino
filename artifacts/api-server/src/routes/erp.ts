@@ -846,15 +846,14 @@ router.put("/erp/suppliers/:id", authenticate, requireStaff, requireStore, requi
     const supplier = await db.transaction(async (tx) => {
       const requestedType: "supplier" | "customer_supplier" =
         newType ?? (current.contactType === "customer_supplier" ? "customer_supplier" : "supplier");
-      // One-way role promotion: if this identity already owns a customer role, it must
-      // stay a customer_supplier — a role that may carry financial history is never stripped.
+      // Both directions are allowed: supplier→customer_supplier (promotion) and
+      // customer_supplier→supplier (downgrade). Role rows are NEVER deleted — on
+      // downgrade the customer_profiles row keeps its financial history and only its
+      // contactType label is reset to "customer".
       const hasCustomerRole = current.contactId != null && (await tx.select({ userId: schema.customerProfilesTable.userId })
         .from(schema.customerProfilesTable)
         .where(eq(schema.customerProfilesTable.contactId, current.contactId)).limit(1)).length > 0;
-      if (hasCustomerRole && requestedType === "supplier") {
-        throw new HttpError(409, "This contact is also a customer; its type cannot be reduced to supplier only.");
-      }
-      const effType: "supplier" | "customer_supplier" = hasCustomerRole ? "customer_supplier" : requestedType;
+      const effType: "supplier" | "customer_supplier" = requestedType;
       set.contactType = effType;
       await tx.update(schema.suppliersTable).set(set).where(eq(schema.suppliersTable.id, id));
       const shared: ContactSharedInput = {
@@ -875,6 +874,15 @@ router.put("/erp/suppliers/:id", authenticate, requireStaff, requireStore, requi
       }
       if (effType === "customer_supplier") {
         await ensureCustomerRole(tx, storeId, contactId, shared);
+      } else if (hasCustomerRole && contactId != null) {
+        // Downgrade: reset the linked customer-profile label to "customer" so the
+        // contact is no longer displayed as customer_supplier on the customer side.
+        // Intentionally contact-wide (no storeId filter): every profile sharing this
+        // contactId is relabeled, matching contacts.contactType which was already
+        // flipped above — a contact is a single identity across the stores that share it.
+        await tx.update(schema.customerProfilesTable)
+          .set({ contactType: "customer", updatedAt: new Date() })
+          .where(eq(schema.customerProfilesTable.contactId, contactId));
       }
       const [row] = await tx.select().from(schema.suppliersTable)
         .where(eq(schema.suppliersTable.id, id)).limit(1);
@@ -2094,19 +2102,15 @@ router.put("/erp/customers/:id", authenticate, requireAdmin, requireStore, async
       if (!u || !prof) return;
       const cStoreId = prof.storeId ?? storeId;
       let contactId = prof.contactId;
-      // One-way role promotion: if this identity already owns a supplier role, it must
-      // stay a customer_supplier — a role that may carry financial history is never stripped.
       const hasSupplierRole = contactId != null && (await tx.select({ id: schema.suppliersTable.id })
         .from(schema.suppliersTable).where(eq(schema.suppliersTable.contactId, contactId)).limit(1)).length > 0;
-      if (hasSupplierRole && prof.contactType !== "customer_supplier") {
-        throw new HttpError(409, "This contact is also a supplier; its type cannot be reduced to customer only.");
-      }
+      // Both directions are allowed: customer→customer_supplier (promotion) and
+      // customer_supplier→customer (downgrade). Role rows are NEVER deleted — on
+      // downgrade the suppliers row keeps its financial history and only its
+      // contactType label is reset to "supplier". prof.contactType already holds the
+      // value written by the upsert above, so it is used directly as the effective type.
       const effType: "customer" | "customer_supplier" =
-        hasSupplierRole ? "customer_supplier" : (prof.contactType === "customer_supplier" ? "customer_supplier" : "customer");
-      if (prof.contactType !== effType) {
-        await tx.update(schema.customerProfilesTable).set({ contactType: effType })
-          .where(and(eq(schema.customerProfilesTable.userId, userId), eq(schema.customerProfilesTable.storeId, storeId)));
-      }
+        prof.contactType === "customer_supplier" ? "customer_supplier" : "customer";
       const cShared: ContactSharedInput = {
         name: u.name, contactName: null, email: u.email,
         phone: u.phone ?? null, address: u.address ?? null, notes: u.notes ?? null,
@@ -2121,6 +2125,12 @@ router.put("/erp/customers/:id", authenticate, requireAdmin, requireStore, async
       }
       if (effType === "customer_supplier") {
         await ensureSupplierRole(tx, cStoreId, contactId, cShared);
+      } else if (hasSupplierRole && contactId != null) {
+        // Downgrade: reset the linked supplier label to "supplier" so the contact
+        // is no longer displayed as customer_supplier on the supplier side.
+        await tx.update(schema.suppliersTable)
+          .set({ contactType: "supplier" })
+          .where(eq(schema.suppliersTable.contactId, contactId));
       }
       if (contactId != null && currentBalance !== undefined) {
         await recomputeContactBalance(tx, contactId);

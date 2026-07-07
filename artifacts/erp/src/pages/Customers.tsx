@@ -212,7 +212,7 @@ function CustomerSheet({ customerId, onClose, t, lang, currency, initialTab = "b
           <TierBadge pt={profile.priceTier as PriceTier | null} lang={lang} />
           <div className="ml-auto flex gap-2">
             {!editing ? (
-              <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => setEditing(true)}>
+              <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => { updateCustomer.reset(); setEditing(true); }}>
                 {t("Modifier", "تعديل")}
               </Button>
             ) : (
@@ -223,6 +223,13 @@ function CustomerSheet({ customerId, onClose, t, lang, currency, initialTab = "b
                 <Button size="sm" className="h-7 text-xs bg-[#1B3057] hover:bg-[#152544]" onClick={handleSave} disabled={updateCustomer.isPending}>
                   {updateCustomer.isPending ? "..." : t("Enregistrer", "حفظ")}
                 </Button>
+                {updateCustomer.isError && (
+                  <p className="text-xs text-red-600 w-full" data-testid="text-customer-save-error">
+                    {(updateCustomer.error as { data?: { error?: string } | null })?.data?.error
+                      ?? (updateCustomer.error as { message?: string })?.message
+                      ?? t("Échec de l'enregistrement", "فشل الحفظ")}
+                  </p>
+                )}
               </>
             )}
             <Button

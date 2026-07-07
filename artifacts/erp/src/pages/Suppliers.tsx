@@ -543,6 +543,7 @@ export default function Suppliers() {
 
   const [dialog, setDialog] = useState<{ open: boolean; editing: Supplier | null }>({ open: false, editing: null });
   const [form, setForm] = useState<ContactFormState>(emptySupplierForm);
+  const [saveError, setSaveError] = useState<string | null>(null);
   const [statementSupplier, setStatementSupplier] = useState<Supplier | null>(null);
   const [statementOpen, setStatementOpen] = useState(false);
   const [paymentSupplier, setPaymentSupplier] = useState<Supplier | null>(null);
@@ -552,7 +553,7 @@ export default function Suppliers() {
   const [importSupplier, setImportSupplier] = useState<GlobalSupplier | null>(null);
   const [importOpen, setImportOpen] = useState(false);
 
-  const openCreate = () => { setForm(emptySupplierForm); setDialog({ open: true, editing: null }); };
+  const openCreate = () => { setForm(emptySupplierForm); setSaveError(null); setDialog({ open: true, editing: null }); };
   const openEdit = (s: Supplier) => {
     setForm({
       ...emptySupplierForm,
@@ -560,6 +561,7 @@ export default function Suppliers() {
       address: s.address ?? "", notes: s.notes ?? "",
       contactType: s.contactType ?? "supplier",
     });
+    setSaveError(null);
     setDialog({ open: true, editing: s });
   };
   const openStatement = (s: Supplier) => { setStatementSupplier(s); setStatementOpen(true); };
@@ -580,16 +582,26 @@ export default function Suppliers() {
       notes: form.notes,
       contactType: form.contactType as "supplier" | "customer_supplier",
     };
-    const onSettled = () => {
+    // Close ONLY on success. On error, keep the dialog open and surface the API
+    // message — otherwise a rejected save (e.g. missing email for the customer
+    // side) silently closes and looks like it worked.
+    const onSuccess = () => {
       qc.invalidateQueries({ queryKey: getGetSuppliersQueryKey() });
       // A customer_supplier also creates/refreshes the customer side — refresh that list too.
       qc.invalidateQueries({ queryKey: getGetErpCustomersQueryKey() });
+      setSaveError(null);
       setDialog({ open: false, editing: null });
     };
+    const onError = (err: unknown) => {
+      // ApiError from the generated client: `.data` is the parsed JSON error body.
+      const e = err as { data?: { error?: string } | null; message?: string };
+      setSaveError(e?.data?.error ?? e?.message ?? t("Échec de l'enregistrement", "فشل الحفظ"));
+    };
+    setSaveError(null);
     if (dialog.editing) {
-      updateSupplier.mutate({ id: dialog.editing.id, data: payload }, { onSettled });
+      updateSupplier.mutate({ id: dialog.editing.id, data: payload }, { onSuccess, onError });
     } else {
-      createSupplier.mutate({ data: payload }, { onSettled });
+      createSupplier.mutate({ data: payload }, { onSuccess, onError });
     }
   };
 
@@ -722,7 +734,7 @@ export default function Suppliers() {
         setForm={setForm}
         onSave={handleSave}
         saving={createSupplier.isPending || updateSupplier.isPending}
-        error={null}
+        error={saveError}
         title={<><UserPlus className="h-4 w-4" />{dialog.editing ? t("Modifier le fournisseur", "تعديل المورد") : t("Ajouter un fournisseur", "إضافة مورد")}</>}
         classifs={[]}
         tiers={[]}

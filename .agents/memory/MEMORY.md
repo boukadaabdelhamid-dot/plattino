@@ -13,12 +13,12 @@
 - [Product visibility (VITRINE/isExposed)](product-visibility-isexposed.md) — API public-storefront path enforces isExposed=true (list + detail 404); staff/ERP JWT path sees all. Don't rely on frontend passing filterExposed.
 - [ERP permission module boundaries](erp-permission-module-boundaries.md) — caisse-transfers + account/me are shared all-staff Mon Compte ops (keep requireStaff, never caisse-gate); realtime is page-gated only (don't gate the shared WS).
 - [Staff password reset (ERP)](staff-password-reset.md) — admin-only PUT /erp/staff/:id/password; deliberately does NOT revoke existing JWTs (stateless auth, no session table).
-- [Unified contact roles](unified-contact-roles.md) — contacts = identity; customer/supplier are native role rows linked by nullable contact_id; roles only promote (downgrade→409), never delete.
+- [Unified contact roles](unified-contact-roles.md) — contacts = identity; customer/supplier are native role rows; type changes are bidirectional label flips, role rows NEVER deleted.
 - [Orders revenue fan-out trap](orders-revenue-fanout.md) — SUM(orders.total_amount) over an orders⋈order_items join multiplies revenue by item count; aggregate order totals in a separate orders-only CTE. Dashboard Bénéfice net = rev−COGS−returns−expenses (mirrors Analytics/Rapport).
 - [Global contact ID balance sync](global-contact-id-balance-sync.md) — contacts.global_contact_id is the cross-store linking key; syncLinkedContactBalances propagates balance to all siblings; ON CONFLICT bug fixed in customer ops.
 - [Supplier save whitelists fields](supplier-save-body-mass-assign.md) — /erp/suppliers POST+PUT whitelist {name,contactName,email,phone,address,notes,contactType}+contactId; currentBalance/globalSupplierId/storeId never mass-assignable.
-- [Customer PUT balance mass-assign](customer-put-balance-mass-assign.md) — GET returns canonical (cust+supplier) balance; never write it back to cp via profile PUT; delete only updateSet.currentBalance to fix without flipping recompute/sync gates.
+- [Customer PUT balance mass-assign](customer-put-balance-mass-assign.md) — GET returns canonical (cust+supplier) balance; never write it back to the profile via PUT.
 - [Cross-store customer balance unify](cross-store-customer-balance-unify.md) — customer_profiles.user_id links customers cross-store; PUSH on mutation, ADOPT-from-sibling on create (never push 0).
 - [Credit-limit dual enforcement](credit-limit-dual-enforcement.md) — à-terme plafond enforced in 3 layers (orders/erp/PaymentDialog gate); mirror changes; never hard-reject creditLimit===0.
 - [Order payload empty-string fallbacks](order-payload-empty-string-fallbacks.md) — contact phone can be '' not null; order/draft required-field fallbacks must use `|| default`/trim, not `??`, or API 400s.
-- [Dashboard cross-store dedup](dashboard-cross-store-dedup.md) — all-stores dashboard SUM/COUNT over synced cross-store rows (supplier gsid, customer user_id) must DISTINCT ON the unifying key or it ×store-count.
+- [Dashboard cross-store dedup](dashboard-cross-store-dedup.md) — all-stores SUM/COUNT over synced rows must DISTINCT ON the unifying key or it ×store-count.

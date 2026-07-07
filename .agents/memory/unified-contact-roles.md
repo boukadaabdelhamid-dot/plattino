@@ -1,6 +1,6 @@
 ---
-name: Unified contact identity + one-way role promotion
-description: contacts table is the identity; customer/supplier are native role-extension rows linked by nullable contact_id; roles only promote, never downgrade.
+name: Unified contact identity + label-only role changes
+description: contacts table is the identity; customer/supplier are native role-extension rows linked by nullable contact_id; type changes are bidirectional label flips — role rows are NEVER deleted.
 ---
 
 # Unified contact system (Phase 2)
@@ -12,20 +12,25 @@ partial unique index (one role row per contact per table). List membership is dr
 by the NATIVE role rows, not by contactType — a `customer_supplier` shows in both
 lists because it owns one customer_profiles row AND one suppliers row under one contact.
 
-## One-way role promotion (deliberate)
+## Bidirectional type changes, label-only (deliberate)
 
-A `customer_supplier` CANNOT be reduced to a single role via the edit endpoints. Both
-supplier PUT and customer PUT detect a linked counterpart role and reject the
-downgrade with **409**. Promotion (single role → customer_supplier) is allowed and
-creates the missing role row in the same transaction.
+Both directions are allowed via the edit endpoints: promotion (single role →
+customer_supplier) creates the missing role row in the same transaction; downgrade
+(customer_supplier → single role) only flips the contactType LABELS — on the edited
+side, on contacts, and on the counterpart role row (reset to its base type,
+contact-wide across stores sharing the contactId). Role rows are NEVER deleted.
 
 **Why:** a role row may carry financial history (supplier balance/operations, customer
-orders/balance). Deleting it on downgrade would lose data and risk FK breakage — and
-the project constraint is strictly additive/reversible, no deletion. Silent auto-correct
-would hide intent, so we fail loudly instead.
+orders/balance). Deleting on downgrade would lose data and risk FK breakage. The old
+409-reject-downgrade guard was removed: it conflated "changing the display label" with
+"deleting role data". Verified safe because contactType is only read in display paths
+(unified-balance filters, statement merges, canonical-balance CASEs); every balance
+write and cross-store sync is keyed on contactId/userId, never on contactType.
 
 **How to apply:** all create/update flows are transaction-scoped (customer PUT wraps
-user update + profile upsert + contact maintenance + role-ensure in ONE tx so the
-visible edit can't commit while unified state fails). Legacy rows keep contact_id NULL
-and are untouched (no backfill); they link lazily on first edit. Don't add a downgrade
-path without explicit deactivation semantics + list filtering.
+user update + profile upsert + contact maintenance + role-ensure/label-reset in ONE tx).
+After downgrade each side displays its own role balance instead of the unified contacts
+balance — expected. Cross-store siblings under a DIFFERENT contact keep their type; the
+import "Type mismatch" report covers that (pre-existing). Legacy rows keep contact_id
+NULL and link lazily on first edit. ERP dialogs must close only on onSuccess and surface
+API errors (ApiError.data.error) — onSettled-close silently swallowed the old 409s.

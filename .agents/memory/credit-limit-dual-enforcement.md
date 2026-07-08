@@ -39,9 +39,27 @@ or the POS path, the CRM path, and the button-enable state diverge again. The
 frontend gate is UX-only (backend stays authoritative), but if it is stale the
 disabled button hides an otherwise-valid sale — a backend-only fix looks broken.
 
-## Known residual (out of scope, watch for it)
-erp.ts reads the unified contact balance for customer_supplier contacts
-(`c.current_balance` when linked), while the orders.ts POS path reads only
-`customer_profiles.current_balance`. A customer_supplier whose creditor balance
-sits on the supplier side would still be blocked at POS while the equivalent
-ERP op is allowed.
+## Balance source — orders.ts must use unified contact balance
+
+All five check sites must read the same balance for `customer_supplier` contacts.
+`orders.ts` (both the pre-check and the FOR UPDATE in-transaction check) now use
+a LEFT JOIN to `contacts`:
+
+```sql
+SELECT cp.credit_limit,
+       CASE WHEN c.id IS NOT NULL THEN c.current_balance
+            ELSE cp.current_balance END AS current_balance
+FROM customer_profiles cp
+LEFT JOIN contacts c ON c.id = cp.contact_id AND c.contact_type = 'customer_supplier'
+WHERE cp.user_id = $userId AND cp.store_id = $storeId
+```
+
+The in-transaction query uses `FOR UPDATE OF cp` (not bare `FOR UPDATE`) to lock
+only the customer_profiles row, since contacts is read-only in this path.
+
+**Why:** Before this fix, orders.ts read only `customer_profiles.current_balance`
+(customer-side balance), while the frontend and erp.ts CRM path read
+`contacts.current_balance` (unified). A customer_supplier contact with a creditor
+balance on the supplier side appeared positive to the backend and was wrongly
+blocked, while the frontend (seeing the unified negative balance) showed the
+button as enabled — a silent divergence.

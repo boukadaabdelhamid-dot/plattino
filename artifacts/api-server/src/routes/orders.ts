@@ -82,8 +82,12 @@ async function handleCreateOrder(req: AuthRequest, res: import("express").Respon
     // against the customer's credit.
     if (paymentMode === "terme" && linkedCustomerId) {
       const profResult = await db.execute(sql`
-        SELECT credit_limit, current_balance FROM customer_profiles
-        WHERE user_id = ${Number(linkedCustomerId)} AND store_id = ${storeId}
+        SELECT cp.credit_limit,
+               CASE WHEN c.id IS NOT NULL THEN c.current_balance
+                    ELSE cp.current_balance END AS current_balance
+        FROM customer_profiles cp
+        LEFT JOIN contacts c ON c.id = cp.contact_id AND c.contact_type = 'customer_supplier'
+        WHERE cp.user_id = ${Number(linkedCustomerId)} AND cp.store_id = ${storeId}
         LIMIT 1
       `);
       const prof = profResult.rows[0] as { credit_limit: string | null; current_balance: string | null } | undefined;
@@ -212,9 +216,13 @@ async function handleCreateOrder(req: AuthRequest, res: import("express").Respon
       const receivable = isTerme ? Math.max(0, totalAmount - appliedVersement) : 0;
       if (isTerme && posCustomerId && receivable > 0) {
         const profRes = await tx.execute(sql`
-          SELECT credit_limit, current_balance FROM customer_profiles
-          WHERE user_id = ${posCustomerId} AND store_id = ${storeId}
-          FOR UPDATE
+          SELECT cp.credit_limit,
+                 CASE WHEN c.id IS NOT NULL THEN c.current_balance
+                      ELSE cp.current_balance END AS current_balance
+          FROM customer_profiles cp
+          LEFT JOIN contacts c ON c.id = cp.contact_id AND c.contact_type = 'customer_supplier'
+          WHERE cp.user_id = ${posCustomerId} AND cp.store_id = ${storeId}
+          FOR UPDATE OF cp
         `);
         const prof = profRes.rows[0] as { credit_limit: string | null; current_balance: string | null } | undefined;
         const creditLimit = Number(prof?.credit_limit ?? 0);

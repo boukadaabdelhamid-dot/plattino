@@ -27,12 +27,16 @@ pnpm workspace monorepo. Full-stack bilingual (AR/EN) beauty brand platform: web
 
 ## Artifacts
 
-| Artifact | Path | Port | Description |
+The project runs as three registered Replit artifact services (each with its own managed workflow — do not recreate these as plain `.replit` workflows, it causes port conflicts):
+
+| Artifact | Path | Dev Port | Description |
 |---|---|---|---|
-| `artifacts/api-server` | `/api/` | 8080 | Express REST API + WebSocket |
-| `artifacts/web-store` | `/` | dynamic | Customer-facing e-commerce store (React+Vite) |
-| `artifacts/erp` | `/erp/` | dynamic | Internal ERP management dashboard (React+Vite) |
+| `artifacts/api-server` | `/api` | 8080 | Express REST API + WebSocket |
+| `artifacts/web-store` | `/` | 23733 | Customer-facing e-commerce store (React+Vite) |
+| `artifacts/erp` | `/erp/` | 18996 | Internal ERP management dashboard (React+Vite) |
 | `artifacts/mobile-store` | `/mobile/` | dynamic | Customer mobile app (Expo) |
+
+Each artifact's dev port is fixed by its `.replit-artifact/artifact.toml`; the platform's own proxy routes by path prefix, so there is no single combined dev port to hit directly other than through the preview/public domain.
 
 ## Key Packages
 

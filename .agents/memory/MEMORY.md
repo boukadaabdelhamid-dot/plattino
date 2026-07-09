@@ -22,3 +22,4 @@
 - [Credit-limit dual enforcement](credit-limit-dual-enforcement.md) — à-terme plafond enforced in 3 layers (orders/erp/PaymentDialog gate); mirror changes; never hard-reject creditLimit===0.
 - [Order payload empty-string fallbacks](order-payload-empty-string-fallbacks.md) — contact phone can be '' not null; order/draft required-field fallbacks must use `|| default`/trim, not `??`, or API 400s.
 - [Dashboard cross-store dedup](dashboard-cross-store-dedup.md) — all-stores SUM/COUNT over synced rows must DISTINCT ON the unifying key or it ×store-count.
+- [Artifact vs legacy workflow port conflict](artifact-vs-legacy-workflow-port-conflict.md) — converting to artifact services doesn't stop old .replit workflows; leftover processes squat ports and cause public 502s.

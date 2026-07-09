@@ -1,23 +1,23 @@
 ---
-name: MIGRATION_SQL drift (api-server bootstrap)
-description: How the Replit-boot MIGRATION_SQL relates to schema.ts and the safe way to regenerate it when a fresh DB fails to seed.
+name: MIGRATION_SQL drift
+description: Hand-maintained boot MIGRATION_SQL in api-server/src/index.ts drifts behind lib/db/src/schema/*.ts; Replit runs this on boot (Railway uses drizzle push instead).
 ---
 
-# MIGRATION_SQL drift vs schema.ts
+The boot-time `MIGRATION_SQL` string in `artifacts/api-server/src/index.ts` is a hand-maintained
+snapshot of `CREATE TABLE`/`ALTER TABLE` statements. It is only the source of truth for **Replit**
+dev environments (fresh Postgres). Railway/production uses `drizzle-kit push --force` instead, so
+drift here is invisible there until someone imports/reruns on Replit.
 
-`artifacts/api-server/src/index.ts` holds a hand-maintained `MIGRATION_SQL` template string run at boot by `runMigrations()`. It splits on `--> statement-breakpoint` and runs each statement, **tolerating** errors whose message contains `already exists` / `duplicate column` / `already been created` (others are logged as non-fatal warnings). This is the ONLY schema bootstrap on Replit.
+**Why:** schema.ts gets columns added directly (e.g. via `drizzle push` on another env) without the
+person also updating the boot SQL string, so a fresh Replit import creates tables missing columns
+that the app code (routes, seed/bootstrap) expects — surfaces as `column "X" does not exist` errors
+at runtime, not at typecheck time.
 
-Railway instead runs `drizzle-kit push --force` (railway.json) before boot, so `MIGRATION_SQL` is effectively inert there. The `.sql` migration files in `lib/db` are run by **neither** environment.
+**How to apply:** if you see `column "..." does not exist` on a fresh import/boot, find the
+`CREATE TABLE` for that table in `artifacts/api-server/src/index.ts`'s MIGRATION_SQL and add an
+`ALTER TABLE "..." ADD COLUMN IF NOT EXISTS "..." <type>;--> statement-breakpoint` right after it,
+matching the column defined in `lib/db/src/schema/*.ts`. Don't just patch the query — fix the
+migration string so future imports don't hit the same error. To fully resync, diff live DB schema
+against schema.ts (or a scratch DB from `drizzle push`) rather than eyeballing.
 
-**Why it bites:** `MIGRATION_SQL` drifts behind `lib/db/src/schema/*.ts`. A fresh Replit Postgres DB then boots but `seed.ts` fails on missing tables/columns, so no admin user/data. The `.sql` migration files ALSO drift from schema.ts (e.g. `supplier_operations.type` is `text` in schema but `enum` in the migration; schema adds `actor_user_id`). So the migration files are NOT a reliable source of truth.
-
-**Source of truth = schema.ts**, materialized by `drizzle-kit push --force` into a scratch DB.
-
-**How to regenerate the patch safely (idempotent, additive):**
-1. Create scratch DB, `pnpm --filter @workspace/db run push` (force) into it = TARGET.
-2. Diff TARGET against the live DB (current MIGRATION_SQL output) via `pg_catalog` (enums, enum values, tables, columns, type diffs, constraints, indexes).
-3. Emit: plain `CREATE TYPE` (skip-handler makes it idempotent), `CREATE TABLE IF NOT EXISTS`, `ADD COLUMN IF NOT EXISTS`, `ALTER TYPE ... ADD VALUE IF NOT EXISTS`, plain `ADD CONSTRAINT` (duplicate -> "already exists" -> skipped). Wrap column **TYPE changes** in `DO $do$ ... IF (information_schema.columns ...) THEN ... END IF; END $do$;` so they don't rewrite tables on every boot. `$do$` is safe inside the JS template literal (only `${` interpolates).
-4. Order: enums -> enum values -> tables -> columns -> type guards -> FKs/checks (deps exist first).
-5. Verify by booting a brand-new empty DB through the real server entrypoint, then reverse-diff that DB vs TARGET (expect 0 differences) and confirm `seed.ts` created `admin@midanic.com`.
-
-**Harmless artifact:** fresh DB ends with both `employees_user_id_fkey` (pre-existing inline `REFERENCES` on the `employees.user_id` ADD COLUMN) and the drizzle-named `employees_user_id_users_id_fk` + `employees_user_id_unique`. Redundant, not harmful.
+Known fixed instance: `product_types` table was missing `image_url` (text, nullable) — added.

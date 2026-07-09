@@ -425,6 +425,7 @@ CREATE TABLE "product_types" (
         "name_ar" text NOT NULL,
         "created_at" timestamp DEFAULT now() NOT NULL
 );--> statement-breakpoint
+ALTER TABLE "product_types" ADD COLUMN IF NOT EXISTS "image_url" text;--> statement-breakpoint
 ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "is_active" boolean NOT NULL DEFAULT true;--> statement-breakpoint
 ALTER TABLE "employees" ADD COLUMN IF NOT EXISTS "user_id" integer REFERENCES "public"."users"("id") ON DELETE SET NULL;--> statement-breakpoint
 CREATE TABLE "user_permissions" (
@@ -632,6 +633,9 @@ ALTER TABLE "customer_profiles" ADD CONSTRAINT "customer_profiles_contact_id_con
 ALTER TABLE "suppliers" ADD COLUMN IF NOT EXISTS "contact_id" integer;--> statement-breakpoint
 ALTER TABLE "suppliers" ADD COLUMN IF NOT EXISTS "contact_type" "contact_type" DEFAULT 'supplier' NOT NULL;--> statement-breakpoint
 ALTER TABLE "suppliers" ADD CONSTRAINT "suppliers_contact_id_contacts_id_fk" FOREIGN KEY ("contact_id") REFERENCES "public"."contacts"("id");--> statement-breakpoint
+ALTER TABLE "suppliers" ADD COLUMN IF NOT EXISTS "global_supplier_id" text;--> statement-breakpoint
+CREATE UNIQUE INDEX IF NOT EXISTS "suppliers_one_global_per_store" ON "suppliers" ("store_id", "global_supplier_id") WHERE "global_supplier_id" IS NOT NULL;--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "suppliers_global_id_idx" ON "suppliers" ("global_supplier_id") WHERE "global_supplier_id" IS NOT NULL;--> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "contacts_store_type_idx" ON "contacts" ("store_id","contact_type");--> statement-breakpoint
 CREATE UNIQUE INDEX IF NOT EXISTS "customer_profiles_contact_id_uniq" ON "customer_profiles" ("contact_id") WHERE "contact_id" IS NOT NULL;--> statement-breakpoint
 CREATE UNIQUE INDEX IF NOT EXISTS "suppliers_contact_id_uniq" ON "suppliers" ("contact_id") WHERE "contact_id" IS NOT NULL;--> statement-breakpoint

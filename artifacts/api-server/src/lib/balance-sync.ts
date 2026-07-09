@@ -1,24 +1,43 @@
-import { and, eq, ne, sql } from "drizzle-orm";
+import { randomUUID } from "node:crypto";
+import { and, eq, inArray, ne, sql } from "drizzle-orm";
 import { db, schema } from "./db";
 
-export type DbLike = Pick<typeof db, "select" | "insert" | "update" | "delete">;
+export type DbLike = Pick<typeof db, "select" | "insert" | "update" | "delete" | "execute">;
+
+// Serializes every balance-changing operation that touches a given identity onto
+// one or more Postgres advisory locks for the lifetime of the current
+// transaction. Without this, two concurrent transactions mutating DIFFERENT
+// roles of the SAME dual-role contact (e.g. a customer-side sale and a
+// supplier-side payment) could each read the other's role balance mid-flight
+// while computing contacts.current_balance, dropping one side's delta (lost
+// update) — and the same race exists for two SAME-role mutations fanning out
+// across a legacy (pre-globalContactId) cross-store group via userId /
+// globalSupplierId.
+//
+// Once a contact has a globalContactId, that single key already unifies every
+// role in every linked store, so locking on it alone is sufficient. Before one
+// exists, no single key covers both axes (cross-store same-role fan-out keys on
+// userId/globalSupplierId; same-store dual-role fan-out keys on contactId), so
+// callers pass BOTH applicable keys. Keys are de-duplicated and sorted into one
+// fixed, deterministic global order (shared by every caller) before acquiring
+// them one at a time — this is what prevents a lock-ordering deadlock between,
+// say, a concurrent customer-side transaction (locking cust:X then contact:Y)
+// and a supplier-side transaction (locking sup:Z then contact:Y): both instead
+// acquire their locks in the same sorted order, so a cycle can't form.
+async function lockIdentityGroup(tx: DbLike, keys: Array<string | null | undefined>): Promise<void> {
+  const uniqueSorted = [...new Set(keys.filter((k): k is string => !!k))].sort();
+  for (const key of uniqueSorted) {
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${key}))`);
+  }
+}
 
 // ── Contacts unified balance ───────────────────────────────────────────────────
 // contacts.current_balance is the single canonical balance for customer_supplier
 // contacts. It equals customer_profiles.current_balance + suppliers.current_balance.
 // Positive = contact owes the store (net receivable).
 
-// Increments contacts.current_balance by delta (no-op for delta=0).
-// Use this after any raw SQL that already updated the role table.
-export async function applyContactDelta(tx: DbLike, contactId: number, delta: number): Promise<void> {
-  if (delta === 0) return;
-  await tx.update(schema.contactsTable)
-    .set({ currentBalance: sql`COALESCE(current_balance, '0') + ${delta.toFixed(2)}`, updatedAt: new Date() })
-    .where(eq(schema.contactsTable.id, contactId));
-}
-
 // Recomputes contacts.current_balance = cp.current_balance + suppliers.current_balance.
-// Use after any absolute-set operation (ajustement, manual balance override).
+// Call after ANY change to either role's balance for this contact.
 export async function recomputeContactBalance(tx: DbLike, contactId: number): Promise<void> {
   const [cpRow] = await tx.select({ bal: schema.customerProfilesTable.currentBalance })
     .from(schema.customerProfilesTable)
@@ -35,34 +54,100 @@ export async function recomputeContactBalance(tx: DbLike, contactId: number): Pr
     .where(eq(schema.contactsTable.id, contactId));
 }
 
-// ── Customer-side balance ──────────────────────────────────────────────────────
-// applyNetBalanceDelta: legacy name kept for backward compat with orders.ts call
-// sites. Since all orders.ts callers already update customer_profiles via raw SQL
-// before calling this, this function only updates contacts.current_balance — the
-// double-apply on customer_profiles is intentionally removed.
-export async function applyNetBalanceDelta(tx: DbLike, contactId: number, delta: number): Promise<void> {
-  await applyContactDelta(tx, contactId, delta);
+// ── THE cross-store link ───────────────────────────────────────────────────────
+// contacts.globalContactId is the single identity key shared by every per-store
+// contact row representing the same physical person/company. Because BOTH the
+// customer role and the supplier role point at the contact via contactId, syncing
+// through this ONE key keeps both roles connected across every linked store —
+// structurally impossible to link one role without the other.
+//
+// After ANY balance-changing operation on a contact-linked role, call this with
+// the contact whose role just changed: it copies that role's new balance to every
+// sibling contact's SAME role (customer→customer, supplier→supplier), then
+// recomputes each sibling's canonical unified balance. No-op when the contact has
+// no globalContactId (not cross-store linked).
+export async function syncLinkedContactBalances(tx: DbLike, contactId: number): Promise<void> {
+  const [source] = await tx.select({ globalContactId: schema.contactsTable.globalContactId })
+    .from(schema.contactsTable)
+    .where(eq(schema.contactsTable.id, contactId))
+    .limit(1);
+  if (!source?.globalContactId) return;
+  const gcid = source.globalContactId;
+
+  const [srcCp] = await tx.select({ currentBalance: schema.customerProfilesTable.currentBalance })
+    .from(schema.customerProfilesTable)
+    .where(eq(schema.customerProfilesTable.contactId, contactId))
+    .limit(1);
+  const [srcSup] = await tx.select({ currentBalance: schema.suppliersTable.currentBalance })
+    .from(schema.suppliersTable)
+    .where(eq(schema.suppliersTable.contactId, contactId))
+    .limit(1);
+
+  const siblings = await tx.select({ id: schema.contactsTable.id })
+    .from(schema.contactsTable)
+    .where(and(eq(schema.contactsTable.globalContactId, gcid), ne(schema.contactsTable.id, contactId)));
+
+  for (const sib of siblings) {
+    if (srcCp) {
+      await tx.update(schema.customerProfilesTable)
+        .set({ currentBalance: srcCp.currentBalance, updatedAt: new Date() })
+        .where(eq(schema.customerProfilesTable.contactId, sib.id));
+    }
+    if (srcSup) {
+      await tx.update(schema.suppliersTable)
+        .set({ currentBalance: srcSup.currentBalance })
+        .where(eq(schema.suppliersTable.contactId, sib.id));
+    }
+    await recomputeContactBalance(tx, sib.id);
+  }
 }
 
-// Absolute set of customer_profiles.current_balance + recompute contacts.
-export async function setNetBalance(tx: DbLike, contactId: number, newBalance: number): Promise<void> {
-  await tx.update(schema.customerProfilesTable)
-    .set({ currentBalance: newBalance.toFixed(2), updatedAt: new Date() })
-    .where(eq(schema.customerProfilesTable.contactId, contactId));
-  await recomputeContactBalance(tx, contactId);
+// Links two contacts (usually in different stores) into the same global identity
+// so they always stay balance-synced going forward. Idempotent and merge-safe:
+// - Neither has a globalContactId yet → both get a freshly minted one.
+// - One already has one → the other adopts it.
+// - Both already have DIFFERENT ones (rare: two previously-separate link chains
+//   turn out to be the same identity) → the whole second group is merged onto
+//   the first group's id so nothing is silently left half-linked.
+// This is the ONLY place a contact's globalContactId should be assigned — every
+// cross-store linking/import flow (customer-first or supplier-first) must call
+// this so linking one role can never leave the other role unlinked.
+export async function linkContactsGlobally(tx: DbLike, contactIdA: number, contactIdB: number): Promise<void> {
+  if (contactIdA === contactIdB) return;
+  const rows = await tx.select({ id: schema.contactsTable.id, gcid: schema.contactsTable.globalContactId })
+    .from(schema.contactsTable)
+    .where(inArray(schema.contactsTable.id, [contactIdA, contactIdB]));
+  const aRow = rows.find((r) => r.id === contactIdA);
+  const bRow = rows.find((r) => r.id === contactIdB);
+  if (!aRow || !bRow) return;
+  if (aRow.gcid && bRow.gcid && aRow.gcid === bRow.gcid) return; // already linked
+
+  const gcid = aRow.gcid ?? bRow.gcid ?? randomUUID();
+
+  if (bRow.gcid && bRow.gcid !== gcid) {
+    // B belongs to an existing, different group — merge that whole group onto gcid.
+    await tx.update(schema.contactsTable)
+      .set({ globalContactId: gcid, updatedAt: new Date() })
+      .where(eq(schema.contactsTable.globalContactId, bRow.gcid));
+  } else if (!bRow.gcid) {
+    await tx.update(schema.contactsTable)
+      .set({ globalContactId: gcid, updatedAt: new Date() })
+      .where(eq(schema.contactsTable.id, contactIdB));
+  }
+  if (!aRow.gcid) {
+    await tx.update(schema.contactsTable)
+      .set({ globalContactId: gcid, updatedAt: new Date() })
+      .where(eq(schema.contactsTable.id, contactIdA));
+  }
 }
 
-// ── Cross-store customer balance sync ──────────────────────────────────────────
-// Customers linked across stores share ONE global identity: customer_profiles.user_id
-// (a single global users.id — the same person always has the same user_id in every
-// store). This is the customer-side mirror of syncLinkedSupplierBalances (which is
-// keyed on suppliers.globalSupplierId): after any balance-changing operation on a
-// customer in one store, COPY that store's resulting customer_profiles.current_balance
-// to the SAME user's profile in every other store, and recompute the canonical contact
-// balance for each linked profile that has a contact. No-op when the customer only
-// exists in one store. `sourceStoreId` is the store whose balance is authoritative
-// (the store that was just updated, or an existing store when a new profile adopts the
-// already-unified balance).
+// ── Legacy per-role cross-store sync (kept for rows with NO linked contact) ───
+// Pre-dating the unified contact identity, customers were linked across stores
+// purely via customer_profiles.userId (a global users.id) and suppliers purely
+// via suppliers.globalSupplierId. These still run for legacy rows that were
+// never linked to a `contacts` row (contactId IS NULL) — for anything with a
+// contactId, syncLinkedContactBalances (above) is the authoritative sync path.
+
 export async function syncLinkedCustomerBalances(
   tx: DbLike,
   userId: number,
@@ -90,34 +175,165 @@ export async function syncLinkedCustomerBalances(
   }
 }
 
-// ── Supplier-side balance ──────────────────────────────────────────────────────
-// Increments suppliers.current_balance + mirrors delta to contacts.current_balance.
-export async function applySupplierBalanceDelta(tx: DbLike, contactId: number, delta: number): Promise<void> {
-  if (delta === 0) return;
-  await tx.update(schema.suppliersTable)
-    .set({ currentBalance: sql`COALESCE(current_balance, '0') + ${delta.toFixed(2)}` })
-    .where(eq(schema.suppliersTable.contactId, contactId));
-  await applyContactDelta(tx, contactId, delta);
+export async function syncLinkedSupplierBalances(
+  tx: DbLike,
+  supplierId: number,
+  globalSupplierId: string | null | undefined,
+): Promise<void> {
+  if (!globalSupplierId) return;
+  const [source] = await tx.select({ currentBalance: schema.suppliersTable.currentBalance })
+    .from(schema.suppliersTable)
+    .where(eq(schema.suppliersTable.id, supplierId))
+    .limit(1);
+  if (!source) return;
+  const linked = await tx.select({ id: schema.suppliersTable.id, contactId: schema.suppliersTable.contactId })
+    .from(schema.suppliersTable)
+    .where(and(
+      eq(schema.suppliersTable.globalSupplierId, globalSupplierId),
+      ne(schema.suppliersTable.id, supplierId),
+    ));
+  for (const row of linked) {
+    await tx.update(schema.suppliersTable)
+      .set({ currentBalance: source.currentBalance })
+      .where(eq(schema.suppliersTable.id, row.id));
+    if (row.contactId) await recomputeContactBalance(tx, row.contactId);
+  }
 }
 
-// Absolute set of suppliers.current_balance + recompute contacts.
-export async function setSupplierBalance(tx: DbLike, contactId: number, newBalance: number): Promise<void> {
-  await tx.update(schema.suppliersTable)
-    .set({ currentBalance: newBalance.toFixed(2) })
-    .where(eq(schema.suppliersTable.contactId, contactId));
-  await recomputeContactBalance(tx, contactId);
+// ── Centralized balance mutation — THE only way a role balance should change ──
+// Every balance-changing operation (sale on credit, payment, return, adjustment)
+// must go through mutateCustomerBalance / mutateSupplierBalance instead of
+// writing customer_profiles / suppliers directly. Each call, in order:
+//   1. Applies the delta or absolute value to the role table (upserting the
+//      customer profile row if this is its first-ever balance-changing op).
+//   2. Runs the legacy per-role cross-store sync (userId / globalSupplierId) —
+//      a safety net for rows with no linked contact yet.
+//   3. Resolves the linked contactId (if any), recomputes that contact's unified
+//      balance, and fans it out to every sibling contact via
+//      syncLinkedContactBalances — covering BOTH roles for customer_supplier
+//      contacts, regardless of which role triggered the change.
+// No call site can skip a step because there is only one path to call.
+
+type BalanceOp = { delta: number; absolute?: undefined } | { absolute: number; delta?: undefined };
+
+export async function mutateCustomerBalance(
+  tx: DbLike,
+  userId: number,
+  storeId: number,
+  op: BalanceOp,
+): Promise<{ contactId: number | null }> {
+  {
+    // Once globalContactId exists it alone unifies every role in every linked
+    // store, so lock on it alone. Before it exists, lock on BOTH: `cust:userId`
+    // (covers legacy cross-store customer-side fan-out, keyed the same way
+    // syncLinkedCustomerBalances resolves siblings) AND `contact:contactId`
+    // (covers same-store customer-vs-supplier dual-role fan-out, shared with
+    // mutateSupplierBalance's lock below) — see lockIdentityGroup for why both
+    // are needed and why the ordering is safe.
+    const [existing] = await tx.select({
+      contactId: schema.customerProfilesTable.contactId,
+      gcid: schema.contactsTable.globalContactId,
+    })
+      .from(schema.customerProfilesTable)
+      .leftJoin(schema.contactsTable, eq(schema.contactsTable.id, schema.customerProfilesTable.contactId))
+      .where(and(eq(schema.customerProfilesTable.userId, userId), eq(schema.customerProfilesTable.storeId, storeId)))
+      .limit(1);
+    await lockIdentityGroup(
+      tx,
+      existing?.gcid
+        ? [existing.gcid]
+        : [`cust:${userId}`, existing?.contactId != null ? `contact:${existing.contactId}` : null],
+    );
+  }
+
+  if (op.absolute !== undefined) {
+    const balStr = op.absolute.toFixed(2);
+    await tx.insert(schema.customerProfilesTable)
+      .values({ userId, storeId, currentBalance: balStr })
+      .onConflictDoUpdate({
+        target: [schema.customerProfilesTable.userId, schema.customerProfilesTable.storeId],
+        set: { currentBalance: balStr, updatedAt: new Date() },
+      });
+  } else if (op.delta !== 0) {
+    const deltaStr = op.delta.toFixed(2);
+    await tx.insert(schema.customerProfilesTable)
+      .values({ userId, storeId, currentBalance: deltaStr })
+      .onConflictDoUpdate({
+        target: [schema.customerProfilesTable.userId, schema.customerProfilesTable.storeId],
+        set: {
+          currentBalance: sql`COALESCE(${schema.customerProfilesTable.currentBalance}, '0') + ${deltaStr}`,
+          updatedAt: new Date(),
+        },
+      });
+  }
+
+  await syncLinkedCustomerBalances(tx, userId, storeId);
+
+  const [prof] = await tx.select({ contactId: schema.customerProfilesTable.contactId })
+    .from(schema.customerProfilesTable)
+    .where(and(eq(schema.customerProfilesTable.userId, userId), eq(schema.customerProfilesTable.storeId, storeId)))
+    .limit(1);
+  const contactId = prof?.contactId ?? null;
+  if (contactId != null) {
+    await recomputeContactBalance(tx, contactId);
+    await syncLinkedContactBalances(tx, contactId);
+  }
+  return { contactId };
 }
 
-// ── Mirror helper (kept for legacy compatibility) ─────────────────────────────
-// Sets the same absolute balance on both role tables + contacts.
-export async function mirrorNetBalance(tx: DbLike, contactId: number, balance: string): Promise<void> {
-  await tx.update(schema.customerProfilesTable)
-    .set({ currentBalance: balance, updatedAt: new Date() })
-    .where(eq(schema.customerProfilesTable.contactId, contactId));
-  await tx.update(schema.suppliersTable)
-    .set({ currentBalance: balance })
-    .where(eq(schema.suppliersTable.contactId, contactId));
-  await tx.update(schema.contactsTable)
-    .set({ currentBalance: balance, updatedAt: new Date() })
-    .where(eq(schema.contactsTable.id, contactId));
+export async function mutateSupplierBalance(
+  tx: DbLike,
+  supplierId: number,
+  op: BalanceOp,
+): Promise<{ contactId: number | null }> {
+  {
+    // Mirrors mutateCustomerBalance's lock resolution: gcid alone once linked;
+    // otherwise BOTH the legacy cross-store supplier-side key (globalSupplierId
+    // once imported to other stores, else this row's own id) AND
+    // `contact:contactId` — the same shared key mutateCustomerBalance locks —
+    // so a same-store customer-vs-supplier dual-role race is always caught even
+    // before a globalContactId exists.
+    const [existing] = await tx.select({
+      contactId: schema.suppliersTable.contactId,
+      gcid: schema.contactsTable.globalContactId,
+      globalSupplierId: schema.suppliersTable.globalSupplierId,
+    })
+      .from(schema.suppliersTable)
+      .leftJoin(schema.contactsTable, eq(schema.contactsTable.id, schema.suppliersTable.contactId))
+      .where(eq(schema.suppliersTable.id, supplierId))
+      .limit(1);
+    await lockIdentityGroup(
+      tx,
+      existing?.gcid
+        ? [existing.gcid]
+        : [
+            existing?.globalSupplierId ? `sup-g:${existing.globalSupplierId}` : `sup:${supplierId}`,
+            existing?.contactId != null ? `contact:${existing.contactId}` : null,
+          ],
+    );
+  }
+
+  if (op.absolute !== undefined) {
+    await tx.update(schema.suppliersTable)
+      .set({ currentBalance: op.absolute.toFixed(2) })
+      .where(eq(schema.suppliersTable.id, supplierId));
+  } else if (op.delta !== 0) {
+    await tx.update(schema.suppliersTable)
+      .set({ currentBalance: sql`COALESCE(current_balance, '0') + ${op.delta.toFixed(2)}` })
+      .where(eq(schema.suppliersTable.id, supplierId));
+  }
+
+  const [supplier] = await tx.select({
+    contactId: schema.suppliersTable.contactId,
+    globalSupplierId: schema.suppliersTable.globalSupplierId,
+  }).from(schema.suppliersTable).where(eq(schema.suppliersTable.id, supplierId)).limit(1);
+
+  await syncLinkedSupplierBalances(tx, supplierId, supplier?.globalSupplierId);
+
+  const contactId = supplier?.contactId ?? null;
+  if (contactId != null) {
+    await recomputeContactBalance(tx, contactId);
+    await syncLinkedContactBalances(tx, contactId);
+  }
+  return { contactId };
 }

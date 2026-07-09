@@ -21,6 +21,8 @@ async function buildAll() {
       path.resolve(artifactDir, "src/consolidate-caisses.ts"),
       // Standalone one-time cross-store customer-balance unification runner.
       path.resolve(artifactDir, "src/unify-customer-balances.ts"),
+      // Standalone one-time cross-store contact-identity balance reconciliation runner.
+      path.resolve(artifactDir, "src/reconcile-contact-balances.ts"),
     ],
     platform: "node",
     bundle: true,

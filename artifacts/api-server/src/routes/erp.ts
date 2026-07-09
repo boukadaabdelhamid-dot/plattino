@@ -6,7 +6,15 @@ import { db, schema } from "../lib/db";
 import { authenticate, requireAdmin, requireStaff, requireStore, isAdmin, requirePermission, type AuthRequest } from "../lib/auth";
 import { broadcastToAdmins, broadcastCaisseChanged } from "../lib/ws";
 import { ensureCaisse } from "./caisses";
-import { applySupplierBalanceDelta, setSupplierBalance, applyContactDelta, recomputeContactBalance, syncLinkedCustomerBalances, type DbLike } from "../lib/balance-sync";
+import {
+  recomputeContactBalance,
+  syncLinkedCustomerBalances,
+  syncLinkedContactBalances,
+  linkContactsGlobally,
+  mutateCustomerBalance,
+  mutateSupplierBalance,
+  type DbLike,
+} from "../lib/balance-sync";
 
 const router = Router();
 
@@ -723,39 +731,10 @@ router.put("/erp/leaves/:id/status", authenticate, requireStaff, requireStore, r
 });
 
 // ─── Suppliers ─────────────────────────────────────────────────────
-// DbLike, applyNetBalanceDelta, setNetBalance imported from lib/balance-sync.
-
-// Global shared supplier account: suppliers linked across stores via the same
-// globalSupplierId share ONE balance. After any balance-changing operation on a
-// linked supplier, copy its new balance to every other linked record so the same
-// solde is visible in all stores. No-op for non-linked (globalSupplierId === null)
-// suppliers — keeps the per-store caisse/payment logic untouched.
-async function syncLinkedSupplierBalances(
-  tx: DbLike,
-  supplierId: number,
-  globalSupplierId: string | null | undefined,
-): Promise<void> {
-  if (!globalSupplierId) return;
-  const [source] = await tx.select({ currentBalance: schema.suppliersTable.currentBalance })
-    .from(schema.suppliersTable)
-    .where(eq(schema.suppliersTable.id, supplierId))
-    .limit(1);
-  if (!source) return;
-  const linked = await tx.select({ id: schema.suppliersTable.id, contactId: schema.suppliersTable.contactId })
-    .from(schema.suppliersTable)
-    .where(and(
-      eq(schema.suppliersTable.globalSupplierId, globalSupplierId),
-      ne(schema.suppliersTable.id, supplierId),
-    ));
-  for (const row of linked) {
-    await tx.update(schema.suppliersTable)
-      .set({ currentBalance: source.currentBalance })
-      .where(eq(schema.suppliersTable.id, row.id));
-    if (row.contactId) await recomputeContactBalance(tx, row.contactId);
-  }
-}
-
-// applyNetBalanceDelta / applySupplierBalanceDelta / setSupplierBalance imported from lib/balance-sync.ts
+// Balance mutation goes through mutateSupplierBalance / mutateCustomerBalance
+// (lib/balance-sync.ts) exclusively — it applies the delta/absolute value, runs
+// the legacy globalSupplierId cross-store sync, and (if the supplier is linked to
+// a `contacts` row) recomputes + fans out via the unified globalContactId link.
 
 router.get("/erp/suppliers", authenticate, requireStaff, requireStore, requirePermission("suppliers", "view"), async (req: AuthRequest, res) => {
   try {
@@ -1107,13 +1086,17 @@ router.post("/erp/suppliers/:id/import-to-stores", authenticate, requireStaff, r
             results.push({ targetStoreId, status: "conflict", supplierId: existingByName.id, message: "Same-name supplier already linked to another global account" });
             continue;
           }
+          // Link first; the shared balance itself is set below via
+          // mutateSupplierBalance so it goes through the centralized mutator
+          // (lock + legacy sync + contact recompute/fan-out) instead of a raw write.
           await tx.update(schema.suppliersTable)
-            .set({ globalSupplierId: gsid, currentBalance: sharedBalance })
+            .set({ globalSupplierId: gsid })
             .where(eq(schema.suppliersTable.id, existingByName.id));
           results.push({ targetStoreId, status: "linked_existing", supplierId: existingByName.id });
           targetSupplierId = existingByName.id;
         } else {
-          // Create a fresh linked supplier carrying the shared global balance.
+          // Create a fresh linked supplier (starts at 0; the shared balance is set
+          // below via mutateSupplierBalance once globalSupplierId is in place).
           const [created] = await tx.insert(schema.suppliersTable).values({
             storeId: targetStoreId,
             name: src.name,
@@ -1122,35 +1105,50 @@ router.post("/erp/suppliers/:id/import-to-stores", authenticate, requireStaff, r
             phone: src.phone,
             address: src.address,
             notes: src.notes,
-            currentBalance: sharedBalance,
             globalSupplierId: gsid,
           }).returning();
           results.push({ targetStoreId, status: "created", supplierId: created.id });
           targetSupplierId = created.id;
         }
+        // Establish the shared starting balance through the centralized mutator —
+        // covers legacy globalSupplierId fan-out immediately, before the contact
+        // link (below) exists yet.
+        await mutateSupplierBalance(tx, targetSupplierId, { absolute: parseFloat(sharedBalance) });
 
-        // ── Create target contact and link to target supplier ──
-        // Each store gets its own contact row (no cross-store identity sharing).
+        // ── Ensure the target supplier has a contact, then link it to the source
+        // contact's globalContactId. This is the fix for the known gap: it makes
+        // the supplier-side import ALSO establish the same cross-store identity
+        // link the customer side uses, so a customer_supplier's two roles can
+        // never drift apart again once either side is imported.
         if (srcContact) {
-          const [newContact] = await tx.insert(schema.contactsTable).values({
-            storeId: targetStoreId,
-            name: srcContact.name,
-            contactName: srcContact.contactName,
-            email: srcContact.email,
-            phone: srcContact.phone,
-            address: srcContact.address,
-            notes: srcContact.notes,
-            contactType: srcContact.contactType,
-          }).returning({ id: schema.contactsTable.id });
-          // Link the target supplier to the new contact (only if not already linked)
-          await tx.update(schema.suppliersTable)
-            .set({ contactId: newContact.id })
-            .where(and(
-              eq(schema.suppliersTable.id, targetSupplierId),
-              isNull(schema.suppliersTable.contactId),
-            ));
-          // Sync canonical contact balance from the copied supplier balance.
-          await recomputeContactBalance(tx, newContact.id);
+          const [targetRow] = await tx.select({ contactId: schema.suppliersTable.contactId })
+            .from(schema.suppliersTable)
+            .where(eq(schema.suppliersTable.id, targetSupplierId))
+            .limit(1);
+
+          let targetContactId = targetRow?.contactId ?? null;
+          if (targetContactId == null) {
+            const [newContact] = await tx.insert(schema.contactsTable).values({
+              storeId: targetStoreId,
+              name: srcContact.name,
+              contactName: srcContact.contactName,
+              email: srcContact.email,
+              phone: srcContact.phone,
+              address: srcContact.address,
+              notes: srcContact.notes,
+              contactType: srcContact.contactType,
+            }).returning({ id: schema.contactsTable.id });
+            await tx.update(schema.suppliersTable)
+              .set({ contactId: newContact.id })
+              .where(eq(schema.suppliersTable.id, targetSupplierId));
+            targetContactId = newContact.id;
+          }
+
+          await linkContactsGlobally(tx, srcContact.id, targetContactId);
+          // Sync canonical contact balance from the copied supplier balance, then
+          // fan out through the newly (or already) linked identity.
+          await recomputeContactBalance(tx, targetContactId);
+          await syncLinkedContactBalances(tx, targetContactId);
         }
       }
 
@@ -1199,11 +1197,7 @@ router.post("/erp/suppliers/:id/operations", authenticate, requireStaff, require
       const payingCaisse = await ensureCaisse(null, actorUserId, tx);
 
       // Payment increases balance (reduces debt): Solde = Versements - Achats
-      await tx.update(schema.suppliersTable)
-        .set({ currentBalance: sql`current_balance + ${amtFixed}` })
-        .where(eq(schema.suppliersTable.id, supplierId));
-      await syncLinkedSupplierBalances(tx, supplierId, supplier.globalSupplierId);
-      if (supplier.contactId) await applyContactDelta(tx, supplier.contactId, parsedAmount);
+      await mutateSupplierBalance(tx, supplierId, { delta: parsedAmount });
 
       // Record supplier operation — optionally linked to a specific PO
       const [operation] = await tx.insert(schema.supplierOperationsTable).values({
@@ -1262,11 +1256,7 @@ router.post("/erp/suppliers/:id/adjust", authenticate, requireStaff, requireStor
     const autoNote = `Ancien: ${oldBalance.toFixed(2)} DA → Nouveau: ${newBalanceFixed} DA${note ? ` — ${note}` : ""}`;
 
     const op = await db.transaction(async (tx) => {
-      await tx.update(schema.suppliersTable)
-        .set({ currentBalance: newBalanceFixed })
-        .where(eq(schema.suppliersTable.id, supplierId));
-      await syncLinkedSupplierBalances(tx, supplierId, supplier.globalSupplierId);
-      if (supplier.contactId) await recomputeContactBalance(tx, supplier.contactId);
+      await mutateSupplierBalance(tx, supplierId, { absolute: parsedTarget });
 
       const [operation] = await tx.insert(schema.supplierOperationsTable).values({
         supplierId,
@@ -1419,16 +1409,7 @@ router.put("/erp/purchase-orders/:id/receive", authenticate, requireStaff, requi
 
       // À terme only: purchase creates a supplier debt (Comptant = paid immediately, no debt)
       if (po.paymentMethod !== "comptant") {
-        const [poSupplier] = await tx.select({ globalSupplierId: schema.suppliersTable.globalSupplierId, contactId: schema.suppliersTable.contactId })
-          .from(schema.suppliersTable)
-          .where(eq(schema.suppliersTable.id, po.supplierId))
-          .limit(1);
-
-        await tx.update(schema.suppliersTable)
-          .set({ currentBalance: sql`current_balance - ${totalAmount.toFixed(2)}` })
-          .where(eq(schema.suppliersTable.id, po.supplierId));
-        await syncLinkedSupplierBalances(tx, po.supplierId, poSupplier?.globalSupplierId);
-        if (poSupplier?.contactId) await applyContactDelta(tx, poSupplier.contactId, -totalAmount);
+        await mutateSupplierBalance(tx, po.supplierId, { delta: -totalAmount });
 
         await tx.insert(schema.supplierOperationsTable).values({
           supplierId: po.supplierId,
@@ -1888,7 +1869,6 @@ router.post("/erp/customers", authenticate, requireStaff, requireStore, requireP
     }
 
     const user = await db.transaction(async (tx) => {
-      const contactId = await insertContact(tx, storeId, shared);
       let u: typeof schema.usersTable.$inferSelect;
       if (existingUser) {
         u = existingUser;
@@ -1906,6 +1886,26 @@ router.post("/erp/customers", authenticate, requireStaff, requireStore, requireP
         }).returning();
         u = newUser;
       }
+
+      // A profile for this exact (user, store) pair may already exist when
+      // reusing an existingUser — check BEFORE creating a contact, so a repeat
+      // POST can never leave a fresh, orphaned contact row behind (the contact
+      // created below is always the one actually attached to the profile).
+      const [existingProfile] = await tx.select({ contactId: schema.customerProfilesTable.contactId })
+        .from(schema.customerProfilesTable)
+        .where(and(eq(schema.customerProfilesTable.userId, u.id), eq(schema.customerProfilesTable.storeId, storeId)))
+        .limit(1);
+      if (existingProfile) {
+        // Already associated with this store — nothing to create; treat as idempotent.
+        return u;
+      }
+
+      const contactId = await insertContact(tx, storeId, shared);
+      // Always insert at "0" — the requested opening balance (if any) is applied
+      // below via mutateCustomerBalance so it goes through the centralized
+      // mutator (lock + legacy sync + contact recompute/fan-out) instead of a
+      // raw write, and so a sibling store's adopted balance (which takes
+      // priority — see below) is never raced against a competing raw write.
       await tx.insert(schema.customerProfilesTable).values({
         userId: u.id,
         storeId,
@@ -1919,21 +1919,38 @@ router.post("/erp/customers", authenticate, requireStaff, requireStore, requireP
         accountNumber: accountNumber || null,
         creditLimit: creditLimit != null ? String(creditLimit) : null,
         minBalanceAlert: minBalanceAlert != null ? String(minBalanceAlert) : null,
-        currentBalance: currentBalance != null ? String(currentBalance) : "0",
+        currentBalance: "0",
         foreignCurrency: foreignCurrency ?? false,
         rc: rc || null, nif: nif || null, ai: ai || null, nis: nis || null,
-      }).onConflictDoNothing();
+      });
       if (cpType === "customer_supplier") {
         await ensureSupplierRole(tx, storeId, contactId, shared);
       }
       // Cross-store: if this person already exists in another store, the new profile
       // must carry the same unified balance (never diverge). Adopt it from a sibling
-      // store rather than pushing this store's (possibly zero) opening balance outward.
-      const [balSibling] = await tx.select({ storeId: schema.customerProfilesTable.storeId })
+      // store rather than applying this store's requested opening balance, and link
+      // the two contacts into the same global identity — this is what makes a
+      // supplier role added later (in either store) stay connected automatically.
+      const [balSibling] = await tx.select({
+        storeId: schema.customerProfilesTable.storeId,
+        contactId: schema.customerProfilesTable.contactId,
+      })
         .from(schema.customerProfilesTable)
         .where(and(eq(schema.customerProfilesTable.userId, u.id), ne(schema.customerProfilesTable.storeId, storeId)))
         .limit(1);
-      if (balSibling) await syncLinkedCustomerBalances(tx, u.id, balSibling.storeId);
+      if (balSibling) {
+        await syncLinkedCustomerBalances(tx, u.id, balSibling.storeId);
+        if (balSibling.contactId) {
+          await linkContactsGlobally(tx, balSibling.contactId, contactId);
+          await recomputeContactBalance(tx, contactId);
+          await syncLinkedContactBalances(tx, contactId);
+        }
+      } else if (currentBalance != null) {
+        // No sibling to adopt from — honor the requested opening balance through
+        // the centralized mutator (also recomputes/fans out the canonical contact
+        // balance for a customer_supplier contact).
+        await mutateCustomerBalance(tx, u.id, storeId, { absolute: Number(currentBalance) });
+      }
       return u;
     });
     res.status(201).json({
@@ -2065,7 +2082,11 @@ router.put("/erp/customers/:id", authenticate, requireAdmin, requireStore, async
     if (nif !== undefined) updateSet.nif = nif ?? null;
     if (ai !== undefined) updateSet.ai = ai ?? null;
     if (nis !== undefined) updateSet.nis = nis ?? null;
-    // Full values for INSERT (new profile rows get defaults for omitted fields)
+    // Full values for INSERT (new profile rows get defaults for omitted fields).
+    // currentBalance always starts at "0" here — an explicit override (if any) is
+    // applied below via mutateCustomerBalance so both the insert-a-new-row case
+    // and the update-an-existing-row case go through the same centralized,
+    // lock-guarded path instead of a raw write on one of the two paths.
     const insertValues = {
       userId,
       storeId,
@@ -2075,7 +2096,7 @@ router.put("/erp/customers/:id", authenticate, requireAdmin, requireStore, async
       accountNumber: accountNumber ?? null,
       creditLimit: creditLimit != null ? String(creditLimit) : null,
       minBalanceAlert: minBalanceAlert != null ? String(minBalanceAlert) : null,
-      currentBalance: currentBalance != null ? String(currentBalance) : "0",
+      currentBalance: "0",
       foreignCurrency: foreignCurrency ?? false,
       rc: rc ?? null, nif: nif ?? null, ai: ai ?? null, nis: nis ?? null,
     };
@@ -2132,21 +2153,32 @@ router.put("/erp/customers/:id", authenticate, requireAdmin, requireStore, async
           .set({ contactType: "supplier" })
           .where(eq(schema.suppliersTable.contactId, contactId));
       }
-      if (contactId != null && currentBalance !== undefined) {
-        await recomputeContactBalance(tx, contactId);
-      }
       // Cross-store balance unification for the same person across linked stores.
       if (currentBalance !== undefined) {
-        // Explicit balance override → becomes the unified value in every linked store.
-        await syncLinkedCustomerBalances(tx, userId, storeId);
+        // Explicit balance override → becomes the unified value in every linked
+        // store, via the centralized mutator (lock + legacy sync + contact
+        // recompute/fan-out) instead of a raw write followed by manual sync calls.
+        await mutateCustomerBalance(tx, userId, storeId, { absolute: Number(currentBalance) });
       } else {
         // Balance untouched → a newly-created cross-store profile adopts the unified
-        // value from a sibling store (no-op when balances are already equal).
-        const [balSibling] = await tx.select({ storeId: schema.customerProfilesTable.storeId })
+        // value from a sibling store (no-op when balances are already equal), and the
+        // two contacts join the same global identity so a supplier role added later
+        // (either store) stays connected.
+        const [balSibling] = await tx.select({
+          storeId: schema.customerProfilesTable.storeId,
+          contactId: schema.customerProfilesTable.contactId,
+        })
           .from(schema.customerProfilesTable)
           .where(and(eq(schema.customerProfilesTable.userId, userId), ne(schema.customerProfilesTable.storeId, storeId)))
           .limit(1);
-        if (balSibling) await syncLinkedCustomerBalances(tx, userId, balSibling.storeId);
+        if (balSibling) {
+          await syncLinkedCustomerBalances(tx, userId, balSibling.storeId);
+          if (balSibling.contactId && contactId != null) {
+            await linkContactsGlobally(tx, balSibling.contactId, contactId);
+            await recomputeContactBalance(tx, contactId);
+            await syncLinkedContactBalances(tx, contactId);
+          }
+        }
       }
     });
     const profileRows = await db.execute(sql`
@@ -2316,6 +2348,7 @@ router.post("/erp/customers/:id/import-to-stores", authenticate, requireStaff, r
               .set({ contactId: nc.id })
               .where(eq(schema.customerProfilesTable.id, existing.id));
             linkedContactId = nc.id;
+            await linkContactsGlobally(tx, srcContact.id, nc.id);
 
             // Ensure supplier role for customer_supplier on existing profiles
             if (cpType === "customer_supplier" && srcSupplier) {
@@ -2334,6 +2367,8 @@ router.post("/erp/customers/:id/import-to-stores", authenticate, requireStaff, r
               }
             }
 
+            await recomputeContactBalance(tx, nc.id);
+            await syncLinkedContactBalances(tx, nc.id);
             results.push({ targetStoreId, status: "linked_existing", customerId: userId });
             continue;
           }
@@ -2354,6 +2389,11 @@ router.post("/erp/customers/:id/import-to-stores", authenticate, requireStaff, r
               });
             }
           }
+          if (srcContact && linkedContactId != null) {
+            await linkContactsGlobally(tx, srcContact.id, linkedContactId);
+            await recomputeContactBalance(tx, linkedContactId);
+            await syncLinkedContactBalances(tx, linkedContactId);
+          }
 
           results.push({ targetStoreId, status: "already_linked", customerId: userId });
           continue;
@@ -2371,6 +2411,7 @@ router.post("/erp/customers/:id/import-to-stores", authenticate, requireStaff, r
             contactType: srcContact.contactType,
           }).returning({ id: schema.contactsTable.id });
           targetContactId = nc.id;
+          await linkContactsGlobally(tx, srcContact.id, nc.id);
         }
 
         await tx.insert(schema.customerProfilesTable).values({
@@ -2394,14 +2435,19 @@ router.post("/erp/customers/:id/import-to-stores", authenticate, requireStaff, r
           });
         }
 
+        if (targetContactId !== undefined) {
+          await recomputeContactBalance(tx, targetContactId);
+          await syncLinkedContactBalances(tx, targetContactId);
+        }
         results.push({ targetStoreId, status: "created", customerId: userId });
       }
       // Propagate the unified balance from the source store to every newly linked
       // store so a linked customer shows the same balance everywhere immediately
       // (not only after their next operation).
-      // KNOWN LIMITATION: the supplier row created above for a customer_supplier is
-      // not assigned a globalSupplierId here, so its supplier-side balance is not
-      // cross-store-linked by this flow — use the supplier import-to-stores flow for that.
+      // The supplier role created above for a customer_supplier now shares the SAME
+      // globalContactId as the customer role (linked above), so its supplier-side
+      // balance IS cross-store-linked by this flow too — this closes the gap where
+      // customer-first import used to leave the supplier side unlinked.
       await syncLinkedCustomerBalances(tx, userId, storeId);
     });
 
@@ -2568,22 +2614,8 @@ router.post("/erp/customers/:id/operations", authenticate, requireAdmin, require
         });
       }
 
-      // ── Phase 4: update customer_profiles balance (single path, no double-apply) ──
-      await tx.execute(sql`
-        INSERT INTO customer_profiles (user_id, store_id, current_balance, updated_at)
-        VALUES (${customerId}, ${storeId}, ${delta.toFixed(2)}, NOW())
-        ON CONFLICT (user_id, store_id) DO UPDATE
-          SET current_balance = COALESCE(customer_profiles.current_balance, 0) + ${delta.toFixed(2)},
-              updated_at = NOW()
-      `);
-      // Sync contacts.current_balance for customer_supplier contacts.
-      const [_cpPost] = await tx.select({ contactId: schema.customerProfilesTable.contactId })
-        .from(schema.customerProfilesTable)
-        .where(and(eq(schema.customerProfilesTable.userId, customerId), eq(schema.customerProfilesTable.storeId, storeId)))
-        .limit(1);
-      if (_cpPost?.contactId) await applyContactDelta(tx, _cpPost.contactId, delta);
-      // Cross-store: propagate the new balance to this customer's profile in every other linked store.
-      await syncLinkedCustomerBalances(tx, customerId, storeId);
+      // ── Phase 4: update customer_profiles balance (single centralized path) ──
+      await mutateCustomerBalance(tx, customerId, storeId, { delta });
       return inserted;
     });
     if (resolvedCaisseId !== null) {
@@ -2669,21 +2701,7 @@ router.put("/erp/customers/:id/operations/:opId", authenticate, requireAdmin, re
         .set({ type, amount: numAmount.toFixed(2), date, reference: reference || null, note: note || null })
         .where(eq(schema.customerOperationsTable.id, opId))
         .returning();
-      await tx.execute(sql`
-        INSERT INTO customer_profiles (user_id, store_id, current_balance, updated_at)
-        VALUES (${customerId}, ${storeId}, ${balanceDiff.toFixed(2)}, NOW())
-        ON CONFLICT (user_id, store_id) DO UPDATE
-          SET current_balance = COALESCE(customer_profiles.current_balance, 0) + ${balanceDiff.toFixed(2)},
-              updated_at = NOW()
-      `);
-      // Sync contacts.current_balance for customer_supplier contacts.
-      const [_cpPut] = await tx.select({ contactId: schema.customerProfilesTable.contactId })
-        .from(schema.customerProfilesTable)
-        .where(and(eq(schema.customerProfilesTable.userId, customerId), eq(schema.customerProfilesTable.storeId, storeId)))
-        .limit(1);
-      if (_cpPut?.contactId) await applyContactDelta(tx, _cpPut.contactId, balanceDiff);
-      // Cross-store: propagate the new balance to this customer's profile in every other linked store.
-      await syncLinkedCustomerBalances(tx, customerId, storeId);
+      await mutateCustomerBalance(tx, customerId, storeId, { delta: balanceDiff });
       return op;
     });
     if (!updated) { res.status(404).json({ error: "Operation not found" }); return; }
@@ -2745,21 +2763,7 @@ router.delete("/erp/customers/:id/operations/:opId", authenticate, requireAdmin,
       // Reverse the operation's effect on customer balance
       const delta = existing.type === "versement" ? Number(existing.amount) : -Number(existing.amount);
       await tx.delete(schema.customerOperationsTable).where(eq(schema.customerOperationsTable.id, opId));
-      await tx.execute(sql`
-        INSERT INTO customer_profiles (user_id, store_id, current_balance, updated_at)
-        VALUES (${customerId}, ${storeId}, ${delta.toFixed(2)}, NOW())
-        ON CONFLICT (user_id, store_id) DO UPDATE
-          SET current_balance = COALESCE(customer_profiles.current_balance, 0) + ${delta.toFixed(2)},
-              updated_at = NOW()
-      `);
-      // Sync contacts.current_balance for customer_supplier contacts.
-      const [_cpDel] = await tx.select({ contactId: schema.customerProfilesTable.contactId })
-        .from(schema.customerProfilesTable)
-        .where(and(eq(schema.customerProfilesTable.userId, customerId), eq(schema.customerProfilesTable.storeId, storeId)))
-        .limit(1);
-      if (_cpDel?.contactId) await applyContactDelta(tx, _cpDel.contactId, delta);
-      // Cross-store: propagate the new balance to this customer's profile in every other linked store.
-      await syncLinkedCustomerBalances(tx, customerId, storeId);
+      await mutateCustomerBalance(tx, customerId, storeId, { delta });
       // Reverse caisse and accounting side effects for posted versement/remboursement
       if (existing.caisseId !== null && (existing.type === "versement" || existing.type === "remboursement")) {
         const actorUserId = (req as AuthRequest).user!.id;

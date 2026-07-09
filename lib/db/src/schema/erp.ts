@@ -194,10 +194,27 @@ export const contactsTable = pgTable("contacts", {
   notes: text("notes"),
   contactType: contactTypeEnum("contact_type").notNull().default("customer"),
   currentBalance: numeric("current_balance", { precision: 12, scale: 2 }).notNull().default("0"),
+  // Single unifying identity key across stores. Each store keeps its OWN contact
+  // row (no cross-store row sharing), but all contact rows representing the same
+  // physical person/company across stores carry the SAME globalContactId. Because
+  // BOTH the customer role (customer_profiles.contactId) and the supplier role
+  // (suppliers.contactId) point at this one contact row, linking via this single
+  // key connects both roles together atomically — it replaces the two previously
+  // independent per-role keys (customer_profiles.userId, suppliers.globalSupplierId)
+  // as the canonical cross-store link for anything routed through a contact.
+  globalContactId: text("global_contact_id"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 }, (t) => ({
   storeTypeIdx: index("contacts_store_type_idx").on(t.storeId, t.contactType),
+  // A store may hold at most one contact per global identity (no split groups).
+  uniqGlobalPerStore: uniqueIndex("contacts_one_global_per_store")
+    .on(t.storeId, t.globalContactId)
+    .where(sql`${t.globalContactId} IS NOT NULL`),
+  // Fast lookup of every sibling contact when syncing balances across stores.
+  globalIdIdx: index("contacts_global_id_idx")
+    .on(t.globalContactId)
+    .where(sql`${t.globalContactId} IS NOT NULL`),
 }));
 
 // ─── Customer Profiles (ERP-specific data, separate from users table) ─────────

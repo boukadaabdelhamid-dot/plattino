@@ -5,6 +5,7 @@ import { logger } from "./lib/logger";
 import { db, schema, pool } from "./lib/db";
 import { bootstrap } from "./seed";
 import { runCaisseGlobalMigration } from "./lib/caisse-global-migration";
+import { runContactGlobalLinkMigration } from "./lib/contact-global-link-migration";
 import { getStorageMode, getLocalStorageBase, ensureLocalStorageReady } from "./lib/objectStorage";
 
 const rawPort = process.env["PORT"];
@@ -648,6 +649,13 @@ UPDATE contacts SET current_balance = (
   COALESCE((SELECT current_balance FROM customer_profiles WHERE contact_id = contacts.id LIMIT 1)::numeric, 0) +
   COALESCE((SELECT current_balance FROM suppliers WHERE contact_id = contacts.id LIMIT 1)::numeric, 0)
 ), updated_at = NOW() WHERE contact_type = 'customer_supplier';--> statement-breakpoint
+-- ─── Unified cross-store identity key (structural balance-sync fix) ───
+-- Single link replacing the two independent per-role keys (customer_profiles.userId,
+-- suppliers.globalSupplierId) for anything routed through a contacts row — see
+-- lib/balance-sync.ts and lib/contact-global-link-migration.ts.
+ALTER TABLE "contacts" ADD COLUMN IF NOT EXISTS "global_contact_id" text;--> statement-breakpoint
+CREATE UNIQUE INDEX IF NOT EXISTS "contacts_one_global_per_store" ON "contacts" ("store_id", "global_contact_id") WHERE "global_contact_id" IS NOT NULL;--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "contacts_global_id_idx" ON "contacts" ("global_contact_id") WHERE "global_contact_id" IS NOT NULL;--> statement-breakpoint
 `;
 
 
@@ -737,6 +745,7 @@ server.listen(port, async () => {
   await initStorage();
   await runMigrations();
   await runCaisseGlobalMigration(pool);
+  await runContactGlobalLinkMigration(pool);
   await runWebSettingsMigration();
   await runBootstrap();
 });

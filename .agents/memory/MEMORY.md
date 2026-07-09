@@ -15,7 +15,7 @@
 - [Staff password reset (ERP)](staff-password-reset.md) — admin-only PUT /erp/staff/:id/password; deliberately does NOT revoke existing JWTs (stateless auth, no session table).
 - [Unified contact roles](unified-contact-roles.md) — contacts = identity; customer/supplier are native role rows; type changes are bidirectional label flips, role rows NEVER deleted.
 - [Orders revenue fan-out trap](orders-revenue-fanout.md) — SUM(orders.total_amount) over an orders⋈order_items join multiplies revenue by item count; aggregate order totals in a separate orders-only CTE. Dashboard Bénéfice net = rev−COGS−returns−expenses (mirrors Analytics/Rapport).
-- [Global contact ID balance sync](global-contact-id-balance-sync.md) — contacts.global_contact_id is the cross-store linking key; syncLinkedContactBalances propagates balance to all siblings; ON CONFLICT bug fixed in customer ops.
+- [Global contact ID balance sync](global-contact-id-balance-sync.md) — centralized mutateCustomerBalance/mutateSupplierBalance; multi-key advisory locks (sorted, deadlock-safe) needed pre-gcid; boot migration needs same-store collision guard.
 - [Supplier save whitelists fields](supplier-save-body-mass-assign.md) — /erp/suppliers POST+PUT whitelist {name,contactName,email,phone,address,notes,contactType}+contactId; currentBalance/globalSupplierId/storeId never mass-assignable.
 - [Customer PUT balance mass-assign](customer-put-balance-mass-assign.md) — GET returns canonical (cust+supplier) balance; never write it back to the profile via PUT.
 - [Cross-store customer balance unify](cross-store-customer-balance-unify.md) — customer_profiles.user_id links customers cross-store; PUSH on mutation, ADOPT-from-sibling on create (never push 0).

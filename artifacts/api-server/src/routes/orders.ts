@@ -5,7 +5,7 @@ import { authenticate, requireAdmin, requireStaff, requireStore, optionalAuth, r
 import { resolvePublicStore } from "../lib/store-context";
 import { broadcastToAdmins, broadcastToStoreUsers, broadcastToStaffByStores, broadcastCaisseChanged } from "../lib/ws";
 import { ensureCaisse } from "./caisses";
-import { applyNetBalanceDelta, syncLinkedCustomerBalances } from "../lib/balance-sync";
+import { mutateCustomerBalance } from "../lib/balance-sync";
 
 
 const router = Router();
@@ -353,22 +353,7 @@ async function handleCreateOrder(req: AuthRequest, res: import("express").Respon
           createdBy: sellerUserId ?? req.user!.id,
           caisseId: null,
         });
-        await tx.execute(sql`
-          INSERT INTO customer_profiles (user_id, store_id, current_balance, updated_at)
-          VALUES (${posCustomerId}, ${storeId}, ${amountStr}, NOW())
-          ON CONFLICT (user_id, store_id) DO UPDATE
-            SET current_balance = COALESCE(customer_profiles.current_balance, 0) + ${amountStr}::numeric,
-                updated_at = NOW()
-        `);
-        // Propagate to contacts.current_balance (and mirror to suppliers) for
-        // customer_supplier contacts. No-op for pure customers.
-        const [_cpTerme] = await tx.select({ contactId: schema.customerProfilesTable.contactId })
-          .from(schema.customerProfilesTable)
-          .where(and(eq(schema.customerProfilesTable.userId, posCustomerId), eq(schema.customerProfilesTable.storeId, storeId)))
-          .limit(1);
-        if (_cpTerme?.contactId) await applyNetBalanceDelta(tx, _cpTerme.contactId, receivable);
-        // Cross-store: propagate the new balance to this customer's profile in every other linked store.
-        await syncLinkedCustomerBalances(tx, posCustomerId, storeId);
+        await mutateCustomerBalance(tx, posCustomerId, storeId, { delta: receivable });
       }
 
       return { order, enrichedItems, totalAmount, sellerUserId, sellerCaisseId };
@@ -672,20 +657,7 @@ router.put("/admin/orders/:id/status", authenticate, requireStaff, requireStore,
                 createdBy: req.user!.id,
                 caisseId: null,
               });
-              await tx.execute(sql`
-                UPDATE customer_profiles
-                SET current_balance = COALESCE(current_balance, 0) - ${recvStr}::numeric,
-                    updated_at = NOW()
-                WHERE user_id = ${updated.userId} AND store_id = ${storeId}
-              `);
-              // Sync contacts.current_balance for customer_supplier contacts.
-              const [_cpCancel] = await tx.select({ contactId: schema.customerProfilesTable.contactId })
-                .from(schema.customerProfilesTable)
-                .where(and(eq(schema.customerProfilesTable.userId, updated.userId), eq(schema.customerProfilesTable.storeId, storeId)))
-                .limit(1);
-              if (_cpCancel?.contactId) await applyNetBalanceDelta(tx, _cpCancel.contactId, -receivable);
-              // Cross-store: propagate the new balance to this customer's profile in every other linked store.
-              await syncLinkedCustomerBalances(tx, updated.userId, storeId);
+              await mutateCustomerBalance(tx, updated.userId, storeId, { delta: -receivable });
             }
           }
         }
@@ -1293,21 +1265,7 @@ router.post("/admin/orders/:id/retours", authenticate, requireStaff, requireStor
               createdBy: createdByUserId,
               caisseId: null,
             });
-            await tx.execute(sql`
-              INSERT INTO customer_profiles (user_id, store_id, current_balance, updated_at)
-              VALUES (${order.userId}, ${storeId}, ${(-retourTotal).toFixed(2)}, NOW())
-              ON CONFLICT (user_id, store_id) DO UPDATE
-                SET current_balance = COALESCE(customer_profiles.current_balance, 0) - ${retourTotal.toFixed(2)}::numeric,
-                    updated_at = NOW()
-            `);
-            // Sync contacts.current_balance for customer_supplier contacts.
-            const [_cpRetour] = await tx.select({ contactId: schema.customerProfilesTable.contactId })
-              .from(schema.customerProfilesTable)
-              .where(and(eq(schema.customerProfilesTable.userId, order.userId), eq(schema.customerProfilesTable.storeId, storeId)))
-              .limit(1);
-            if (_cpRetour?.contactId) await applyNetBalanceDelta(tx, _cpRetour.contactId, -retourTotal);
-            // Cross-store: propagate the new balance to this customer's profile in every other linked store.
-            await syncLinkedCustomerBalances(tx, order.userId, storeId);
+            await mutateCustomerBalance(tx, order.userId, storeId, { delta: -retourTotal });
           }
         } else {
           await tx.insert(schema.transactionsTable).values({
@@ -1456,21 +1414,7 @@ router.post("/admin/retours", authenticate, requireStaff, requireStore, requireP
               createdBy: createdByUserId,
               caisseId: null,
             });
-            await tx.execute(sql`
-              INSERT INTO customer_profiles (user_id, store_id, current_balance, updated_at)
-              VALUES (${clientUserId}, ${storeId}, ${(-retourTotal).toFixed(2)}, NOW())
-              ON CONFLICT (user_id, store_id) DO UPDATE
-                SET current_balance = COALESCE(customer_profiles.current_balance, 0) - ${retourTotal.toFixed(2)}::numeric,
-                    updated_at = NOW()
-            `);
-            // Sync contacts.current_balance for customer_supplier contacts.
-            const [_cpRetourComptoir] = await tx.select({ contactId: schema.customerProfilesTable.contactId })
-              .from(schema.customerProfilesTable)
-              .where(and(eq(schema.customerProfilesTable.userId, clientUserId), eq(schema.customerProfilesTable.storeId, storeId)))
-              .limit(1);
-            if (_cpRetourComptoir?.contactId) await applyNetBalanceDelta(tx, _cpRetourComptoir.contactId, -retourTotal);
-            // Cross-store: propagate the new balance to this customer's profile in every other linked store.
-            await syncLinkedCustomerBalances(tx, clientUserId, storeId);
+            await mutateCustomerBalance(tx, clientUserId, storeId, { delta: -retourTotal });
           }
         } else {
           await tx.insert(schema.transactionsTable).values({

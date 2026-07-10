@@ -1274,10 +1274,15 @@ export interface CaisseReportResponse {
 
 export interface AdminCaisseAdjustRequest {
   caisseId: number;
-  /** Signed amount; positive=credit, negative=debit */
-  delta: string;
-  /** Required reason */
-  notes: string;
+  /** Desired resulting balance; the server computes the signed delta from the caisse's current balance */
+  targetBalance: string;
+  /** Optional note appended to the auto-generated Ancien/Nouveau audit note */
+  notes?: string;
+}
+
+export interface AdminCaisseAdjustResponse {
+  success: boolean;
+  movement: CaisseMovement;
 }
 
 export type TransactionType =

@@ -2135,7 +2135,7 @@ paths:
     post:
       operationId: adminAdjustErpCaisse
       tags: [erp]
-      summary: Admin applies a signed adjustment to a caisse with a required reason
+      summary: Admin sets a caisse's balance to a target value; the server computes and applies the signed delta
       security:
         - bearerAuth: []
       requestBody:
@@ -2150,7 +2150,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/SuccessResponse"
+                $ref: "#/components/schemas/AdminCaisseAdjustResponse"
 
   # ── ERP: CRM ─────────────────────────────────────────────────────
   /erp/customers:
@@ -5011,9 +5011,17 @@ components:
       type: object
       properties:
         caisseId: { type: integer }
-        delta: { type: string, description: "Signed amount; positive=credit, negative=debit" }
-        notes: { type: string, description: "Required reason" }
-      required: [caisseId, delta, notes]
+        targetBalance: { type: string, description: "Desired resulting balance; the server computes the signed delta from the caisse's current balance" }
+        notes: { type: string, description: "Optional note appended to the auto-generated Ancien/Nouveau audit note" }
+      required: [caisseId, targetBalance]
+
+    AdminCaisseAdjustResponse:
+      type: object
+      properties:
+        success: { type: boolean }
+        movement:
+          $ref: "#/components/schemas/CaisseMovement"
+      required: [success, movement]
 
     Transaction:
       type: object

@@ -24,3 +24,4 @@
 - [Dashboard cross-store dedup](dashboard-cross-store-dedup.md) — all-stores SUM/COUNT over synced rows must DISTINCT ON the unifying key or it ×store-count.
 - [Artifact vs legacy workflow port conflict](artifact-vs-legacy-workflow-port-conflict.md) — converting to artifact services doesn't stop old .replit workflows; leftover processes squat ports and cause public 502s.
 - [Advisory lock must come before row locks](advisory-lock-before-row-lock.md) — a read-compute-write handler calling mutateCustomer/SupplierBalance must take its identity lock first via lockCustomerIdentity/lockSupplierIdentity, never a raw `.for("update")`, or lock order inverts and deadlocks.
+- [Caisse balance mutation patterns](caisse-balance-mutations.md) — caisses need no advisory locks (global, no cross-store sync); plain FOR UPDATE is safe there, but admin deposit/withdraw lock main+staff rows in opposite order → deadlock risk.

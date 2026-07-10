@@ -846,52 +846,64 @@ router.post("/erp/caisses/admin/withdraw", authenticate, requireAdmin, requireSt
   }
 });
 
-// ─── Admin: adjustment (signed delta with mandatory reason) ────────
+// ─── Admin: adjustment (target balance — mirrors suppliers/customers) ──
+// The caller types the balance they want the caisse to end up at; the server
+// reads the current balance, computes the signed delta, and records an
+// "adjustment" movement with an auto-generated "Ancien: X → Nouveau: Y" note
+// (same shape as /erp/suppliers/:id/adjust and /erp/customers/:id/adjust).
 router.post("/erp/caisses/admin/adjust", authenticate, requireAdmin, requireStore, async (req: AuthRequest, res) => {
   try {
     const userId = req.user!.id;
     const caisseIdRaw = Number(req.body?.caisseId);
-    const delta = parseAmount(req.body?.delta);
-    const reason = typeof req.body?.notes === "string" ? req.body.notes.trim() : "";
+    const parsedTargetRaw = parseAmount(req.body?.targetBalance);
+    const note = typeof req.body?.notes === "string" ? req.body.notes.trim() : "";
     if (!Number.isInteger(caisseIdRaw)) { res.status(400).json({ error: "Invalid caisseId" }); return; }
-    if (delta === null || delta === 0) { res.status(400).json({ error: "Delta must be non-zero" }); return; }
-    if (!reason) { res.status(400).json({ error: "Notes/reason required for adjustment" }); return; }
+    if (parsedTargetRaw === null) { res.status(400).json({ error: "targetBalance must be a finite number" }); return; }
+    if (parsedTargetRaw < 0) { res.status(400).json({ error: "Le solde ne peut pas être négatif" }); return; }
+    // Normalize to 2 decimals once, up front, so the delta computed below and
+    // the balance/movement rows written later never disagree due to rounding.
+    const parsedTarget = Number(parsedTargetRaw.toFixed(2));
 
     const c = await loadCaisseOr404(caisseIdRaw);
     if (!c) { res.status(404).json({ error: "Caisse not found" }); return; }
     // Global caisses are org-wide: any admin (enforced by requireAdmin) may operate.
-    const absStr = Math.abs(delta).toFixed(2);
-    const isCredit = delta > 0;
 
-    await db.transaction(async (tx) => {
-      if (isCredit) {
+    const movement = await db.transaction(async (tx) => {
+      // Row-lock the caisse for the whole read-compute-write so two concurrent
+      // adjustments can't both compute their delta off the same stale "old
+      // balance" and drift the result away from the last-submitted target.
+      // Unlike suppliers/customers, caisses have no advisory-lock-based mutator
+      // to invert lock order against — every other caisse balance mutation here
+      // is a single atomic UPDATE statement that naturally queues behind this
+      // row lock, so a plain FOR UPDATE is safe.
+      const [row] = await tx.select({ balance: schema.caissesTable.balance })
+        .from(schema.caissesTable).where(eq(schema.caissesTable.id, c.id)).for("update");
+      const oldBalance = parseFloat(row.balance ?? "0");
+      const deltaNum = parsedTarget - oldBalance;
+      const isCredit = deltaNum >= 0;
+      const autoNote = `Ancien: ${oldBalance.toFixed(2)} DA → Nouveau: ${parsedTarget.toFixed(2)} DA${note ? ` — ${note}` : ""}`;
+
+      if (deltaNum !== 0) {
         await tx.update(schema.caissesTable)
-          .set({ balance: sql`${schema.caissesTable.balance} + ${absStr}` })
+          .set({ balance: parsedTarget.toFixed(2) })
           .where(eq(schema.caissesTable.id, c.id));
-      } else {
-        const upd = await tx.update(schema.caissesTable)
-          .set({ balance: sql`${schema.caissesTable.balance} - ${absStr}` })
-          .where(and(
-            eq(schema.caissesTable.id, c.id),
-            sql`${schema.caissesTable.balance} >= ${absStr}`,
-          ))
-          .returning();
-        if (upd.length === 0) throw Object.assign(new Error("Insufficient funds for negative adjustment"), { http: 409 });
       }
-      await tx.insert(schema.caisseMovementsTable).values({
+
+      const [mv] = await tx.insert(schema.caisseMovementsTable).values({
         caisseId: c.id,
         type: isCredit ? "credit" : "debit",
-        amount: absStr,
+        amount: Math.abs(deltaNum).toFixed(2),
         reason: "adjustment",
         actorUserId: userId,
-        notes: reason,
-      });
+        notes: autoNote,
+      }).returning();
+      return mv;
     });
     await broadcastCaisseChanged(req.currentStoreId!, [c.id]);
-    res.json({ success: true });
+    res.json({ success: true, movement });
   } catch (err) {
     const e = err as { http?: number; message?: string };
-    if (e.http === 409) { res.status(409).json({ error: e.message }); return; }
+    if (e.http) { res.status(e.http).json({ error: e.message }); return; }
     req.log.error(err); res.status(500).json({ error: "Internal server error" });
   }
 });

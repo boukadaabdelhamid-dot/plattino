@@ -313,7 +313,7 @@ function AdminCaisseDialog({
   const withdraw = useAdminWithdrawErpCaisse();
   const adjust = useAdminAdjustErpCaisse();
   const [amount, setAmount] = useState("");
-  const [delta, setDelta] = useState("");
+  const [targetBalance, setTargetBalance] = useState(action.type === "adjust" ? action.caisse.balance : "");
   const [notes, setNotes] = useState("");
 
   const titleMap = {
@@ -324,13 +324,13 @@ function AdminCaisseDialog({
 
   const handleSubmit = () => {
     if (action.type === "adjust") {
-      const d = parseFloat(delta);
-      if (isNaN(d) || d === 0 || !notes.trim()) {
-        toast({ title: t("Delta non nul + raison requis", "مطلوب: دلتا غير صفري + سبب"), variant: "destructive" });
+      const target = parseFloat(targetBalance);
+      if (isNaN(target) || target < 0) {
+        toast({ title: t("Solde cible invalide", "رصيد مستهدف غير صالح"), variant: "destructive" });
         return;
       }
       adjust.mutate(
-        { data: { caisseId: action.caisse.id, delta: d.toFixed(2), notes: notes.trim() } },
+        { data: { caisseId: action.caisse.id, targetBalance: target.toFixed(2), notes: notes.trim() || undefined } },
         { onSuccess: () => { toast({ title: t("Ajusté", "تم التعديل") }); onDone(); onClose(); }, onError: (e: unknown) => toast({ title: "Erreur", description: errMsg(e), variant: "destructive" }) },
       );
       return;
@@ -361,13 +361,13 @@ function AdminCaisseDialog({
           {action.type === "adjust" ? (
             <>
               <div>
-                <Label className="text-xs mb-1 block">{t(`Delta signé (${currency}) *`, `الفارق المُوقَّع (${currency}) *`)}</Label>
-                <Input type="number" step="0.01" value={delta} onChange={(e) => setDelta(e.target.value)} placeholder="ex: 500 ou -250" className="h-9 text-lg font-bold" data-testid="input-adjust-delta" />
-                <p className="text-[11px] text-muted-foreground mt-1">{t("Positif = crédit, négatif = débit", "موجب = دائن، سالب = مدين")}</p>
+                <Label className="text-xs mb-1 block">{t(`Solde cible (${currency}) *`, `الرصيد المستهدف (${currency}) *`)}</Label>
+                <Input type="number" min="0" step="0.01" value={targetBalance} onChange={(e) => setTargetBalance(e.target.value)} className="h-9 text-lg font-bold" data-testid="input-adjust-target" />
+                <p className="text-[11px] text-muted-foreground mt-1">{t("Le solde final souhaité pour cette caisse — le système calcule l'écart automatiquement.", "الرصيد النهائي المطلوب لهذا الصندوق — يحسب النظام الفارق تلقائياً.")}</p>
               </div>
               <div>
-                <Label className="text-xs mb-1 block">{t("Raison *", "السبب *")}</Label>
-                <Textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={2} placeholder={t("Justification obligatoire...", "التبرير إلزامي...")} data-testid="input-adjust-notes" />
+                <Label className="text-xs mb-1 block">{t("Note", "ملاحظة")}</Label>
+                <Textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={2} placeholder={t("Optionnel...", "اختياري...")} data-testid="input-adjust-notes" />
               </div>
             </>
           ) : (

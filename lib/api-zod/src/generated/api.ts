@@ -2870,18 +2870,68 @@ export const AdminWithdrawErpCaisseResponse = zod.object({
 });
 
 /**
- * @summary Admin applies a signed adjustment to a caisse with a required reason
+ * @summary Admin sets a caisse's balance to a target value; the server computes and applies the signed delta
  */
 export const AdminAdjustErpCaisseBody = zod.object({
   caisseId: zod.number(),
-  delta: zod
+  targetBalance: zod
     .string()
-    .describe("Signed amount; positive=credit, negative=debit"),
-  notes: zod.string().describe("Required reason"),
+    .describe(
+      "Desired resulting balance; the server computes the signed delta from the caisse's current balance",
+    ),
+  notes: zod
+    .string()
+    .optional()
+    .describe(
+      "Optional note appended to the auto-generated Ancien\/Nouveau audit note",
+    ),
 });
 
 export const AdminAdjustErpCaisseResponse = zod.object({
   success: zod.boolean(),
+  movement: zod.object({
+    id: zod.number(),
+    caisseId: zod.number(),
+    type: zod.enum(["credit", "debit"]),
+    amount: zod.string(),
+    reason: zod.enum([
+      "sale",
+      "transfer_in",
+      "transfer_out",
+      "transfer_hold",
+      "transfer_refund",
+      "admin_deposit",
+      "admin_withdraw",
+      "adjustment",
+    ]),
+    counterpartyCaisseId: zod.number().nullish(),
+    orderId: zod.number().nullish(),
+    caisseTransferId: zod.number().nullish(),
+    actorUserId: zod.number(),
+    notes: zod.string().nullish(),
+    createdAt: zod.string(),
+    actorUser: zod
+      .object({
+        id: zod.number(),
+        name: zod.string().nullish(),
+        email: zod.string().nullish(),
+      })
+      .nullish(),
+    counterparty: zod
+      .object({
+        id: zod.number().optional(),
+        kind: zod.string().optional(),
+        ownerUserId: zod.number().nullish(),
+        owner: zod
+          .object({
+            id: zod.number(),
+            name: zod.string().nullish(),
+            email: zod.string().nullish(),
+          })
+          .nullish(),
+      })
+      .nullish(),
+  }),
 });
 
 /**

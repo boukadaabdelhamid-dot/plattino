@@ -22,6 +22,7 @@ import type {
   AddToCartRequest,
   AdjustInventoryRequest,
   AdminCaisseAdjustRequest,
+  AdminCaisseAdjustResponse,
   AdminCaisseAmountRequest,
   Analytics,
   Attendance,
@@ -8073,7 +8074,7 @@ export const useAdminWithdrawErpCaisse = <
 };
 
 /**
- * @summary Admin applies a signed adjustment to a caisse with a required reason
+ * @summary Admin sets a caisse's balance to a target value; the server computes and applies the signed delta
  */
 export const getAdminAdjustErpCaisseUrl = () => {
   return `/api/erp/caisses/admin/adjust`;
@@ -8082,8 +8083,8 @@ export const getAdminAdjustErpCaisseUrl = () => {
 export const adminAdjustErpCaisse = async (
   adminCaisseAdjustRequest: AdminCaisseAdjustRequest,
   options?: RequestInit,
-): Promise<SuccessResponse> => {
-  return customFetch<SuccessResponse>(getAdminAdjustErpCaisseUrl(), {
+): Promise<AdminCaisseAdjustResponse> => {
+  return customFetch<AdminCaisseAdjustResponse>(getAdminAdjustErpCaisseUrl(), {
     ...options,
     method: "POST",
     headers: { "Content-Type": "application/json", ...options?.headers },
@@ -8137,7 +8138,7 @@ export type AdminAdjustErpCaisseMutationBody =
 export type AdminAdjustErpCaisseMutationError = ErrorType<unknown>;
 
 /**
- * @summary Admin applies a signed adjustment to a caisse with a required reason
+ * @summary Admin sets a caisse's balance to a target value; the server computes and applies the signed delta
  */
 export const useAdminAdjustErpCaisse = <
   TError = ErrorType<unknown>,

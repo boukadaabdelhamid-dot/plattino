@@ -433,11 +433,12 @@ function CaisseDetailDialog({ id, onClose, t, caisseLabel }: {
                   <TableHead>{t("Contrepartie", "الطرف المقابل")}</TableHead>
                   <TableHead>{t("Acteur", "المنفِّذ")}</TableHead>
                   <TableHead className="text-right">{t("Montant", "المبلغ")}</TableHead>
+                  <TableHead className="text-right">{t("Ancien → Nouveau", "قبل ← بعد")}</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {(data.movements ?? []).length === 0 ? (
-                  <TableRow><TableCell colSpan={5} className="text-center py-6 text-muted-foreground">{t("Aucun mouvement", "لا توجد حركات")}</TableCell></TableRow>
+                  <TableRow><TableCell colSpan={6} className="text-center py-6 text-muted-foreground">{t("Aucun mouvement", "لا توجد حركات")}</TableCell></TableRow>
                 ) : (data.movements ?? []).map((m: CaisseMovement) => (
                   <TableRow key={m.id}>
                     <TableCell className="text-xs text-muted-foreground">{m.createdAt ? format(new Date(m.createdAt), "MMM d HH:mm") : "—"}</TableCell>
@@ -446,6 +447,13 @@ function CaisseDetailDialog({ id, onClose, t, caisseLabel }: {
                     <TableCell className="text-sm">{personLabel(m.actorUser)}</TableCell>
                     <TableCell className={`text-right font-bold ${m.type === "credit" ? "text-emerald-600" : "text-red-600"}`}>
                       {m.type === "credit" ? "+" : "-"} {fmtAmount(m.amount)} {currency}
+                    </TableCell>
+                    {/* Real balance snapshot captured at write time — never guessed. "—"
+                        for rows created before this column existed (never backfilled). */}
+                    <TableCell className="text-right text-xs text-muted-foreground whitespace-nowrap">
+                      {m.balanceBefore != null ? fmtAmount(m.balanceBefore) : "—"}
+                      {" → "}
+                      {m.balanceAfter != null ? fmtAmount(m.balanceAfter) : "—"}
                     </TableCell>
                   </TableRow>
                 ))}

@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { and, eq, inArray, ne, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, ne, sql } from "drizzle-orm";
 import { db, schema } from "./db";
 
 export type DbLike = Pick<typeof db, "select" | "insert" | "update" | "delete" | "execute">;
@@ -29,6 +29,54 @@ async function lockIdentityGroup(tx: DbLike, keys: Array<string | null | undefin
   for (const key of uniqueSorted) {
     await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${key}))`);
   }
+}
+
+// ── Caisse balance snapshots ("ancien solde" / "nouveau solde") ────────────────
+// Caisses have no shared advisory-lock mutator (they're global with no cross-store
+// sync — see memory), so every call site applies its own delta directly. This
+// helper centralizes the read-lock-write so every site captures the exact
+// before/after balance instead of guessing it later from the movements list.
+// Row-locking via FOR UPDATE is safe here (no advisory lock to invert order
+// against) and matches the pattern already used by the admin/adjust endpoint.
+export async function applyCaisseDelta(
+  tx: DbLike,
+  caisseId: number,
+  delta: number,
+): Promise<{ oldBalance: number; newBalance: number }> {
+  const [row] = await tx.select({ balance: schema.caissesTable.balance })
+    .from(schema.caissesTable)
+    .where(eq(schema.caissesTable.id, caisseId))
+    .for("update");
+  const oldBalance = parseFloat(row?.balance ?? "0");
+  const newBalance = oldBalance + delta;
+  await tx.update(schema.caissesTable)
+    .set({ balance: newBalance.toFixed(2) })
+    .where(eq(schema.caissesTable.id, caisseId));
+  return { oldBalance, newBalance };
+}
+
+// Locks two-or-more caisse rows for the duration of the transaction, always in
+// ascending-id order regardless of which caisse is logically the "source" or
+// "destination" at the call site. The admin deposit/withdraw endpoints move
+// money between the SAME pair of caisses (a staff caisse and the main caisse)
+// but in opposite logical directions — deposit's source is withdraw's
+// destination and vice versa. If each endpoint locked source-then-destination
+// independently, concurrent opposite calls would lock the pair in opposite
+// row order and could deadlock. Locking by a fixed id order sidesteps that
+// regardless of which endpoint is "source" vs "destination".
+export async function lockCaissesById(
+  tx: DbLike,
+  caisseIds: number[],
+): Promise<Map<number, number>> {
+  const uniqueIds = [...new Set(caisseIds)];
+  const rows = await tx.select({ id: schema.caissesTable.id, balance: schema.caissesTable.balance })
+    .from(schema.caissesTable)
+    .where(inArray(schema.caissesTable.id, uniqueIds))
+    .orderBy(asc(schema.caissesTable.id))
+    .for("update");
+  const balances = new Map<number, number>();
+  for (const row of rows) balances.set(row.id, parseFloat(row.balance ?? "0"));
+  return balances;
 }
 
 // ── Contacts unified balance ───────────────────────────────────────────────────
@@ -261,11 +309,23 @@ export async function mutateCustomerBalance(
   userId: number,
   storeId: number,
   op: BalanceOp,
-): Promise<{ contactId: number | null }> {
+): Promise<{ contactId: number | null; oldBalance: number; newBalance: number }> {
   await lockCustomerIdentity(tx, userId, storeId);
 
+  // Read the raw customer-role balance BEFORE mutating it — this is the real
+  // "ancien solde" for this operation. Safe to read-then-write (rather than an
+  // atomic SQL increment) because lockCustomerIdentity above already serializes
+  // every mutator of this identity for the duration of the transaction.
+  const [before] = await tx.select({ currentBalance: schema.customerProfilesTable.currentBalance })
+    .from(schema.customerProfilesTable)
+    .where(and(eq(schema.customerProfilesTable.userId, userId), eq(schema.customerProfilesTable.storeId, storeId)))
+    .limit(1);
+  const oldBalance = parseFloat(before?.currentBalance ?? "0");
+  let newBalance = oldBalance;
+
   if (op.absolute !== undefined) {
-    const balStr = op.absolute.toFixed(2);
+    newBalance = op.absolute;
+    const balStr = newBalance.toFixed(2);
     await tx.insert(schema.customerProfilesTable)
       .values({ userId, storeId, currentBalance: balStr })
       .onConflictDoUpdate({
@@ -273,15 +333,13 @@ export async function mutateCustomerBalance(
         set: { currentBalance: balStr, updatedAt: new Date() },
       });
   } else if (op.delta !== 0) {
-    const deltaStr = op.delta.toFixed(2);
+    newBalance = oldBalance + op.delta;
+    const balStr = newBalance.toFixed(2);
     await tx.insert(schema.customerProfilesTable)
-      .values({ userId, storeId, currentBalance: deltaStr })
+      .values({ userId, storeId, currentBalance: balStr })
       .onConflictDoUpdate({
         target: [schema.customerProfilesTable.userId, schema.customerProfilesTable.storeId],
-        set: {
-          currentBalance: sql`COALESCE(${schema.customerProfilesTable.currentBalance}, '0') + ${deltaStr}`,
-          updatedAt: new Date(),
-        },
+        set: { currentBalance: balStr, updatedAt: new Date() },
       });
   }
 
@@ -296,7 +354,7 @@ export async function mutateCustomerBalance(
     await recomputeContactBalance(tx, contactId);
     await syncLinkedContactBalances(tx, contactId);
   }
-  return { contactId };
+  return { contactId, oldBalance, newBalance };
 }
 
 // Mirrors lockCustomerIdentity for the supplier role — see there for why callers
@@ -337,16 +395,27 @@ export async function mutateSupplierBalance(
   tx: DbLike,
   supplierId: number,
   op: BalanceOp,
-): Promise<{ contactId: number | null }> {
+): Promise<{ contactId: number | null; oldBalance: number; newBalance: number }> {
   await lockSupplierIdentity(tx, supplierId);
 
+  // Read the raw supplier-role balance BEFORE mutating it — the real "ancien
+  // solde" for this operation. Safe to read-then-write because
+  // lockSupplierIdentity above already serializes every mutator of this
+  // identity for the duration of the transaction.
+  const [before] = await tx.select({ currentBalance: schema.suppliersTable.currentBalance })
+    .from(schema.suppliersTable).where(eq(schema.suppliersTable.id, supplierId)).limit(1);
+  const oldBalance = parseFloat(before?.currentBalance ?? "0");
+  let newBalance = oldBalance;
+
   if (op.absolute !== undefined) {
+    newBalance = op.absolute;
     await tx.update(schema.suppliersTable)
-      .set({ currentBalance: op.absolute.toFixed(2) })
+      .set({ currentBalance: newBalance.toFixed(2) })
       .where(eq(schema.suppliersTable.id, supplierId));
   } else if (op.delta !== 0) {
+    newBalance = oldBalance + op.delta;
     await tx.update(schema.suppliersTable)
-      .set({ currentBalance: sql`COALESCE(current_balance, '0') + ${op.delta.toFixed(2)}` })
+      .set({ currentBalance: newBalance.toFixed(2) })
       .where(eq(schema.suppliersTable.id, supplierId));
   }
 
@@ -362,5 +431,5 @@ export async function mutateSupplierBalance(
     await recomputeContactBalance(tx, contactId);
     await syncLinkedContactBalances(tx, contactId);
   }
-  return { contactId };
+  return { contactId, oldBalance, newBalance };
 }

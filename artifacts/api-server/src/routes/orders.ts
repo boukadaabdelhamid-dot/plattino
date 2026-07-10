@@ -5,7 +5,7 @@ import { authenticate, requireAdmin, requireStaff, requireStore, optionalAuth, r
 import { resolvePublicStore } from "../lib/store-context";
 import { broadcastToAdmins, broadcastToStoreUsers, broadcastToStaffByStores, broadcastCaisseChanged } from "../lib/ws";
 import { ensureCaisse } from "./caisses";
-import { mutateCustomerBalance } from "../lib/balance-sync";
+import { mutateCustomerBalance, applyCaisseDelta } from "../lib/balance-sync";
 
 
 const router = Router();
@@ -318,9 +318,7 @@ async function handleCreateOrder(req: AuthRequest, res: import("express").Respon
         const sellerCaisse = await ensureCaisse(storeId, sellerUserId, tx);
         sellerCaisseId = sellerCaisse.id;
         const amountStr = cashCollected.toFixed(2);
-        await tx.update(schema.caissesTable)
-          .set({ balance: sql`${schema.caissesTable.balance} + ${amountStr}` })
-          .where(eq(schema.caissesTable.id, sellerCaisse.id));
+        const { oldBalance: sellerCaisseOld, newBalance: sellerCaisseNew } = await applyCaisseDelta(tx, sellerCaisse.id, cashCollected);
         await tx.insert(schema.caisseMovementsTable).values({
           caisseId: sellerCaisse.id,
           type: "credit",
@@ -331,6 +329,8 @@ async function handleCreateOrder(req: AuthRequest, res: import("express").Respon
           notes: isTerme
             ? `POS sale (versement) to ${customerName}`
             : `POS sale to ${customerName}`,
+          balanceBefore: sellerCaisseOld.toFixed(2),
+          balanceAfter: sellerCaisseNew.toFixed(2),
         });
       }
 
@@ -342,6 +342,7 @@ async function handleCreateOrder(req: AuthRequest, res: import("express").Respon
         const amountStr = receivable.toFixed(2);
         const today = new Date().toISOString().slice(0, 10);
         const versementNote = appliedVersement > 0 ? ` (versement ${appliedVersement.toFixed(2)} DA)` : "";
+        const { oldBalance: custOld, newBalance: custNew } = await mutateCustomerBalance(tx, posCustomerId, storeId, { delta: receivable });
         await tx.insert(schema.customerOperationsTable).values({
           customerId: posCustomerId,
           storeId,
@@ -352,8 +353,9 @@ async function handleCreateOrder(req: AuthRequest, res: import("express").Respon
           note: `Vente à terme POS — commande #${order.id}${versementNote}`,
           createdBy: sellerUserId ?? req.user!.id,
           caisseId: null,
+          balanceBefore: custOld.toFixed(2),
+          balanceAfter: custNew.toFixed(2),
         });
-        await mutateCustomerBalance(tx, posCustomerId, storeId, { delta: receivable });
       }
 
       return { order, enrichedItems, totalAmount, sellerUserId, sellerCaisseId };
@@ -554,9 +556,7 @@ router.put("/admin/orders/:id/status", authenticate, requireStaff, requireStore,
           const delivererCaisse = await ensureCaisse(storeId, actorUserId, tx);
           delivererCaisseId = delivererCaisse.id;
           const amountStr = updated.totalAmount;
-          await tx.update(schema.caissesTable)
-            .set({ balance: sql`${schema.caissesTable.balance} + ${amountStr}` })
-            .where(eq(schema.caissesTable.id, delivererCaisse.id));
+          const { oldBalance: delivCaisseOld, newBalance: delivCaisseNew } = await applyCaisseDelta(tx, delivererCaisse.id, orderAmount);
           await tx.insert(schema.caisseMovementsTable).values({
             caisseId: delivererCaisse.id,
             type: "credit",
@@ -565,6 +565,8 @@ router.put("/admin/orders/:id/status", authenticate, requireStaff, requireStore,
             orderId,
             actorUserId,
             notes: `Livraison commande #${orderId} - ${updated.customerName}`,
+            balanceBefore: delivCaisseOld.toFixed(2),
+            balanceAfter: delivCaisseNew.toFixed(2),
           });
         }
       }
@@ -618,9 +620,7 @@ router.put("/admin/orders/:id/status", authenticate, requireStaff, requireStore,
               const sellerCaisse = await ensureCaisse(storeId, updated.sellerUserId, tx);
               cancelSellerCaisseId = sellerCaisse.id;
               const cashStr = cashCollected.toFixed(2);
-              await tx.update(schema.caissesTable)
-                .set({ balance: sql`${schema.caissesTable.balance} - ${cashStr}` })
-                .where(eq(schema.caissesTable.id, sellerCaisse.id));
+              const { oldBalance: cancelCaisseOld, newBalance: cancelCaisseNew } = await applyCaisseDelta(tx, sellerCaisse.id, -cashCollected);
               await tx.insert(schema.caisseMovementsTable).values({
                 caisseId: sellerCaisse.id,
                 type: "debit",
@@ -629,6 +629,8 @@ router.put("/admin/orders/:id/status", authenticate, requireStaff, requireStore,
                 orderId,
                 actorUserId: req.user!.id,
                 notes: `Annulation commande #${orderId}`,
+                balanceBefore: cancelCaisseOld.toFixed(2),
+                balanceAfter: cancelCaisseNew.toFixed(2),
               });
             }
           }
@@ -646,6 +648,7 @@ router.put("/admin/orders/:id/status", authenticate, requireStaff, requireStore,
             const receivable = Number((recvRes.rows[0] as { s: string | number } | undefined)?.s ?? 0);
             if (receivable > 0) {
               const recvStr = receivable.toFixed(2);
+              const { oldBalance: custOld, newBalance: custNew } = await mutateCustomerBalance(tx, updated.userId, storeId, { delta: -receivable });
               await tx.insert(schema.customerOperationsTable).values({
                 customerId: updated.userId,
                 storeId,
@@ -656,8 +659,9 @@ router.put("/admin/orders/:id/status", authenticate, requireStaff, requireStore,
                 note: `Annulation commande #${orderId}`,
                 createdBy: req.user!.id,
                 caisseId: null,
+                balanceBefore: custOld.toFixed(2),
+                balanceAfter: custNew.toFixed(2),
               });
-              await mutateCustomerBalance(tx, updated.userId, storeId, { delta: -receivable });
             }
           }
         }
@@ -1073,9 +1077,7 @@ router.post("/erp/pos/drafts/:id/confirm", authenticate, requireStaff, requireSt
       if (sellerUserId !== null && totalAmount > 0) {
         const sellerCaisse = await ensureCaisse(storeId, sellerUserId, tx);
         sellerCaisseId = sellerCaisse.id;
-        await tx.update(schema.caissesTable)
-          .set({ balance: sql`${schema.caissesTable.balance} + ${totalAmount.toFixed(2)}` })
-          .where(eq(schema.caissesTable.id, sellerCaisse.id));
+        const { oldBalance: posCaisseOld, newBalance: posCaisseNew } = await applyCaisseDelta(tx, sellerCaisse.id, totalAmount);
         await tx.insert(schema.caisseMovementsTable).values({
           caisseId: sellerCaisse.id,
           type: "credit",
@@ -1084,6 +1086,8 @@ router.post("/erp/pos/drafts/:id/confirm", authenticate, requireStaff, requireSt
           orderId: order.id,
           actorUserId: sellerUserId,
           notes: `POS sale to ${customerName}`,
+          balanceBefore: posCaisseOld.toFixed(2),
+          balanceAfter: posCaisseNew.toFixed(2),
         });
       }
 
@@ -1254,6 +1258,7 @@ router.post("/admin/orders/:id/retours", authenticate, requireStaff, requireStor
       if (retourTotal > 0) {
         if (retourType === "sans_remboursement") {
           if (order.userId) {
+            const { oldBalance: custOld, newBalance: custNew } = await mutateCustomerBalance(tx, order.userId, storeId, { delta: -retourTotal });
             await tx.insert(schema.customerOperationsTable).values({
               customerId: order.userId,
               storeId,
@@ -1264,8 +1269,9 @@ router.post("/admin/orders/:id/retours", authenticate, requireStaff, requireStor
               note: `Avoir retour — Bon Retour #${bonRetour.id} - commande #${orderId}`,
               createdBy: createdByUserId,
               caisseId: null,
+              balanceBefore: custOld.toFixed(2),
+              balanceAfter: custNew.toFixed(2),
             });
-            await mutateCustomerBalance(tx, order.userId, storeId, { delta: -retourTotal });
           }
         } else {
           await tx.insert(schema.transactionsTable).values({
@@ -1282,12 +1288,12 @@ router.post("/admin/orders/:id/retours", authenticate, requireStaff, requireStor
           // till regardless of how the original order was sold (POS, COD, or web).
           const actorCaisse = await ensureCaisse(storeId, createdByUserId, tx);
           retourCaisseId = actorCaisse.id;
-          await tx.update(schema.caissesTable)
-            .set({ balance: sql`${schema.caissesTable.balance} - ${retourTotal.toFixed(2)}` })
-            .where(eq(schema.caissesTable.id, actorCaisse.id));
+          const { oldBalance: retourCaisseOld, newBalance: retourCaisseNew } = await applyCaisseDelta(tx, actorCaisse.id, -retourTotal);
           await tx.insert(schema.caisseMovementsTable).values({
             caisseId: actorCaisse.id,
             type: "debit",
+            balanceBefore: retourCaisseOld.toFixed(2),
+            balanceAfter: retourCaisseNew.toFixed(2),
             amount: retourTotal.toFixed(2),
             reason: "adjustment",
             actorUserId: createdByUserId,
@@ -1403,6 +1409,7 @@ router.post("/admin/retours", authenticate, requireStaff, requireStore, requireP
       if (retourTotal > 0) {
         if (retourType === "sans_remboursement") {
           if (clientUserId) {
+            const { oldBalance: custOld, newBalance: custNew } = await mutateCustomerBalance(tx, clientUserId, storeId, { delta: -retourTotal });
             await tx.insert(schema.customerOperationsTable).values({
               customerId: clientUserId,
               storeId,
@@ -1413,8 +1420,9 @@ router.post("/admin/retours", authenticate, requireStaff, requireStore, requireP
               note: `Avoir retour — Bon Retour comptoir #${bonRetour.id}`,
               createdBy: createdByUserId,
               caisseId: null,
+              balanceBefore: custOld.toFixed(2),
+              balanceAfter: custNew.toFixed(2),
             });
-            await mutateCustomerBalance(tx, clientUserId, storeId, { delta: -retourTotal });
           }
         } else {
           await tx.insert(schema.transactionsTable).values({
@@ -1430,9 +1438,7 @@ router.post("/admin/retours", authenticate, requireStaff, requireStore, requireP
           // Debit the acting user's caisse
           const actorCaisse = await ensureCaisse(storeId, createdByUserId, tx);
           retourCaisseId = actorCaisse.id;
-          await tx.update(schema.caissesTable)
-            .set({ balance: sql`${schema.caissesTable.balance} - ${retourTotal.toFixed(2)}` })
-            .where(eq(schema.caissesTable.id, actorCaisse.id));
+          const { oldBalance: retourCaisseOld, newBalance: retourCaisseNew } = await applyCaisseDelta(tx, actorCaisse.id, -retourTotal);
           await tx.insert(schema.caisseMovementsTable).values({
             caisseId: actorCaisse.id,
             type: "debit",
@@ -1440,6 +1446,8 @@ router.post("/admin/retours", authenticate, requireStaff, requireStore, requireP
             reason: "adjustment",
             actorUserId: createdByUserId,
             notes: `Bon Retour comptoir #${bonRetour.id}`,
+            balanceBefore: retourCaisseOld.toFixed(2),
+            balanceAfter: retourCaisseNew.toFixed(2),
           });
         }
       }

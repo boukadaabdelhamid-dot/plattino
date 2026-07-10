@@ -15,6 +15,7 @@ import {
   mutateSupplierBalance,
   lockCustomerIdentity,
   lockSupplierIdentity,
+  applyCaisseDelta,
   type DbLike,
 } from "../lib/balance-sync";
 
@@ -923,6 +924,11 @@ router.get("/erp/suppliers/:id/operations", authenticate, requireStaff, requireS
       reference: string | null; note: string | null;
       storeNameAr: string | null; storeNameEn: string | null;
       source: "supplier" | "customer"; createdAt: Date | string | null;
+      // Real per-role balance snapshot captured at write time (via mutateSupplierBalance/
+      // mutateCustomerBalance), NOT the unified contact balance — see the columns'
+      // definition on their own tables. NULL for rows created before these columns
+      // existed; never guessed/backfilled here.
+      balanceBefore: string | null; balanceAfter: string | null;
       runningBalance: string;
     };
 
@@ -955,7 +961,8 @@ router.get("/erp/suppliers/:id/operations", authenticate, requireStaff, requireS
           allRaw.push({ id: op.id, date: op.date, type: op.type, amount: op.amount,
             reference: op.reference ?? null, note: op.note ?? null,
             storeNameAr: storeNameAr ?? null, storeNameEn: storeNameEn ?? null,
-            source: "supplier", createdAt: op.createdAt });
+            source: "supplier", createdAt: op.createdAt,
+            balanceBefore: op.balanceBefore ?? null, balanceAfter: op.balanceAfter ?? null });
         }
 
         // Customer side
@@ -972,7 +979,8 @@ router.get("/erp/suppliers/:id/operations", authenticate, requireStaff, requireS
             allRaw.push({ id: op.id, date: op.date, type: op.type, amount: op.amount,
               reference: op.reference ?? null, note: op.note ?? null,
               storeNameAr: storeNameAr ?? null, storeNameEn: storeNameEn ?? null,
-              source: "customer", createdAt: op.createdAt });
+              source: "customer", createdAt: op.createdAt,
+              balanceBefore: op.balanceBefore ?? null, balanceAfter: op.balanceAfter ?? null });
           }
         }
 
@@ -1209,7 +1217,7 @@ router.post("/erp/suppliers/:id/operations", authenticate, requireStaff, require
       const payingCaisse = await ensureCaisse(null, actorUserId, tx);
 
       // Payment increases balance (reduces debt): Solde = Versements - Achats
-      await mutateSupplierBalance(tx, supplierId, { delta: parsedAmount });
+      const { oldBalance: supOld, newBalance: supNew } = await mutateSupplierBalance(tx, supplierId, { delta: parsedAmount });
 
       // Record supplier operation — optionally linked to a specific PO
       const [operation] = await tx.insert(schema.supplierOperationsTable).values({
@@ -1221,13 +1229,13 @@ router.post("/erp/suppliers/:id/operations", authenticate, requireStaff, require
         reference: reference ?? undefined,
         note: note ?? undefined,
         caisseId: payingCaisse.id,
+        balanceBefore: supOld.toFixed(2),
+        balanceAfter: supNew.toFixed(2),
         ...(resolvedPoId !== null ? { poId: resolvedPoId } : {}),
       }).returning();
 
       // Debit the actor's caisse
-      await tx.update(schema.caissesTable)
-        .set({ balance: sql`balance - ${amtFixed}` })
-        .where(eq(schema.caissesTable.id, payingCaisse.id));
+      const { oldBalance: caisseOld, newBalance: caisseNew } = await applyCaisseDelta(tx, payingCaisse.id, -parseFloat(amtFixed));
 
       await tx.insert(schema.caisseMovementsTable).values({
         caisseId: payingCaisse.id,
@@ -1237,6 +1245,8 @@ router.post("/erp/suppliers/:id/operations", authenticate, requireStaff, require
         supplierOperationId: operation.id,
         actorUserId,
         notes: `Règlement fournisseur: ${supplier.name}${note ? ` — ${note}` : ""}`,
+        balanceBefore: caisseOld.toFixed(2),
+        balanceAfter: caisseNew.toFixed(2),
       });
 
       return { op: operation, caisseId: payingCaisse.id };
@@ -1306,6 +1316,11 @@ router.post("/erp/suppliers/:id/adjust", authenticate, requireStaff, requireStor
         date,
         note: autoNote,
         actorUserId: req.user!.id,
+        // The displayed "ancien/nouveau solde" for an adjustment must match the
+        // unified balance shown to the user (see oldBalance computation above),
+        // not the raw supplier-role balance mutateSupplierBalance operates on.
+        balanceBefore: oldBalance.toFixed(2),
+        balanceAfter: newBalanceFixed,
       }).returning();
 
       return operation;
@@ -1449,7 +1464,7 @@ router.put("/erp/purchase-orders/:id/receive", authenticate, requireStaff, requi
 
       // À terme only: purchase creates a supplier debt (Comptant = paid immediately, no debt)
       if (po.paymentMethod !== "comptant") {
-        await mutateSupplierBalance(tx, po.supplierId, { delta: -totalAmount });
+        const { oldBalance: poSupOld, newBalance: poSupNew } = await mutateSupplierBalance(tx, po.supplierId, { delta: -totalAmount });
 
         await tx.insert(schema.supplierOperationsTable).values({
           supplierId: po.supplierId,
@@ -1460,10 +1475,15 @@ router.put("/erp/purchase-orders/:id/receive", authenticate, requireStaff, requi
           reference: `PO-${poId}`,
           note: po.notes ?? undefined,
           poId,
+          balanceBefore: poSupOld.toFixed(2),
+          balanceAfter: poSupNew.toFixed(2),
         });
       }
 
-      // Achat comptant: auto-debit the acting user's personal caisse immediately
+      // Achat comptant: auto-debit the acting user's personal caisse immediately.
+      // No supplier balance change here (paid in full now, no debt) — the supplier
+      // operation row has no balanceBefore/After since nothing was mutated; the
+      // caisse side below still captures its own snapshot.
       if (po.paymentMethod === "comptant" && totalAmount > 0) {
         const payingCaisse = await ensureCaisse(null, actorUserId, tx);
 
@@ -1477,9 +1497,7 @@ router.put("/erp/purchase-orders/:id/receive", authenticate, requireStaff, requi
           poId,
         }).returning();
 
-        await tx.update(schema.caissesTable)
-          .set({ balance: sql`balance - ${totalAmount.toFixed(2)}` })
-          .where(eq(schema.caissesTable.id, payingCaisse.id));
+        const { oldBalance: comptantCaisseOld, newBalance: comptantCaisseNew } = await applyCaisseDelta(tx, payingCaisse.id, -totalAmount);
 
         await tx.insert(schema.caisseMovementsTable).values({
           caisseId: payingCaisse.id,
@@ -1489,6 +1507,8 @@ router.put("/erp/purchase-orders/:id/receive", authenticate, requireStaff, requi
           supplierOperationId: supplierOp.id,
           actorUserId,
           notes: `Achat comptant BCA N°${poId}`,
+          balanceBefore: comptantCaisseOld.toFixed(2),
+          balanceAfter: comptantCaisseNew.toFixed(2),
         });
 
         comptantCaisseId = payingCaisse.id;
@@ -2332,6 +2352,11 @@ router.post("/erp/customers/:id/adjust", authenticate, requireAdmin, requireStor
         date,
         note: autoNote,
         createdBy: req.user!.id,
+        // The displayed "ancien/nouveau solde" for an adjustment must match the
+        // unified balance shown to the user (see oldBalance computation above),
+        // not the raw customer-role balance mutateCustomerBalance operates on.
+        balanceBefore: oldBalance.toFixed(2),
+        balanceAfter: newBalanceFixed,
       }).returning();
 
       return operation;
@@ -2648,7 +2673,11 @@ router.post("/erp/customers/:id/operations", authenticate, requireAdmin, require
         resolvedCaisseId = caisse.id;
       }
 
-      // ── Phase 2: insert customer_operation first (needed for FK link in caisse_movement) ──
+      // ── Phase 2: update customer_profiles balance first so the real ancien/nouveau
+      // solde is available to attach to the operation row inserted right after. ──
+      const { oldBalance: custOld, newBalance: custNew } = await mutateCustomerBalance(tx, customerId, storeId, { delta });
+
+      // ── Phase 3: insert customer_operation (needed for FK link in caisse_movement) ──
       const [inserted] = await tx.insert(schema.customerOperationsTable).values({
         customerId,
         storeId,
@@ -2659,13 +2688,13 @@ router.post("/erp/customers/:id/operations", authenticate, requireAdmin, require
         note: note || null,
         createdBy: actorUserId,
         caisseId: resolvedCaisseId,
+        balanceBefore: custOld.toFixed(2),
+        balanceAfter: custNew.toFixed(2),
       }).returning();
 
-      // ── Phase 3: caisse movements + accounting (linked to customer operation) ──
+      // ── Phase 4: caisse movements + accounting (linked to customer operation) ──
       if (type === "versement" && resolvedCaisseId !== null) {
-        await tx.update(schema.caissesTable)
-          .set({ balance: sql`${schema.caissesTable.balance} + ${amountStr}` })
-          .where(eq(schema.caissesTable.id, resolvedCaisseId));
+        const { oldBalance: caisseOld, newBalance: caisseNew } = await applyCaisseDelta(tx, resolvedCaisseId, numAmount);
         await tx.insert(schema.caisseMovementsTable).values({
           caisseId: resolvedCaisseId,
           type: "credit",
@@ -2674,6 +2703,8 @@ router.post("/erp/customers/:id/operations", authenticate, requireAdmin, require
           customerOperationId: inserted.id,
           actorUserId,
           notes: `Versement client #${customerId}${reference ? ` - ${reference}` : ""}`,
+          balanceBefore: caisseOld.toFixed(2),
+          balanceAfter: caisseNew.toFixed(2),
         });
         await tx.insert(schema.transactionsTable).values({
           storeId,
@@ -2685,9 +2716,7 @@ router.post("/erp/customers/:id/operations", authenticate, requireAdmin, require
           reference: reference || null,
         });
       } else if (type === "remboursement" && resolvedCaisseId !== null) {
-        await tx.update(schema.caissesTable)
-          .set({ balance: sql`${schema.caissesTable.balance} - ${amountStr}` })
-          .where(eq(schema.caissesTable.id, resolvedCaisseId));
+        const { oldBalance: caisseOld, newBalance: caisseNew } = await applyCaisseDelta(tx, resolvedCaisseId, -numAmount);
         await tx.insert(schema.caisseMovementsTable).values({
           caisseId: resolvedCaisseId,
           type: "debit",
@@ -2696,6 +2725,8 @@ router.post("/erp/customers/:id/operations", authenticate, requireAdmin, require
           customerOperationId: inserted.id,
           actorUserId,
           notes: `Remboursement client #${customerId}${reference ? ` - ${reference}` : ""}`,
+          balanceBefore: caisseOld.toFixed(2),
+          balanceAfter: caisseNew.toFixed(2),
         });
         await tx.insert(schema.transactionsTable).values({
           storeId,
@@ -2719,8 +2750,6 @@ router.post("/erp/customers/:id/operations", authenticate, requireAdmin, require
         });
       }
 
-      // ── Phase 4: update customer_profiles balance (single centralized path) ──
-      await mutateCustomerBalance(tx, customerId, storeId, { delta });
       return inserted;
     });
     if (resolvedCaisseId !== null) {
@@ -2802,11 +2831,14 @@ router.put("/erp/customers/:id/operations/:opId", authenticate, requireAdmin, re
         }
       }
       const balanceDiff = newDelta - oldDelta;
+      const { oldBalance: custOld, newBalance: custNew } = await mutateCustomerBalance(tx, customerId, storeId, { delta: balanceDiff });
       const [op] = await tx.update(schema.customerOperationsTable)
-        .set({ type, amount: numAmount.toFixed(2), date, reference: reference || null, note: note || null })
+        .set({
+          type, amount: numAmount.toFixed(2), date, reference: reference || null, note: note || null,
+          balanceBefore: custOld.toFixed(2), balanceAfter: custNew.toFixed(2),
+        })
         .where(eq(schema.customerOperationsTable.id, opId))
         .returning();
-      await mutateCustomerBalance(tx, customerId, storeId, { delta: balanceDiff });
       return op;
     });
     if (!updated) { res.status(404).json({ error: "Operation not found" }); return; }
@@ -2877,9 +2909,7 @@ router.delete("/erp/customers/:id/operations/:opId", authenticate, requireAdmin,
 
         if (existing.type === "versement") {
           // Reverse: debit caisse + expense accounting
-          await tx.update(schema.caissesTable)
-            .set({ balance: sql`${schema.caissesTable.balance} - ${amountStr}` })
-            .where(eq(schema.caissesTable.id, existing.caisseId));
+          const { oldBalance: caisseOld, newBalance: caisseNew } = await applyCaisseDelta(tx, existing.caisseId, -Number(existing.amount));
           await tx.insert(schema.caisseMovementsTable).values({
             caisseId: existing.caisseId,
             type: "debit",
@@ -2887,6 +2917,8 @@ router.delete("/erp/customers/:id/operations/:opId", authenticate, requireAdmin,
             reason: "adjustment",
             actorUserId,
             notes: `Annulation versement client #${customerId}`,
+            balanceBefore: caisseOld.toFixed(2),
+            balanceAfter: caisseNew.toFixed(2),
           });
           await tx.insert(schema.transactionsTable).values({
             storeId,
@@ -2899,9 +2931,7 @@ router.delete("/erp/customers/:id/operations/:opId", authenticate, requireAdmin,
           });
         } else {
           // remboursement reversal: credit caisse + income accounting
-          await tx.update(schema.caissesTable)
-            .set({ balance: sql`${schema.caissesTable.balance} + ${amountStr}` })
-            .where(eq(schema.caissesTable.id, existing.caisseId));
+          const { oldBalance: caisseOld, newBalance: caisseNew } = await applyCaisseDelta(tx, existing.caisseId, Number(existing.amount));
           await tx.insert(schema.caisseMovementsTable).values({
             caisseId: existing.caisseId,
             type: "credit",
@@ -2909,6 +2939,8 @@ router.delete("/erp/customers/:id/operations/:opId", authenticate, requireAdmin,
             reason: "adjustment",
             actorUserId,
             notes: `Annulation remboursement client #${customerId}`,
+            balanceBefore: caisseOld.toFixed(2),
+            balanceAfter: caisseNew.toFixed(2),
           });
           await tx.insert(schema.transactionsTable).values({
             storeId,

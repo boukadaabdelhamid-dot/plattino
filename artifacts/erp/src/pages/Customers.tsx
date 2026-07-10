@@ -871,6 +871,13 @@ function CustomerDetailSheet({ customerId, onClose, t, lang, currency }: {
                         </div>
                         <p className="text-[10px] text-muted-foreground mt-0.5">{fmtDt(op.createdAt)}</p>
                         {op.note && <p className="text-[11px] text-muted-foreground italic mt-0.5">{op.note}</p>}
+                        {/* Real balance snapshot captured at write time — never guessed. "—" for
+                            rows created before this column existed (never backfilled). */}
+                        <p className="text-[10px] text-muted-foreground mt-0.5">
+                          {t("Ancien", "قبل")}: {op.balanceBefore != null ? Number(op.balanceBefore).toFixed(2) : "—"}
+                          {" → "}
+                          {t("Nouveau", "بعد")}: {op.balanceAfter != null ? Number(op.balanceAfter).toFixed(2) : "—"}
+                        </p>
                       </div>
                       <p className={`text-sm font-bold shrink-0 text-right ${(op.type === "versement" || op.type === "avoir_retour") ? "text-green-700" : op.type === "remboursement" ? "text-red-600" : "text-amber-700"}`}>
                         {sign}{Number(op.amount).toFixed(2)}
@@ -1315,6 +1322,13 @@ function CustomerOperationsSheet({ customerId, customerName, onClose, t, lang, c
                     <span className={runningBalance > 0 ? "text-red-600" : runningBalance < 0 ? "text-green-700" : "text-muted-foreground"}>
                       {runningBalance.toFixed(2)} {currency}
                     </span>
+                    {/* Real balance snapshot captured at write time — never guessed. "—"
+                        for rows created before this column existed (never backfilled). */}
+                    <p className="text-[10px] font-normal text-muted-foreground mt-0.5">
+                      {t("Ancien", "قبل")}: {op.balanceBefore != null ? Number(op.balanceBefore).toFixed(2) : "—"}
+                      {" → "}
+                      {t("Nouveau", "بعد")}: {op.balanceAfter != null ? Number(op.balanceAfter).toFixed(2) : "—"}
+                    </p>
                   </TableCell>
                   <TableCell className="text-xs text-muted-foreground">{op.reference || "—"}</TableCell>
                   <TableCell className="text-xs text-muted-foreground max-w-[140px] truncate">{op.note || "—"}</TableCell>

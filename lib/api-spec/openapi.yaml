@@ -4353,6 +4353,14 @@ components:
         runningBalance:
           type: string
           description: "Balance after this operation"
+        balanceBefore:
+          type: string
+          nullable: true
+          description: "Real supplier balance snapshot before this operation, captured at write time. NULL for rows created before this column existed — never guessed."
+        balanceAfter:
+          type: string
+          nullable: true
+          description: "Real supplier balance snapshot after this operation, captured at write time. NULL for rows created before this column existed — never guessed."
         createdAt:
           type: string
       required: [id, supplierId, storeId, type, amount, date]
@@ -4749,6 +4757,14 @@ components:
         caisseTransferId: { type: integer, nullable: true }
         actorUserId: { type: integer }
         notes: { type: string, nullable: true }
+        balanceBefore:
+          type: string
+          nullable: true
+          description: "Real caisse balance snapshot before this movement, captured at write time. NULL for rows created before this column existed — never guessed."
+        balanceAfter:
+          type: string
+          nullable: true
+          description: "Real caisse balance snapshot after this movement, captured at write time. NULL for rows created before this column existed — never guessed."
         createdAt: { type: string }
         actorUser:
           $ref: "#/components/schemas/UserLite"
@@ -5488,6 +5504,14 @@ components:
         createdBy:
           type: integer
           nullable: true
+        balanceBefore:
+          type: string
+          nullable: true
+          description: "Real customer balance snapshot before this operation, captured at write time. NULL for rows created before this column existed — never guessed."
+        balanceAfter:
+          type: string
+          nullable: true
+          description: "Real customer balance snapshot after this operation, captured at write time. NULL for rows created before this column existed — never guessed."
         createdAt:
           type: string
       required: [id, customerId, storeId, type, amount, date, createdAt]

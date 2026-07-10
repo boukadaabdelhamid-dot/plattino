@@ -100,6 +100,11 @@ export const supplierOperationsTable = pgTable("supplier_operations", {
   poId: integer("po_id").references(() => purchaseOrdersTable.id),
   caisseId: integer("caisse_id"),
   actorUserId: integer("actor_user_id").references(() => usersTable.id),
+  // Real balance snapshot captured at write time (via mutateSupplierBalance), for every
+  // operation type including ajustement. NULL on rows created before this column existed
+  // — never backfilled/guessed, the UI must show "—" for those instead of a computed value.
+  balanceBefore: numeric("balance_before", { precision: 12, scale: 2 }),
+  balanceAfter: numeric("balance_after", { precision: 12, scale: 2 }),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
@@ -263,6 +268,11 @@ export const customerOperationsTable = pgTable("customer_operations", {
   note: text("note"),
   createdBy: integer("created_by").references(() => usersTable.id),
   caisseId: integer("caisse_id").references(() => caissesTable.id),
+  // Real balance snapshot captured at write time (via mutateCustomerBalance), for every
+  // operation type including ajustement. NULL on rows created before this column existed
+  // — never backfilled/guessed, the UI must show "—" for those instead of a computed value.
+  balanceBefore: numeric("balance_before", { precision: 12, scale: 2 }),
+  balanceAfter: numeric("balance_after", { precision: 12, scale: 2 }),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 export type CustomerOperation = typeof customerOperationsTable.$inferSelect;
@@ -395,6 +405,10 @@ export const caisseMovementsTable = pgTable("caisse_movements", {
   customerOperationId: integer("customer_operation_id").references(() => customerOperationsTable.id),
   actorUserId: integer("actor_user_id").references(() => usersTable.id).notNull(),
   notes: text("notes"),
+  // Real caisse balance snapshot captured immediately before/after this movement was
+  // applied. NULL on rows created before this column existed — never backfilled/guessed.
+  balanceBefore: numeric("balance_before", { precision: 12, scale: 2 }),
+  balanceAfter: numeric("balance_after", { precision: 12, scale: 2 }),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 

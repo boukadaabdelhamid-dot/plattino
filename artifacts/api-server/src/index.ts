@@ -656,6 +656,15 @@ UPDATE contacts SET current_balance = (
 ALTER TABLE "contacts" ADD COLUMN IF NOT EXISTS "global_contact_id" text;--> statement-breakpoint
 CREATE UNIQUE INDEX IF NOT EXISTS "contacts_one_global_per_store" ON "contacts" ("store_id", "global_contact_id") WHERE "global_contact_id" IS NOT NULL;--> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "contacts_global_id_idx" ON "contacts" ("global_contact_id") WHERE "global_contact_id" IS NOT NULL;--> statement-breakpoint
+-- ─── Ancien/nouveau solde snapshots (additive + idempotent) ───
+-- Real balance captured at write time for every operation/movement going forward.
+-- NULL on pre-existing rows — never backfilled/guessed, the UI shows "—" for those.
+ALTER TABLE "customer_operations" ADD COLUMN IF NOT EXISTS "balance_before" numeric(12, 2);--> statement-breakpoint
+ALTER TABLE "customer_operations" ADD COLUMN IF NOT EXISTS "balance_after" numeric(12, 2);--> statement-breakpoint
+ALTER TABLE "supplier_operations" ADD COLUMN IF NOT EXISTS "balance_before" numeric(12, 2);--> statement-breakpoint
+ALTER TABLE "supplier_operations" ADD COLUMN IF NOT EXISTS "balance_after" numeric(12, 2);--> statement-breakpoint
+ALTER TABLE "caisse_movements" ADD COLUMN IF NOT EXISTS "balance_before" numeric(12, 2);--> statement-breakpoint
+ALTER TABLE "caisse_movements" ADD COLUMN IF NOT EXISTS "balance_after" numeric(12, 2);--> statement-breakpoint
 `;
 
 

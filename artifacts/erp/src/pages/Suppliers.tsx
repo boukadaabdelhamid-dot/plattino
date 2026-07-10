@@ -496,6 +496,13 @@ function StatementSheet({
                           </TableCell>
                           <TableCell className={`text-right tabular-nums font-bold ${runningBalanceColor(op.runningBalance)}`}>
                             {fmt(op.runningBalance)}
+                            {/* Real balance snapshot captured at write time — never guessed.
+                                "—" for rows created before this column existed (never backfilled). */}
+                            <p className="text-[10px] font-normal text-muted-foreground mt-0.5 whitespace-nowrap">
+                              {t("Ancien", "قبل")}: {op.balanceBefore != null ? fmt(op.balanceBefore) : "—"}
+                              {" → "}
+                              {t("Nouveau", "بعد")}: {op.balanceAfter != null ? fmt(op.balanceAfter) : "—"}
+                            </p>
                           </TableCell>
                         </TableRow>
                       );

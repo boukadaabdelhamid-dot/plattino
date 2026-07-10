@@ -1736,6 +1736,18 @@ export const GetSupplierOperationsResponse = zod.object({
         .string()
         .optional()
         .describe("Balance after this operation"),
+      balanceBefore: zod
+        .string()
+        .nullish()
+        .describe(
+          "Real supplier balance snapshot before this operation, captured at write time. NULL for rows created before this column existed — never guessed.",
+        ),
+      balanceAfter: zod
+        .string()
+        .nullish()
+        .describe(
+          "Real supplier balance snapshot after this operation, captured at write time. NULL for rows created before this column existed — never guessed.",
+        ),
       createdAt: zod.string().optional(),
     }),
   ),
@@ -2493,6 +2505,18 @@ export const GetErpCaisseResponse = zod
             caisseTransferId: zod.number().nullish(),
             actorUserId: zod.number(),
             notes: zod.string().nullish(),
+            balanceBefore: zod
+              .string()
+              .nullish()
+              .describe(
+                "Real caisse balance snapshot before this movement, captured at write time. NULL for rows created before this column existed — never guessed.",
+              ),
+            balanceAfter: zod
+              .string()
+              .nullish()
+              .describe(
+                "Real caisse balance snapshot after this movement, captured at write time. NULL for rows created before this column existed — never guessed.",
+              ),
             createdAt: zod.string(),
             actorUser: zod
               .object({
@@ -2909,6 +2933,18 @@ export const AdminAdjustErpCaisseResponse = zod.object({
     caisseTransferId: zod.number().nullish(),
     actorUserId: zod.number(),
     notes: zod.string().nullish(),
+    balanceBefore: zod
+      .string()
+      .nullish()
+      .describe(
+        "Real caisse balance snapshot before this movement, captured at write time. NULL for rows created before this column existed — never guessed.",
+      ),
+    balanceAfter: zod
+      .string()
+      .nullish()
+      .describe(
+        "Real caisse balance snapshot after this movement, captured at write time. NULL for rows created before this column existed — never guessed.",
+      ),
     createdAt: zod.string(),
     actorUser: zod
       .object({
@@ -3471,6 +3507,18 @@ export const GetCustomerOperationsResponseItem = zod.object({
   note: zod.string().nullish(),
   caisseId: zod.number().nullish(),
   createdBy: zod.number().nullish(),
+  balanceBefore: zod
+    .string()
+    .nullish()
+    .describe(
+      "Real customer balance snapshot before this operation, captured at write time. NULL for rows created before this column existed — never guessed.",
+    ),
+  balanceAfter: zod
+    .string()
+    .nullish()
+    .describe(
+      "Real customer balance snapshot after this operation, captured at write time. NULL for rows created before this column existed — never guessed.",
+    ),
   createdAt: zod.string(),
 });
 export const GetCustomerOperationsResponse = zod.array(
@@ -3525,6 +3573,18 @@ export const UpdateCustomerOperationResponse = zod.object({
   note: zod.string().nullish(),
   caisseId: zod.number().nullish(),
   createdBy: zod.number().nullish(),
+  balanceBefore: zod
+    .string()
+    .nullish()
+    .describe(
+      "Real customer balance snapshot before this operation, captured at write time. NULL for rows created before this column existed — never guessed.",
+    ),
+  balanceAfter: zod
+    .string()
+    .nullish()
+    .describe(
+      "Real customer balance snapshot after this operation, captured at write time. NULL for rows created before this column existed — never guessed.",
+    ),
   createdAt: zod.string(),
 });
 

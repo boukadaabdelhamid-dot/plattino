@@ -30,3 +30,18 @@ on the same router work.
 **Port-8080 quirk:** two workflows target port 8080 — the live one is
 `artifacts/api-server: API Server`; the plain `API Server` fails with EADDRINUSE and should
 be ignored. Restart `artifacts/api-server: API Server` to rebuild backend changes.
+
+## `lib/db` is a stale-dist trap for api-server typecheck
+`lib/db` is a TS project-reference package (`composite: true`) with a committed
+`dist/*.d.ts`. `pnpm --filter @workspace/api-server exec tsc --noEmit -p .` resolves
+`@workspace/db` against that committed `dist`, NOT the live source — it does not
+transitively rebuild referenced projects.
+
+**Why:** after adding new columns to `lib/db/src/schema/erp.ts`, api-server's typecheck
+kept reporting "property does not exist" for the new columns even though the source was
+correct, because `dist/*.d.ts` was stale.
+
+**How to apply:** after editing anything under `lib/db/src`, run
+`pnpm --filter @workspace/db exec tsc -b --force` before trusting api-server's typecheck
+output. If a typecheck error names a schema field you just added and are confident exists,
+suspect stale `dist` before suspecting your edit.

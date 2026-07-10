@@ -3,6 +3,7 @@ import { eq, and, or, desc, inArray, gte, lt, sql } from "drizzle-orm";
 import { db, schema } from "../lib/db";
 import { authenticate, requireStaff, requireStore, requireAdmin, isAdmin, requirePermission, type AuthRequest } from "../lib/auth";
 import { broadcastToStoreUsers, broadcastToUsers, broadcastCaisseChanged } from "../lib/ws";
+import { applyCaisseDelta, lockCaissesById } from "../lib/balance-sync";
 
 const router = Router();
 
@@ -571,6 +572,12 @@ router.post("/erp/caisse-transfers/:id/accept", authenticate, requireStaff, requ
         .returning();
       if (!u) throw Object.assign(new Error("Status changed by another request"), { http: 409 });
 
+      // Both caisses are already row-locked above (lockedById) for the whole
+      // read-compute-write, so their pre-mutation balances are exactly the
+      // "ancien solde" for this operation — no extra read needed.
+      const senderBefore = parseFloat(lockedById.get(t.senderCaisseId)?.balance ?? "0");
+      const recipientBefore = parseFloat(lockedById.get(t.recipientCaisseId)?.balance ?? "0");
+      let senderAfter = senderBefore;
       if (!wasHeld) {
         // No-hold: debit the sender now, validating funds against the locked
         // balance (first accepted wins; later overdrawing accepts fail).
@@ -578,13 +585,15 @@ router.post("/erp/caisse-transfers/:id/accept", authenticate, requireStaff, requ
         if (!sender || parseFloat(sender.balance) < parseFloat(t.amount)) {
           throw Object.assign(new Error("Sender has insufficient funds to complete this transfer"), { http: 409 });
         }
+        senderAfter = senderBefore - parseFloat(t.amount);
         await tx.update(schema.caissesTable)
-          .set({ balance: sql`${schema.caissesTable.balance} - ${t.amount}` })
+          .set({ balance: senderAfter.toFixed(2) })
           .where(eq(schema.caissesTable.id, t.senderCaisseId));
       }
       // Credit the recipient in both models.
+      const recipientAfter = recipientBefore + parseFloat(t.amount);
       await tx.update(schema.caissesTable)
-        .set({ balance: sql`${schema.caissesTable.balance} + ${t.amount}` })
+        .set({ balance: recipientAfter.toFixed(2) })
         .where(eq(schema.caissesTable.id, t.recipientCaisseId));
 
       // Ledger: a transfer_out on the sender and a transfer_in on the
@@ -597,11 +606,13 @@ router.post("/erp/caisse-transfers/:id/accept", authenticate, requireStaff, requ
           reason: "transfer_out", counterpartyCaisseId: t.recipientCaisseId,
           caisseTransferId: t.id, actorUserId: userId,
           notes: wasHeld ? `Accepted (held ${t.amount} released)` : null,
+          balanceBefore: senderBefore.toFixed(2), balanceAfter: senderAfter.toFixed(2),
         },
         {
           caisseId: t.recipientCaisseId, type: "credit", amount: t.amount,
           reason: "transfer_in", counterpartyCaisseId: t.senderCaisseId,
           caisseTransferId: t.id, actorUserId: userId, notes: null,
+          balanceBefore: recipientBefore.toFixed(2), balanceAfter: recipientAfter.toFixed(2),
         },
       ]);
     });
@@ -656,14 +667,13 @@ router.post("/erp/caisse-transfers/:id/reject", authenticate, requireStaff, requ
       if (!u) throw Object.assign(new Error("Status changed by another request"), { http: 409 });
       if (wasHeld) {
         // Legacy: return the previously held amount to the sender.
-        await tx.update(schema.caissesTable)
-          .set({ balance: sql`${schema.caissesTable.balance} + ${t.amount}` })
-          .where(eq(schema.caissesTable.id, t.senderCaisseId));
+        const { oldBalance: refundOld, newBalance: refundNew } = await applyCaisseDelta(tx, t.senderCaisseId, parseFloat(t.amount));
         await tx.insert(schema.caisseMovementsTable).values({
           caisseId: t.senderCaisseId, type: "credit", amount: t.amount,
           reason: "transfer_refund", counterpartyCaisseId: t.recipientCaisseId,
           caisseTransferId: t.id, actorUserId: userId,
           notes: "Rejected by recipient (held amount refunded)",
+          balanceBefore: refundOld.toFixed(2), balanceAfter: refundNew.toFixed(2),
         });
       }
     });
@@ -713,14 +723,13 @@ router.post("/erp/caisse-transfers/:id/cancel", authenticate, requireStaff, requ
         .returning();
       if (!u) throw Object.assign(new Error("Status changed by another request"), { http: 409 });
       if (wasHeld) {
-        await tx.update(schema.caissesTable)
-          .set({ balance: sql`${schema.caissesTable.balance} + ${t.amount}` })
-          .where(eq(schema.caissesTable.id, t.senderCaisseId));
+        const { oldBalance: cancelRefundOld, newBalance: cancelRefundNew } = await applyCaisseDelta(tx, t.senderCaisseId, parseFloat(t.amount));
         await tx.insert(schema.caisseMovementsTable).values({
           caisseId: t.senderCaisseId, type: "credit", amount: t.amount,
           reason: "transfer_refund", counterpartyCaisseId: t.recipientCaisseId,
           caisseTransferId: t.id, actorUserId: userId,
           notes: "Cancelled by sender (held amount refunded)",
+          balanceBefore: cancelRefundOld.toFixed(2), balanceAfter: cancelRefundNew.toFixed(2),
         });
       }
     });
@@ -762,27 +771,34 @@ router.post("/erp/caisses/admin/deposit", authenticate, requireAdmin, requireSto
     const notes = typeof req.body?.notes === "string" ? req.body.notes : null;
 
     await db.transaction(async (tx) => {
-      const upd = await tx.update(schema.caissesTable)
-        .set({ balance: sql`${schema.caissesTable.balance} - ${amountStr}` })
-        .where(and(
-          eq(schema.caissesTable.id, c.id),
-          sql`${schema.caissesTable.balance} >= ${amountStr}`,
-        ))
-        .returning();
-      if (upd.length === 0) throw Object.assign(new Error("Insufficient funds in source caisse"), { http: 409 });
+      // Lock both caisses in a fixed ascending-id order (not source-then-dest)
+      // so this endpoint and admin/withdraw — which move money between the same
+      // pair in the opposite logical direction — can never lock them in
+      // opposite order and deadlock under concurrency. See lockCaissesById.
+      const balances = await lockCaissesById(tx, [c.id, main.id]);
+      const sourceOld = balances.get(c.id) ?? 0;
+      if (sourceOld < amount) throw Object.assign(new Error("Insufficient funds in source caisse"), { http: 409 });
+      const sourceNew = sourceOld - amount;
       await tx.update(schema.caissesTable)
-        .set({ balance: sql`${schema.caissesTable.balance} + ${amountStr}` })
+        .set({ balance: sourceNew.toFixed(2) })
+        .where(eq(schema.caissesTable.id, c.id));
+      const mainOld = balances.get(main.id) ?? 0;
+      const mainNew = mainOld + amount;
+      await tx.update(schema.caissesTable)
+        .set({ balance: mainNew.toFixed(2) })
         .where(eq(schema.caissesTable.id, main.id));
       await tx.insert(schema.caisseMovementsTable).values([
         {
           caisseId: c.id, type: "debit", amount: amountStr,
           reason: "admin_deposit", counterpartyCaisseId: main.id,
           actorUserId: userId, notes,
+          balanceBefore: sourceOld.toFixed(2), balanceAfter: sourceNew.toFixed(2),
         },
         {
           caisseId: main.id, type: "credit", amount: amountStr,
           reason: "admin_deposit", counterpartyCaisseId: c.id,
           actorUserId: userId, notes,
+          balanceBefore: mainOld.toFixed(2), balanceAfter: mainNew.toFixed(2),
         },
       ]);
     });
@@ -813,27 +829,34 @@ router.post("/erp/caisses/admin/withdraw", authenticate, requireAdmin, requireSt
     const notes = typeof req.body?.notes === "string" ? req.body.notes : null;
 
     await db.transaction(async (tx) => {
-      const upd = await tx.update(schema.caissesTable)
-        .set({ balance: sql`${schema.caissesTable.balance} - ${amountStr}` })
-        .where(and(
-          eq(schema.caissesTable.id, main.id),
-          sql`${schema.caissesTable.balance} >= ${amountStr}`,
-        ))
-        .returning();
-      if (upd.length === 0) throw Object.assign(new Error("Insufficient funds in main caisse"), { http: 409 });
+      // Same fixed ascending-id lock order as admin/deposit above — this
+      // endpoint moves money main→staff (the reverse direction), so locking
+      // main-then-staff independently here (instead of by id) would invert
+      // the lock order against a concurrent deposit and risk deadlock.
+      const balances = await lockCaissesById(tx, [main.id, c.id]);
+      const mainOld = balances.get(main.id) ?? 0;
+      if (mainOld < amount) throw Object.assign(new Error("Insufficient funds in main caisse"), { http: 409 });
+      const mainNew = mainOld - amount;
       await tx.update(schema.caissesTable)
-        .set({ balance: sql`${schema.caissesTable.balance} + ${amountStr}` })
+        .set({ balance: mainNew.toFixed(2) })
+        .where(eq(schema.caissesTable.id, main.id));
+      const destOld = balances.get(c.id) ?? 0;
+      const destNew = destOld + amount;
+      await tx.update(schema.caissesTable)
+        .set({ balance: destNew.toFixed(2) })
         .where(eq(schema.caissesTable.id, c.id));
       await tx.insert(schema.caisseMovementsTable).values([
         {
           caisseId: main.id, type: "debit", amount: amountStr,
           reason: "admin_withdraw", counterpartyCaisseId: c.id,
           actorUserId: userId, notes,
+          balanceBefore: mainOld.toFixed(2), balanceAfter: mainNew.toFixed(2),
         },
         {
           caisseId: c.id, type: "credit", amount: amountStr,
           reason: "admin_withdraw", counterpartyCaisseId: main.id,
           actorUserId: userId, notes,
+          balanceBefore: destOld.toFixed(2), balanceAfter: destNew.toFixed(2),
         },
       ]);
     });
@@ -896,6 +919,8 @@ router.post("/erp/caisses/admin/adjust", authenticate, requireAdmin, requireStor
         reason: "adjustment",
         actorUserId: userId,
         notes: autoNote,
+        balanceBefore: oldBalance.toFixed(2),
+        balanceAfter: parsedTarget.toFixed(2),
       }).returning();
       return mv;
     });

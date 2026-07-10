@@ -774,6 +774,10 @@ export interface SupplierOperation {
   caisseId?: number | null;
   /** Balance after this operation */
   runningBalance?: string;
+  /** Real supplier balance snapshot before this operation, captured at write time. NULL for rows created before this column existed — never guessed. */
+  balanceBefore?: string | null;
+  /** Real supplier balance snapshot after this operation, captured at write time. NULL for rows created before this column existed — never guessed. */
+  balanceAfter?: string | null;
   createdAt?: string;
 }
 
@@ -1062,6 +1066,10 @@ export interface CaisseMovement {
   caisseTransferId?: number | null;
   actorUserId: number;
   notes?: string | null;
+  /** Real caisse balance snapshot before this movement, captured at write time. NULL for rows created before this column existed — never guessed. */
+  balanceBefore?: string | null;
+  /** Real caisse balance snapshot after this movement, captured at write time. NULL for rows created before this column existed — never guessed. */
+  balanceAfter?: string | null;
   createdAt: string;
   actorUser?: UserLite | null;
   counterparty?: CaisseMovementCounterparty;
@@ -1602,6 +1610,10 @@ export interface CustomerOperation {
   note?: string | null;
   caisseId?: number | null;
   createdBy?: number | null;
+  /** Real customer balance snapshot before this operation, captured at write time. NULL for rows created before this column existed — never guessed. */
+  balanceBefore?: string | null;
+  /** Real customer balance snapshot after this operation, captured at write time. NULL for rows created before this column existed — never guessed. */
+  balanceAfter?: string | null;
   createdAt: string;
 }
 

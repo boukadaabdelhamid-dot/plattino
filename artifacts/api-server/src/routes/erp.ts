@@ -1256,17 +1256,39 @@ router.post("/erp/suppliers/:id/adjust", authenticate, requireStaff, requireStor
     if (!Number.isFinite(parsedTarget)) { res.status(400).json({ error: "targetBalance must be a finite number" }); return; }
     if (!date || typeof date !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(date)) { res.status(400).json({ error: "date is required (YYYY-MM-DD)" }); return; }
 
-    const [supplier] = await db.select().from(schema.suppliersTable)
+    const [supplierCheck] = await db.select({ id: schema.suppliersTable.id }).from(schema.suppliersTable)
       .where(and(eq(schema.suppliersTable.id, supplierId), eq(schema.suppliersTable.storeId, storeId))).limit(1);
-    if (!supplier) { res.status(404).json({ error: "Supplier not found" }); return; }
-
-    const oldBalance = parseFloat(supplier.currentBalance ?? "0");
-    const newBalanceFixed = parsedTarget.toFixed(2);
-    const delta = (parsedTarget - oldBalance).toFixed(2);
-    const autoNote = `Ancien: ${oldBalance.toFixed(2)} DA → Nouveau: ${newBalanceFixed} DA${note ? ` — ${note}` : ""}`;
+    if (!supplierCheck) { res.status(404).json({ error: "Supplier not found" }); return; }
 
     const op = await db.transaction(async (tx) => {
-      await mutateSupplierBalance(tx, supplierId, { absolute: parsedTarget });
+      // Row-lock the supplier (and its unified contact, if any) for the whole
+      // read-compute-write so two concurrent adjustments can't both compute
+      // their delta off the same stale "old balance" and drift the result away
+      // from the last-submitted target.
+      const [supplier] = await tx.select().from(schema.suppliersTable)
+        .where(eq(schema.suppliersTable.id, supplierId)).for("update");
+
+      // "Old balance" must be the value actually shown to the user, i.e. what
+      // GET /erp/suppliers returns: the unified contact balance (supplier role +
+      // customer role) for customer_supplier contacts, or the plain supplier
+      // balance otherwise. Computing the delta against the raw supplier-role
+      // balance instead (while the UI displays the unified one) makes the
+      // resulting unified balance diverge from the target the user typed.
+      let oldBalance = parseFloat(supplier.currentBalance ?? "0");
+      if (supplier.contactType === "customer_supplier" && supplier.contactId != null) {
+        const [contact] = await tx.select({ currentBalance: schema.contactsTable.currentBalance })
+          .from(schema.contactsTable).where(eq(schema.contactsTable.id, supplier.contactId)).for("update");
+        if (contact) oldBalance = parseFloat(contact.currentBalance ?? "0");
+      }
+
+      const newBalanceFixed = parsedTarget.toFixed(2);
+      const deltaNum = parsedTarget - oldBalance;
+      const delta = deltaNum.toFixed(2);
+      const autoNote = `Ancien: ${oldBalance.toFixed(2)} DA → Nouveau: ${newBalanceFixed} DA${note ? ` — ${note}` : ""}`;
+
+      // Apply the delta (not an absolute set) to the supplier role only, so the
+      // resulting unified balance = oldBalance(displayed) + delta = target.
+      await mutateSupplierBalance(tx, supplierId, { delta: deltaNum });
 
       const [operation] = await tx.insert(schema.supplierOperationsTable).values({
         supplierId,

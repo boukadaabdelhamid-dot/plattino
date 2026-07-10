@@ -183,14 +183,24 @@ router.get("/erp/dashboard/client-receivables", authenticate, requireStaff, requ
   try {
     const sid = dashboardStoreId(req);
     const storeFilter = sid !== null ? sql` AND cp.store_id = ${sid}` : sql``;
+    // Cross-store customers share one users.id but have ONE customer_profiles row
+    // PER STORE, each carrying the SAME synced balance (see cross-store customer
+    // balance unify). When viewing all stores, collapse every customer to a single
+    // row (DISTINCT ON u.id) so the count and totals are not multiplied by the
+    // number of stores that customer has a profile in — mirrors the same dedup
+    // already applied to the supplier-debts widget below.
     const result = await db.execute(sql`
-      SELECT u.id, u.name,
-             ROUND(CAST(cp.current_balance AS numeric), 2) AS balance
-      FROM customer_profiles cp
-      JOIN users u ON cp.user_id = u.id
-      WHERE CAST(cp.current_balance AS numeric) > 0
-      ${storeFilter}
-      ORDER BY CAST(cp.current_balance AS numeric) DESC
+      SELECT id, name, balance FROM (
+        SELECT DISTINCT ON (u.id)
+               u.id, u.name,
+               ROUND(CAST(cp.current_balance AS numeric), 2) AS balance
+        FROM customer_profiles cp
+        JOIN users u ON cp.user_id = u.id
+        WHERE CAST(cp.current_balance AS numeric) > 0
+        ${storeFilter}
+        ORDER BY u.id, cp.id
+      ) deduped
+      ORDER BY balance DESC
     `);
     res.json(result.rows);
   } catch (err) { req.log.error(err); res.status(500).json({ error: "Internal server error" }); }

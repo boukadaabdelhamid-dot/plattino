@@ -5465,7 +5465,7 @@ components:
           type: integer
         type:
           type: string
-          enum: [versement, remboursement, vente_a_terme, avoir_retour]
+          enum: [versement, remboursement, vente_a_terme, avoir_retour, ajustement]
         amount:
           type: string
         date:

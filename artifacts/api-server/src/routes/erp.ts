@@ -13,6 +13,8 @@ import {
   linkContactsGlobally,
   mutateCustomerBalance,
   mutateSupplierBalance,
+  lockCustomerIdentity,
+  lockSupplierIdentity,
   type DbLike,
 } from "../lib/balance-sync";
 
@@ -1261,12 +1263,18 @@ router.post("/erp/suppliers/:id/adjust", authenticate, requireStaff, requireStor
     if (!supplierCheck) { res.status(404).json({ error: "Supplier not found" }); return; }
 
     const op = await db.transaction(async (tx) => {
-      // Row-lock the supplier (and its unified contact, if any) for the whole
-      // read-compute-write so two concurrent adjustments can't both compute
+      // Take the SAME identity-scoped advisory lock mutateSupplierBalance itself
+      // acquires (rather than an explicit row lock) for the whole
+      // read-compute-write, so two concurrent adjustments can't both compute
       // their delta off the same stale "old balance" and drift the result away
-      // from the last-submitted target.
+      // from the last-submitted target. Using the shared advisory lock instead
+      // of SELECT ... FOR UPDATE keeps lock acquisition order identical to every
+      // other balance-mutating call site — an explicit row lock taken before
+      // this call would invert that order and open a deadlock window against
+      // concurrent mutateSupplierBalance callers on the same identity.
+      await lockSupplierIdentity(tx, supplierId);
       const [supplier] = await tx.select().from(schema.suppliersTable)
-        .where(eq(schema.suppliersTable.id, supplierId)).for("update");
+        .where(eq(schema.suppliersTable.id, supplierId));
 
       // "Old balance" must be the value actually shown to the user, i.e. what
       // GET /erp/suppliers returns: the unified contact balance (supplier role +
@@ -1277,7 +1285,7 @@ router.post("/erp/suppliers/:id/adjust", authenticate, requireStaff, requireStor
       let oldBalance = parseFloat(supplier.currentBalance ?? "0");
       if (supplier.contactType === "customer_supplier" && supplier.contactId != null) {
         const [contact] = await tx.select({ currentBalance: schema.contactsTable.currentBalance })
-          .from(schema.contactsTable).where(eq(schema.contactsTable.id, supplier.contactId)).for("update");
+          .from(schema.contactsTable).where(eq(schema.contactsTable.id, supplier.contactId));
         if (contact) oldBalance = parseFloat(contact.currentBalance ?? "0");
       }
 
@@ -2266,6 +2274,77 @@ router.put("/erp/customers/:id", authenticate, requireAdmin, requireStore, async
     if (err instanceof HttpError) { res.status(err.status).json({ error: err.message }); return; }
     req.log.error(err); res.status(500).json({ error: "Internal server error" });
   }
+});
+
+// Customer Balance Adjustment — mirrors POST /erp/suppliers/:id/adjust (see there for
+// the full rationale). Staff type a target balance and it becomes the new balance
+// exactly, including for customer_supplier (dual-role) contacts whose displayed
+// balance is the unified contact balance rather than the raw customer-role one.
+router.post("/erp/customers/:id/adjust", authenticate, requireAdmin, requireStore, async (req: AuthRequest, res) => {
+  try {
+    const storeId = req.currentStoreId!;
+    const customerId = pid(req, "id");
+    const { targetBalance, date, note } = req.body;
+
+    const parsedTarget = parseFloat(targetBalance);
+    if (!Number.isFinite(parsedTarget)) { res.status(400).json({ error: "targetBalance must be a finite number" }); return; }
+    if (!date || typeof date !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(date)) { res.status(400).json({ error: "date is required (YYYY-MM-DD)" }); return; }
+
+    const [profileCheck] = await db.select({ id: schema.customerProfilesTable.id }).from(schema.customerProfilesTable)
+      .where(and(eq(schema.customerProfilesTable.userId, customerId), eq(schema.customerProfilesTable.storeId, storeId))).limit(1);
+    if (!profileCheck) { res.status(404).json({ error: "Customer not found" }); return; }
+
+    const op = await db.transaction(async (tx) => {
+      // Take the SAME identity-scoped advisory lock mutateCustomerBalance itself
+      // acquires (rather than an explicit row lock) for the whole
+      // read-compute-write, so two concurrent adjustments can't both compute
+      // their delta off the same stale "old balance" and drift the result away
+      // from the last-submitted target. Using the shared advisory lock instead
+      // of SELECT ... FOR UPDATE keeps lock acquisition order identical to every
+      // other balance-mutating call site — an explicit row lock taken before
+      // this call would invert that order and open a deadlock window against
+      // concurrent mutateCustomerBalance callers on the same identity.
+      await lockCustomerIdentity(tx, customerId, storeId);
+      const [profile] = await tx.select().from(schema.customerProfilesTable)
+        .where(and(eq(schema.customerProfilesTable.userId, customerId), eq(schema.customerProfilesTable.storeId, storeId)));
+
+      // "Old balance" must be the value actually shown to the user, i.e. what
+      // GET /erp/customers returns: the unified contact balance (customer role +
+      // supplier role) for customer_supplier contacts, or the plain customer-role
+      // balance otherwise. Computing the delta against the raw customer-role
+      // balance instead (while the UI displays the unified one) makes the
+      // resulting unified balance diverge from the target the user typed.
+      let oldBalance = parseFloat(profile.currentBalance ?? "0");
+      if (profile.contactType === "customer_supplier" && profile.contactId != null) {
+        const [contact] = await tx.select({ currentBalance: schema.contactsTable.currentBalance })
+          .from(schema.contactsTable).where(eq(schema.contactsTable.id, profile.contactId));
+        if (contact) oldBalance = parseFloat(contact.currentBalance ?? "0");
+      }
+
+      const newBalanceFixed = parsedTarget.toFixed(2);
+      const deltaNum = parsedTarget - oldBalance;
+      const delta = deltaNum.toFixed(2);
+      const autoNote = `Ancien: ${oldBalance.toFixed(2)} DA → Nouveau: ${newBalanceFixed} DA${note ? ` — ${note}` : ""}`;
+
+      // Apply the delta (not an absolute set) to the customer role only, so the
+      // resulting unified balance = oldBalance(displayed) + delta = target.
+      await mutateCustomerBalance(tx, customerId, storeId, { delta: deltaNum });
+
+      const [operation] = await tx.insert(schema.customerOperationsTable).values({
+        customerId,
+        storeId,
+        type: "ajustement",
+        amount: delta,
+        date,
+        note: autoNote,
+        createdBy: req.user!.id,
+      }).returning();
+
+      return operation;
+    });
+
+    res.status(201).json(op);
+  } catch (err) { req.log.error(err); res.status(500).json({ error: "Internal server error" }); }
 });
 
 // Import a customer into one or more additional stores.

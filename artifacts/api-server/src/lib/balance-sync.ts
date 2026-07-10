@@ -216,35 +216,53 @@ export async function syncLinkedSupplierBalances(
 
 type BalanceOp = { delta: number; absolute?: undefined } | { absolute: number; delta?: undefined };
 
+// Resolves and acquires the identity-scoped advisory lock(s) for a customer role
+// WITHOUT applying any balance change. Exported so callers that need to read the
+// balance, compute something off it, and only then call mutateCustomerBalance
+// (e.g. the adjustment endpoint) can take this SAME lock first. Acquiring an
+// explicit row lock (SELECT ... FOR UPDATE) instead for that purpose would
+// invert the lock order against every other mutateCustomerBalance caller
+// (which take this advisory lock before ever touching the row), opening a
+// deadlock window under concurrency. Advisory locks are reentrant per
+// transaction, so calling this and then mutateCustomerBalance (which acquires
+// the same key) in the same transaction is safe and effectively free the
+// second time.
+export async function lockCustomerIdentity(
+  tx: DbLike,
+  userId: number,
+  storeId: number,
+): Promise<{ contactId: number | null }> {
+  // Once globalContactId exists it alone unifies every role in every linked
+  // store, so lock on it alone. Before it exists, lock on BOTH: `cust:userId`
+  // (covers legacy cross-store customer-side fan-out, keyed the same way
+  // syncLinkedCustomerBalances resolves siblings) AND `contact:contactId`
+  // (covers same-store customer-vs-supplier dual-role fan-out, shared with
+  // mutateSupplierBalance's lock below) — see lockIdentityGroup for why both
+  // are needed and why the ordering is safe.
+  const [existing] = await tx.select({
+    contactId: schema.customerProfilesTable.contactId,
+    gcid: schema.contactsTable.globalContactId,
+  })
+    .from(schema.customerProfilesTable)
+    .leftJoin(schema.contactsTable, eq(schema.contactsTable.id, schema.customerProfilesTable.contactId))
+    .where(and(eq(schema.customerProfilesTable.userId, userId), eq(schema.customerProfilesTable.storeId, storeId)))
+    .limit(1);
+  await lockIdentityGroup(
+    tx,
+    existing?.gcid
+      ? [existing.gcid]
+      : [`cust:${userId}`, existing?.contactId != null ? `contact:${existing.contactId}` : null],
+  );
+  return { contactId: existing?.contactId ?? null };
+}
+
 export async function mutateCustomerBalance(
   tx: DbLike,
   userId: number,
   storeId: number,
   op: BalanceOp,
 ): Promise<{ contactId: number | null }> {
-  {
-    // Once globalContactId exists it alone unifies every role in every linked
-    // store, so lock on it alone. Before it exists, lock on BOTH: `cust:userId`
-    // (covers legacy cross-store customer-side fan-out, keyed the same way
-    // syncLinkedCustomerBalances resolves siblings) AND `contact:contactId`
-    // (covers same-store customer-vs-supplier dual-role fan-out, shared with
-    // mutateSupplierBalance's lock below) — see lockIdentityGroup for why both
-    // are needed and why the ordering is safe.
-    const [existing] = await tx.select({
-      contactId: schema.customerProfilesTable.contactId,
-      gcid: schema.contactsTable.globalContactId,
-    })
-      .from(schema.customerProfilesTable)
-      .leftJoin(schema.contactsTable, eq(schema.contactsTable.id, schema.customerProfilesTable.contactId))
-      .where(and(eq(schema.customerProfilesTable.userId, userId), eq(schema.customerProfilesTable.storeId, storeId)))
-      .limit(1);
-    await lockIdentityGroup(
-      tx,
-      existing?.gcid
-        ? [existing.gcid]
-        : [`cust:${userId}`, existing?.contactId != null ? `contact:${existing.contactId}` : null],
-    );
-  }
+  await lockCustomerIdentity(tx, userId, storeId);
 
   if (op.absolute !== undefined) {
     const balStr = op.absolute.toFixed(2);
@@ -281,37 +299,46 @@ export async function mutateCustomerBalance(
   return { contactId };
 }
 
+// Mirrors lockCustomerIdentity for the supplier role — see there for why callers
+// that read-then-mutate (e.g. the adjustment endpoint) must take this lock
+// first instead of an explicit row lock.
+export async function lockSupplierIdentity(
+  tx: DbLike,
+  supplierId: number,
+): Promise<{ contactId: number | null }> {
+  // Mirrors mutateCustomerBalance's lock resolution: gcid alone once linked;
+  // otherwise BOTH the legacy cross-store supplier-side key (globalSupplierId
+  // once imported to other stores, else this row's own id) AND
+  // `contact:contactId` — the same shared key mutateCustomerBalance locks —
+  // so a same-store customer-vs-supplier dual-role race is always caught even
+  // before a globalContactId exists.
+  const [existing] = await tx.select({
+    contactId: schema.suppliersTable.contactId,
+    gcid: schema.contactsTable.globalContactId,
+    globalSupplierId: schema.suppliersTable.globalSupplierId,
+  })
+    .from(schema.suppliersTable)
+    .leftJoin(schema.contactsTable, eq(schema.contactsTable.id, schema.suppliersTable.contactId))
+    .where(eq(schema.suppliersTable.id, supplierId))
+    .limit(1);
+  await lockIdentityGroup(
+    tx,
+    existing?.gcid
+      ? [existing.gcid]
+      : [
+          existing?.globalSupplierId ? `sup-g:${existing.globalSupplierId}` : `sup:${supplierId}`,
+          existing?.contactId != null ? `contact:${existing.contactId}` : null,
+        ],
+  );
+  return { contactId: existing?.contactId ?? null };
+}
+
 export async function mutateSupplierBalance(
   tx: DbLike,
   supplierId: number,
   op: BalanceOp,
 ): Promise<{ contactId: number | null }> {
-  {
-    // Mirrors mutateCustomerBalance's lock resolution: gcid alone once linked;
-    // otherwise BOTH the legacy cross-store supplier-side key (globalSupplierId
-    // once imported to other stores, else this row's own id) AND
-    // `contact:contactId` — the same shared key mutateCustomerBalance locks —
-    // so a same-store customer-vs-supplier dual-role race is always caught even
-    // before a globalContactId exists.
-    const [existing] = await tx.select({
-      contactId: schema.suppliersTable.contactId,
-      gcid: schema.contactsTable.globalContactId,
-      globalSupplierId: schema.suppliersTable.globalSupplierId,
-    })
-      .from(schema.suppliersTable)
-      .leftJoin(schema.contactsTable, eq(schema.contactsTable.id, schema.suppliersTable.contactId))
-      .where(eq(schema.suppliersTable.id, supplierId))
-      .limit(1);
-    await lockIdentityGroup(
-      tx,
-      existing?.gcid
-        ? [existing.gcid]
-        : [
-            existing?.globalSupplierId ? `sup-g:${existing.globalSupplierId}` : `sup:${supplierId}`,
-            existing?.contactId != null ? `contact:${existing.contactId}` : null,
-          ],
-    );
-  }
+  await lockSupplierIdentity(tx, supplierId);
 
   if (op.absolute !== undefined) {
     await tx.update(schema.suppliersTable)

@@ -1584,6 +1584,7 @@ export const CustomerOperationType = {
   remboursement: "remboursement",
   vente_a_terme: "vente_a_terme",
   avoir_retour: "avoir_retour",
+  ajustement: "ajustement",
 } as const;
 
 export interface CustomerOperation {

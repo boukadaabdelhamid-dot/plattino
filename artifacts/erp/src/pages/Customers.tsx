@@ -41,7 +41,7 @@ import {
   MapPin, Phone, Mail, Building2, Tag, Layers, CreditCard,
   Briefcase, Info, FileText, X, Printer, MoreVertical,
   Pencil, Eye, EyeOff, ShoppingBag, BarChart2, StickyNote, KeyRound,
-  ArrowDownCircle, ArrowUpCircle, Plus, ChevronLeft, Store,
+  ArrowDownCircle, ArrowUpCircle, Plus, ChevronLeft, Store, SlidersHorizontal,
 } from "lucide-react";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
@@ -1286,6 +1286,10 @@ function CustomerOperationsSheet({ customerId, customerName, onClose, t, lang, c
                       <span className="inline-flex items-center gap-1 text-[11px] font-medium text-amber-700 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded-full">
                         <ArrowUpCircle className="h-3 w-3" />{t("Vente à terme", "بيع آجل")}
                       </span>
+                    ) : op.type === "ajustement" ? (
+                      <span className="inline-flex items-center gap-1 text-[11px] font-medium text-amber-700 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded-full">
+                        <SlidersHorizontal className="h-3 w-3" />{t("Ajustement", "تعديل")}
+                      </span>
                     ) : (
                       <span className="inline-flex items-center gap-1 text-[11px] font-medium text-red-600 bg-red-50 border border-red-200 px-2 py-0.5 rounded-full">
                         <ArrowUpCircle className="h-3 w-3" />{t("Remboursement", "استرداد")}
@@ -1293,9 +1297,15 @@ function CustomerOperationsSheet({ customerId, customerName, onClose, t, lang, c
                     )}
                   </TableCell>
                   <TableCell className="text-xs text-right font-semibold">
-                    <span className={(op.type === "versement" || op.type === "avoir_retour") ? "text-green-700" : op.type === "vente_a_terme" ? "text-amber-700" : "text-red-600"}>
-                      {(op.type === "versement" || op.type === "avoir_retour") ? "−" : "+"}{Number(op.amount).toFixed(2)} {currency}
-                    </span>
+                    {op.type === "ajustement" ? (
+                      <span className={Number(op.amount) >= 0 ? "text-red-600" : "text-green-700"}>
+                        {Number(op.amount) >= 0 ? "+" : "−"}{Math.abs(Number(op.amount)).toFixed(2)} {currency}
+                      </span>
+                    ) : (
+                      <span className={(op.type === "versement" || op.type === "avoir_retour") ? "text-green-700" : op.type === "vente_a_terme" ? "text-amber-700" : "text-red-600"}>
+                        {(op.type === "versement" || op.type === "avoir_retour") ? "−" : "+"}{Number(op.amount).toFixed(2)} {currency}
+                      </span>
+                    )}
                   </TableCell>
                   <TableCell className="text-xs text-right font-semibold">
                     <span className={runningBalance > 0 ? "text-red-600" : runningBalance < 0 ? "text-green-700" : "text-muted-foreground"}>
@@ -1306,9 +1316,11 @@ function CustomerOperationsSheet({ customerId, customerName, onClose, t, lang, c
                   <TableCell className="text-xs text-muted-foreground max-w-[140px] truncate">{op.note || "—"}</TableCell>
                   <TableCell className="p-1">
                     <div className="flex items-center gap-1 justify-end">
-                      <Button size="sm" variant="ghost" className="h-6 px-2 text-[11px]" onClick={() => openEdit(op)}>
-                        {t("Modifier", "تعديل")}
-                      </Button>
+                      {op.type !== "ajustement" && (
+                        <Button size="sm" variant="ghost" className="h-6 px-2 text-[11px]" onClick={() => openEdit(op)}>
+                          {t("Modifier", "تعديل")}
+                        </Button>
+                      )}
                       <Button size="sm" variant="ghost" className="h-6 px-2 text-[11px] text-destructive hover:text-destructive" onClick={() => setDeleteOp(op)}>
                         {t("Supprimer", "حذف")}
                       </Button>
@@ -1684,6 +1696,112 @@ function ImportCustomerDialog({
   );
 }
 
+// ─── Ajustement Dialog ────────────────────────────────────────────────────────
+function AjustementDialog({
+  customer, open, onOpenChange,
+}: { customer: ExtCustomer | null; open: boolean; onOpenChange: (v: boolean) => void }) {
+  const qc = useQueryClient();
+  const { lang } = useLang();
+  const t = (fr: string, ar: string) => lang === "ar" ? ar : fr;
+
+  const [newBalance, setNewBalance] = React.useState("");
+  const [date, setDate] = React.useState(() => new Date().toISOString().slice(0, 10));
+  const [note, setNote] = React.useState("");
+  const [loading, setLoading] = React.useState(false);
+  const [error, setError] = React.useState("");
+
+  React.useEffect(() => {
+    if (open) { setNewBalance(""); setDate(new Date().toISOString().slice(0, 10)); setNote(""); setError(""); }
+  }, [open]);
+
+  const handleAdjust = async () => {
+    if (!customer || newBalance === "") return;
+    const parsed = parseFloat(newBalance);
+    if (!Number.isFinite(parsed)) { setError(t("Valeur invalide", "قيمة غير صالحة")); return; }
+    setLoading(true); setError("");
+    try {
+      const token = localStorage.getItem("midanic_token");
+      const apiBase = (import.meta.env.VITE_API_URL as string | undefined) ?? "";
+      const res = await fetch(`${apiBase}/api/erp/customers/${customer.id}/adjust`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ targetBalance: parsed, date, note: note || undefined }),
+      });
+      if (!res.ok) { const d = await res.json(); throw new Error(d.error ?? "Erreur serveur"); }
+      qc.invalidateQueries({ queryKey: getGetErpCustomersQueryKey() });
+      qc.invalidateQueries({ queryKey: getGetErpCustomerQueryKey(customer.id) });
+      qc.invalidateQueries({ queryKey: getGetCustomerOperationsQueryKey(customer.id) });
+      onOpenChange(false);
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-sm">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <SlidersHorizontal className="h-4 w-4 text-amber-600" />
+            {t("Ajustement de solde", "تعديل الرصيد")}
+          </DialogTitle>
+        </DialogHeader>
+        {customer && (
+          <div className="text-sm text-muted-foreground mb-1 p-3 bg-amber-50 rounded-md border border-amber-100">
+            <span className="font-medium">{customer.name}</span>
+            <br />
+            {t("Solde actuel :", "الرصيد الحالي:")}
+            <span className="font-bold ml-1 tabular-nums">{Number(customer.current_balance ?? 0).toFixed(2)} DA</span>
+          </div>
+        )}
+        <div className="space-y-3">
+          <div>
+            <Label className="text-xs mb-1 block">{t("Nouveau solde (DA)", "الرصيد الجديد (دج)")}</Label>
+            <Input
+              type="number"
+              step="0.01"
+              value={newBalance}
+              onChange={(e) => setNewBalance(e.target.value)}
+              placeholder="0.00"
+              className="h-9"
+            />
+            {newBalance !== "" && Number.isFinite(parseFloat(newBalance)) && customer && (
+              <p className="text-xs text-muted-foreground mt-1">
+                {t("Écart :", "الفارق:")}
+                {" "}
+                <span className="font-medium tabular-nums">
+                  {(parseFloat(newBalance) - Number(customer.current_balance ?? 0)).toLocaleString("fr-DZ", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} DA
+                </span>
+              </p>
+            )}
+          </div>
+          <div>
+            <Label className="text-xs mb-1 block">{t("Date", "التاريخ")}</Label>
+            <Input type="date" value={date} onChange={(e) => setDate(e.target.value)} className="h-9" />
+          </div>
+          <div>
+            <Label className="text-xs mb-1 block">{t("Note (optionnel)", "ملاحظة (اختياري)")}</Label>
+            <Input value={note} onChange={(e) => setNote(e.target.value)} className="h-9" />
+          </div>
+          {error && <p className="text-xs text-rose-600 font-medium">{error}</p>}
+        </div>
+        <DialogFooter className="mt-2">
+          <Button variant="outline" onClick={() => onOpenChange(false)}>{t("Annuler", "إلغاء")}</Button>
+          <Button
+            onClick={handleAdjust}
+            disabled={loading || newBalance === ""}
+            className="bg-amber-600 hover:bg-amber-700 text-white"
+          >
+            {loading ? t("En cours…", "جارٍ التحديث…") : t("Confirmer", "تأكيد")}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 export default function Customers() {
   const qc = useQueryClient();
   const { isAdmin } = useMe();
@@ -1711,6 +1829,9 @@ export default function Customers() {
   };
   const [opsCustomer, setOpsCustomer] = useState<{ id: number; name: string } | null>(null);
   const [importCustomer, setImportCustomer] = useState<{ id: number; name: string } | null>(null);
+  const [adjustCustomer, setAdjustCustomer] = useState<ExtCustomer | null>(null);
+  const [adjustOpen, setAdjustOpen] = useState(false);
+  const openAdjust = (c: ExtCustomer) => { setAdjustCustomer(c); setAdjustOpen(true); };
   const [createOpen, setCreateOpen] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
   const createCustomer = useCreateErpCustomer();
@@ -1945,6 +2066,9 @@ export default function Customers() {
                                 <DropdownMenuItem onClick={(e) => { e.stopPropagation(); setSelectedId(null); setOpsCustomer({ id: c.id, name: c.name }); }}>
                                   <CreditCard className="h-4 w-4 mr-2" />{t("Opérations", "العمليات")}
                                 </DropdownMenuItem>
+                                <DropdownMenuItem onClick={(e) => { e.stopPropagation(); openAdjust(c); }}>
+                                  <SlidersHorizontal className="h-4 w-4 mr-2 text-amber-600" />{t("Ajustement de solde", "تعديل الرصيد")}
+                                </DropdownMenuItem>
                                 <DropdownMenuSeparator />
                                 <DropdownMenuItem onClick={(e) => { e.stopPropagation(); openSheet(c.id, "notes"); }}>
                                   <StickyNote className="h-4 w-4 mr-2" />{t("Notes", "الملاحظات")}
@@ -2023,6 +2147,13 @@ export default function Customers() {
           )}
         </SheetContent>
       </Sheet>
+
+      {/* Ajustement de solde dialog */}
+      <AjustementDialog
+        customer={adjustCustomer}
+        open={adjustOpen}
+        onOpenChange={setAdjustOpen}
+      />
 
       {/* Import to stores dialog */}
       <ImportCustomerDialog

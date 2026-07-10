@@ -5247,9 +5247,6 @@ components:
         minBalanceAlert:
           type: number
           nullable: true
-        currentBalance:
-          type: number
-          nullable: true
         foreignCurrency:
           type: boolean
           nullable: true

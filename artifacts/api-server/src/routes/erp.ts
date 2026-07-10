@@ -2080,9 +2080,14 @@ router.put("/erp/customers/:id", authenticate, requireAdmin, requireStore, async
       name, phone, address, city,
       contactType, wilaya, commune, gps,
       classificationId, priceTierId,
-      accountNumber, creditLimit, minBalanceAlert, currentBalance, foreignCurrency,
+      accountNumber, creditLimit, minBalanceAlert, foreignCurrency,
       rc, nif, ai, nis, password,
     } = req.body || {};
+    // currentBalance is deliberately never read from this endpoint's body: a profile
+    // edit (credit limit, address, etc.) must never be able to change the balance,
+    // even if a caller still sends a stale snapshot of it. The only supported way to
+    // intentionally change a customer's balance is the dedicated balance-adjustment
+    // endpoint (POST /erp/customers/:id/adjust).
     const [user] = await db.select({ id: schema.usersTable.id })
       .from(schema.usersTable)
       .where(and(eq(schema.usersTable.id, userId), eq(schema.usersTable.role, "customer"))).limit(1);
@@ -2112,21 +2117,16 @@ router.put("/erp/customers/:id", authenticate, requireAdmin, requireStore, async
     if (accountNumber !== undefined) updateSet.accountNumber = accountNumber ?? null;
     if (creditLimit !== undefined) updateSet.creditLimit = creditLimit != null ? String(creditLimit) : null;
     if (minBalanceAlert !== undefined) updateSet.minBalanceAlert = minBalanceAlert != null ? String(minBalanceAlert) : null;
-    // currentBalance is intentionally NOT mass-assignable on a profile edit. The GET
-    // returns the canonical contact balance (customer-side + supplier-side for
-    // customer_supplier contacts); writing it back into customer_profiles.current_balance
-    // here would corrupt the customer-side column. Balance changes go through the dedicated
-    // customer operations. The recompute/sync calls below are left untouched.
+    // currentBalance is intentionally NOT in updateSet (see note at the top of the
+    // handler) — it is never mass-assignable on a profile edit.
     if (foreignCurrency !== undefined) updateSet.foreignCurrency = foreignCurrency;
     if (rc !== undefined) updateSet.rc = rc ?? null;
     if (nif !== undefined) updateSet.nif = nif ?? null;
     if (ai !== undefined) updateSet.ai = ai ?? null;
     if (nis !== undefined) updateSet.nis = nis ?? null;
     // Full values for INSERT (new profile rows get defaults for omitted fields).
-    // currentBalance always starts at "0" here — an explicit override (if any) is
-    // applied below via mutateCustomerBalance so both the insert-a-new-row case
-    // and the update-an-existing-row case go through the same centralized,
-    // lock-guarded path instead of a raw write on one of the two paths.
+    // currentBalance always starts at "0" here — a newly-created cross-store profile's
+    // balance is then unified with any sibling store below (never from request input).
     const insertValues = {
       userId,
       storeId,
@@ -2193,31 +2193,25 @@ router.put("/erp/customers/:id", authenticate, requireAdmin, requireStore, async
           .set({ contactType: "supplier" })
           .where(eq(schema.suppliersTable.contactId, contactId));
       }
-      // Cross-store balance unification for the same person across linked stores.
-      if (currentBalance !== undefined) {
-        // Explicit balance override → becomes the unified value in every linked
-        // store, via the centralized mutator (lock + legacy sync + contact
-        // recompute/fan-out) instead of a raw write followed by manual sync calls.
-        await mutateCustomerBalance(tx, userId, storeId, { absolute: Number(currentBalance) });
-      } else {
-        // Balance untouched → a newly-created cross-store profile adopts the unified
-        // value from a sibling store (no-op when balances are already equal), and the
-        // two contacts join the same global identity so a supplier role added later
-        // (either store) stays connected.
-        const [balSibling] = await tx.select({
-          storeId: schema.customerProfilesTable.storeId,
-          contactId: schema.customerProfilesTable.contactId,
-        })
-          .from(schema.customerProfilesTable)
-          .where(and(eq(schema.customerProfilesTable.userId, userId), ne(schema.customerProfilesTable.storeId, storeId)))
-          .limit(1);
-        if (balSibling) {
-          await syncLinkedCustomerBalances(tx, userId, balSibling.storeId);
-          if (balSibling.contactId && contactId != null) {
-            await linkContactsGlobally(tx, balSibling.contactId, contactId);
-            await recomputeContactBalance(tx, contactId);
-            await syncLinkedContactBalances(tx, contactId);
-          }
+      // Cross-store balance unification for the same person across linked stores. This
+      // endpoint never accepts an explicit balance override (see the note at the top of
+      // the handler) — a newly-created cross-store profile always adopts the unified
+      // value from a sibling store (no-op when balances are already equal), and the two
+      // contacts join the same global identity so a supplier role added later (either
+      // store) stays connected.
+      const [balSibling] = await tx.select({
+        storeId: schema.customerProfilesTable.storeId,
+        contactId: schema.customerProfilesTable.contactId,
+      })
+        .from(schema.customerProfilesTable)
+        .where(and(eq(schema.customerProfilesTable.userId, userId), ne(schema.customerProfilesTable.storeId, storeId)))
+        .limit(1);
+      if (balSibling) {
+        await syncLinkedCustomerBalances(tx, userId, balSibling.storeId);
+        if (balSibling.contactId && contactId != null) {
+          await linkContactsGlobally(tx, balSibling.contactId, contactId);
+          await recomputeContactBalance(tx, contactId);
+          await syncLinkedContactBalances(tx, contactId);
         }
       }
     });

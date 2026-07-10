@@ -1446,7 +1446,6 @@ export interface UpsertCustomerProfileRequest {
   accountNumber?: string | null;
   creditLimit?: number | null;
   minBalanceAlert?: number | null;
-  currentBalance?: number | null;
   foreignCurrency?: boolean | null;
   rc?: string | null;
   nif?: string | null;

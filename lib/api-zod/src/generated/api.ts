@@ -3131,7 +3131,6 @@ export const UpdateErpCustomerBody = zod.object({
   accountNumber: zod.string().nullish(),
   creditLimit: zod.number().nullish(),
   minBalanceAlert: zod.number().nullish(),
-  currentBalance: zod.number().nullish(),
   foreignCurrency: zod.boolean().nullish(),
   rc: zod.string().nullish(),
   nif: zod.string().nullish(),

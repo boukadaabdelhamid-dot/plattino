@@ -115,7 +115,10 @@ function CustomerSheet({ customerId, onClose, t, lang, currency, initialTab = "b
         accountNumber: s(p.accountNumber),
         creditLimit: p.creditLimit != null ? String(p.creditLimit) : "",
         minBalanceAlert: p.minBalanceAlert != null ? String(p.minBalanceAlert) : "",
-        currentBalance: p.currentBalance != null ? String(p.currentBalance) : "0",
+        // currentBalance is intentionally NOT part of the edit form state: the balance is
+        // read-only here (see the "Solde actuel" display below) and must never be resent
+        // on a profile save — that would silently overwrite it via the backend's balance
+        // override path. Use the dedicated "Ajustement de solde" action instead.
         foreignCurrency: Boolean(p.foreignCurrency),
         rc: s(p.rc),
         nif: s(p.nif),
@@ -141,7 +144,8 @@ function CustomerSheet({ customerId, onClose, t, lang, currency, initialTab = "b
       accountNumber: str("accountNumber") || null,
       creditLimit: form.creditLimit !== "" && form.creditLimit != null ? Number(form.creditLimit) : null,
       minBalanceAlert: form.minBalanceAlert !== "" && form.minBalanceAlert != null ? Number(form.minBalanceAlert) : null,
-      currentBalance: form.currentBalance !== "" && form.currentBalance != null ? Number(form.currentBalance) : 0,
+      // currentBalance is deliberately omitted — see the comment where the form state is
+      // initialized. Balance changes go exclusively through "Ajustement de solde".
       foreignCurrency: Boolean(form.foreignCurrency),
       rc: str("rc") || null,
       nif: str("nif") || null,

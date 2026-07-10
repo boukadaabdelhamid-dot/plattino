@@ -124,6 +124,143 @@ async function ensureSupplierRole(tx: Tx, storeId: number, contactId: number, s:
   return supplier.id;
 }
 
+// Propagates a contact's just-changed effective type (promotion to customer_supplier,
+// or downgrade back to a single role) to every sibling contact sharing the same
+// globalContactId — a contact is a single identity across the stores that share it,
+// so it must never show as a different type (or be missing a role entirely) in a
+// linked sibling store. No-op when the contact has no globalContactId (not
+// cross-store linked). Role rows are NEVER deleted here, mirroring local behavior:
+// on downgrade only labels are reset. Balances are NOT synced here — call
+// syncLinkedContactBalances afterwards, which fans out each role's already-correct
+// balance to every (now-existing) sibling role row and recomputes their unified total.
+async function propagateContactTypeToSiblings(
+  tx: Tx,
+  localContactId: number,
+  effType: "customer" | "supplier" | "customer_supplier",
+): Promise<void> {
+  const [local] = await tx.select({ globalContactId: schema.contactsTable.globalContactId })
+    .from(schema.contactsTable).where(eq(schema.contactsTable.id, localContactId)).limit(1);
+  if (!local?.globalContactId) return;
+
+  // Deterministic ascending-id order prevents a lock-ordering deadlock if two
+  // concurrent promotions both fan out to the same sibling set simultaneously.
+  const siblings = await tx.select().from(schema.contactsTable)
+    .where(and(
+      eq(schema.contactsTable.globalContactId, local.globalContactId),
+      ne(schema.contactsTable.id, localContactId),
+    ))
+    .orderBy(asc(schema.contactsTable.id));
+
+  for (const sib of siblings) {
+    await tx.update(schema.contactsTable)
+      .set({ contactType: effType, updatedAt: new Date() })
+      .where(eq(schema.contactsTable.id, sib.id));
+    // Relabel whichever role rows already exist at this sibling — a no-op where
+    // that role doesn't exist there yet.
+    await tx.update(schema.suppliersTable)
+      .set({ contactType: effType === "customer" ? "supplier" : effType })
+      .where(eq(schema.suppliersTable.contactId, sib.id));
+    await tx.update(schema.customerProfilesTable)
+      .set({ contactType: effType === "supplier" ? "customer" : effType, updatedAt: new Date() })
+      .where(eq(schema.customerProfilesTable.contactId, sib.id));
+
+    if (effType === "customer_supplier") {
+      // Ensure BOTH roles exist at the sibling too, using the sibling's OWN contact
+      // fields (never the local store's — each store keeps its own contact row).
+      const sibShared: ContactSharedInput = {
+        name: sib.name, contactName: sib.contactName, email: sib.email,
+        phone: sib.phone, address: sib.address, notes: sib.notes,
+        contactType: "customer_supplier",
+      };
+      await ensureSupplierRole(tx, sib.storeId, sib.id, sibShared);
+      // The customer role needs an email to create a login. If this sibling
+      // contact has none on file, skip creating it there instead of failing the
+      // whole promotion over an unrelated store's missing data — the contactType
+      // label above already reflects the change everywhere, and the customer
+      // role can be added later once an email is on file for that store.
+      if ((sibShared.email ?? "").trim()) {
+        await ensureCustomerRole(tx, sib.storeId, sib.id, sibShared);
+      }
+    }
+  }
+}
+
+// Legacy fallback: resolves cross-store siblings via the supplier's globalSupplierId
+// when no globalContactId link exists yet (accounts imported before the unified
+// contact system, or never linked because the group predates a contact row),
+// retrofitting a contact row + globalContactId link for each sibling — mirroring
+// what the supplier import-to-stores flow already does on first import. Must run
+// BEFORE propagateContactTypeToSiblings so a legacy group gets the same promotion
+// fan-out as a group already linked via globalContactId. No-op when the supplier
+// has no globalSupplierId.
+async function linkLegacySupplierSiblings(tx: Tx, contactId: number, supplierId: number): Promise<void> {
+  const [supplier] = await tx.select({ globalSupplierId: schema.suppliersTable.globalSupplierId })
+    .from(schema.suppliersTable).where(eq(schema.suppliersTable.id, supplierId)).limit(1);
+  if (!supplier?.globalSupplierId) return;
+  // Ascending-id order for deterministic lock acquisition (deadlock safety).
+  const siblingSuppliers = await tx.select()
+    .from(schema.suppliersTable)
+    .where(and(
+      eq(schema.suppliersTable.globalSupplierId, supplier.globalSupplierId),
+      ne(schema.suppliersTable.id, supplierId),
+    ))
+    .orderBy(asc(schema.suppliersTable.id));
+  for (const sib of siblingSuppliers) {
+    let sibContactId = sib.contactId;
+    if (sibContactId == null) {
+      const [newContact] = await tx.insert(schema.contactsTable).values({
+        storeId: sib.storeId, name: sib.name, contactName: sib.contactName, email: sib.email,
+        phone: sib.phone, address: sib.address, notes: sib.notes, contactType: sib.contactType,
+      }).returning({ id: schema.contactsTable.id });
+      sibContactId = newContact.id;
+      await tx.update(schema.suppliersTable).set({ contactId: sibContactId }).where(eq(schema.suppliersTable.id, sib.id));
+    }
+    await linkContactsGlobally(tx, contactId, sibContactId);
+  }
+}
+
+// Customer-side equivalent of linkLegacySupplierSiblings: for every sibling
+// customer_profiles row linked by userId but lacking a contactId (legacy
+// pre-unified-contact data), creates a contact row in that sibling store and
+// calls linkContactsGlobally so propagateContactTypeToSiblings can reach it via
+// the globalContactId path. No-op when all sibling profiles already have a
+// contactId or when there are no sibling profiles.
+async function linkLegacyCustomerSiblings(
+  tx: Tx,
+  contactId: number,
+  userId: number,
+  localStoreId: number,
+): Promise<void> {
+  // Ascending-id order for deterministic lock acquisition (deadlock safety).
+  const siblingProfiles = await tx.select()
+    .from(schema.customerProfilesTable)
+    .where(and(
+      eq(schema.customerProfilesTable.userId, userId),
+      ne(schema.customerProfilesTable.storeId, localStoreId),
+    ))
+    .orderBy(asc(schema.customerProfilesTable.id));
+  if (siblingProfiles.length === 0) return;
+  // Read user once for the shared name/email needed when creating contact rows.
+  const [u] = await tx.select().from(schema.usersTable)
+    .where(eq(schema.usersTable.id, userId)).limit(1);
+  if (!u) return;
+  for (const sib of siblingProfiles) {
+    let sibContactId = sib.contactId;
+    if (sibContactId == null) {
+      const [newContact] = await tx.insert(schema.contactsTable).values({
+        storeId: sib.storeId, name: u.name, contactName: null, email: u.email,
+        phone: u.phone ?? null, address: u.address ?? null, notes: u.notes ?? null,
+        contactType: sib.contactType,
+      }).returning({ id: schema.contactsTable.id });
+      sibContactId = newContact.id;
+      await tx.update(schema.customerProfilesTable)
+        .set({ contactId: sibContactId })
+        .where(eq(schema.customerProfilesTable.id, sib.id));
+    }
+    await linkContactsGlobally(tx, contactId, sibContactId);
+  }
+}
+
 // ─── Dashboard — Général ───────────────────────────────────────────
 // Single endpoint for all KPIs shown in the "Général" dashboard tab.
 // Add new fields here as the tab grows (receivables, caisse balance, etc.)
@@ -836,6 +973,15 @@ router.put("/erp/suppliers/:id", authenticate, requireStaff, requireStore, requi
     if (newType !== undefined) set.contactType = newType;
 
     const supplier = await db.transaction(async (tx) => {
+      // Acquire the identity advisory lock FIRST — before any row writes — to
+      // match the ordering guarantee of mutateSupplierBalance / mutateCustomerBalance
+      // (advisory-lock → row-write, never the reverse). This prevents a deadlock
+      // cycle with a concurrent mutator: PUT holds row lock then waits for advisory;
+      // mutator holds advisory then waits for row lock. Advisory locks are reentrant
+      // within the same transaction, so the later lockSupplierIdentity calls (after
+      // legacy sibling linking establishes a fresh gcid) are safe no-ops for already-
+      // held keys and add the gcid key once it exists.
+      await lockSupplierIdentity(tx, id);
       const requestedType: "supplier" | "customer_supplier" =
         newType ?? (current.contactType === "customer_supplier" ? "customer_supplier" : "supplier");
       // Both directions are allowed: supplier→customer_supplier (promotion) and
@@ -869,13 +1015,26 @@ router.put("/erp/suppliers/:id", authenticate, requireStaff, requireStore, requi
       } else if (hasCustomerRole && contactId != null) {
         // Downgrade: reset the linked customer-profile label to "customer" so the
         // contact is no longer displayed as customer_supplier on the customer side.
-        // Intentionally contact-wide (no storeId filter): every profile sharing this
-        // contactId is relabeled, matching contacts.contactType which was already
-        // flipped above — a contact is a single identity across the stores that share it.
         await tx.update(schema.customerProfilesTable)
           .set({ contactType: "customer", updatedAt: new Date() })
           .where(eq(schema.customerProfilesTable.contactId, contactId));
       }
+      // The unified balance must be freshly correct the moment this contact starts
+      // being displayed via it (bug: a stale/never-recomputed contacts.current_balance
+      // otherwise surfaces as the balance appearing to reset to 0 right after
+      // promotion). Then propagate the type change and the newly-ensured role to
+      // every cross-store sibling — retrofitting a globalContactId link first for
+      // suppliers only linked via the legacy globalSupplierId — and finally fan out
+      // every role's balance to those (now-existing) sibling role rows.
+      // linkLegacySupplierSiblings may establish a globalContactId (no balance
+      // writes), so the advisory lock is taken afterward so it captures the final
+      // gcid and correctly serializes all subsequent balance reads/writes against
+      // concurrent mutateSupplierBalance / mutateCustomerBalance callers.
+      await linkLegacySupplierSiblings(tx, contactId, id);
+      await lockSupplierIdentity(tx, id);
+      await recomputeContactBalance(tx, contactId);
+      await propagateContactTypeToSiblings(tx, contactId, effType);
+      await syncLinkedContactBalances(tx, contactId);
       const [row] = await tx.select().from(schema.suppliersTable)
         .where(eq(schema.suppliersTable.id, id)).limit(1);
       return row;
@@ -2164,6 +2323,14 @@ router.put("/erp/customers/:id", authenticate, requireAdmin, requireStore, async
     // ONE transaction so the visible customer edit can never commit while the unified
     // contact/role state fails (no drift).
     await db.transaction(async (tx) => {
+      // Acquire the identity advisory lock FIRST — before any row writes — to match the
+      // advisory-lock → row-write ordering of mutateCustomerBalance / mutateSupplierBalance.
+      // This prevents a deadlock with concurrent balance mutators: without this, PUT could
+      // hold a row write-lock and then block waiting for the advisory key, while a mutator
+      // holds the advisory key and blocks waiting for the same row. Advisory locks are
+      // reentrant per-transaction, so the second lockCustomerIdentity call after legacy
+      // sibling linking is a no-op for already-held keys and adds the gcid key once set.
+      await lockCustomerIdentity(tx, userId, storeId);
       if (Object.keys(userUpdate).length > 0) {
         await tx.update(schema.usersTable).set(userUpdate).where(eq(schema.usersTable.id, userId));
       }
@@ -2213,12 +2380,24 @@ router.put("/erp/customers/:id", authenticate, requireAdmin, requireStore, async
           .set({ contactType: "supplier" })
           .where(eq(schema.suppliersTable.contactId, contactId));
       }
-      // Cross-store balance unification for the same person across linked stores. This
-      // endpoint never accepts an explicit balance override (see the note at the top of
-      // the handler) — a newly-created cross-store profile always adopts the unified
-      // value from a sibling store (no-op when balances are already equal), and the two
-      // contacts join the same global identity so a supplier role added later (either
-      // store) stays connected.
+      // Cross-store balance/identity unification for the same person across linked
+      // stores. linkLegacyCustomerSiblings runs first: it retrofits a contactId +
+      // globalContactId link for any userId-linked sibling profiles that are still
+      // legacy (contactId IS NULL), ensuring propagateContactTypeToSiblings can
+      // reach every sibling via the unified globalContactId path regardless of
+      // whether they were created before or after the unified-contact system.
+      // syncLinkedCustomerBalances is kept as a belt-and-suspenders legacy copy for
+      // any profiles that, for whatever reason, end up still lacking a contactId
+      // (all no-ops when the linkLegacy call already handled them).
+      // ── Phase 1: identity linking only (no balance writes yet) ──────────────
+      // linkLegacyCustomerSiblings retrofits contactId + globalContactId for any
+      // userId-linked sibling profiles that predate the unified-contact system.
+      // linkContactsGlobally is then called for the balSibling found via userId,
+      // ensuring the gcid is fully established before we acquire the advisory
+      // lock below (lock key = gcid once it exists, legacy keys before that).
+      if (contactId != null) {
+        await linkLegacyCustomerSiblings(tx, contactId, userId, storeId);
+      }
       const [balSibling] = await tx.select({
         storeId: schema.customerProfilesTable.storeId,
         contactId: schema.customerProfilesTable.contactId,
@@ -2226,13 +2405,28 @@ router.put("/erp/customers/:id", authenticate, requireAdmin, requireStore, async
         .from(schema.customerProfilesTable)
         .where(and(eq(schema.customerProfilesTable.userId, userId), ne(schema.customerProfilesTable.storeId, storeId)))
         .limit(1);
+      // Link-only step — no balance writes yet.
+      if (balSibling?.contactId && contactId != null) {
+        await linkContactsGlobally(tx, balSibling.contactId, contactId);
+      }
+
+      // ── Phase 2: advisory lock, then ALL balance writes under lock ───────────
+      // All balance-mutating calls (syncLinkedCustomerBalances, recomputeContactBalance,
+      // syncLinkedContactBalances) run only after the identity advisory lock is held,
+      // matching the serialization guarantee of mutateCustomerBalance / mutateSupplierBalance
+      // and preventing lost-update races with concurrent balance mutations on this identity.
+      if (contactId != null) {
+        await lockCustomerIdentity(tx, userId, storeId);
+      }
+      // Belt-and-suspenders legacy customer balance copy (safe no-op for profiles
+      // that linkLegacy already handled, still catches any that slipped through).
       if (balSibling) {
         await syncLinkedCustomerBalances(tx, userId, balSibling.storeId);
-        if (balSibling.contactId && contactId != null) {
-          await linkContactsGlobally(tx, balSibling.contactId, contactId);
-          await recomputeContactBalance(tx, contactId);
-          await syncLinkedContactBalances(tx, contactId);
-        }
+      }
+      if (contactId != null) {
+        await recomputeContactBalance(tx, contactId);
+        await propagateContactTypeToSiblings(tx, contactId, effType);
+        await syncLinkedContactBalances(tx, contactId);
       }
     });
     const profileRows = await db.execute(sql`

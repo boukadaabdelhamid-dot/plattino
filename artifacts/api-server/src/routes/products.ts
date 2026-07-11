@@ -1121,9 +1121,13 @@ router.post(
         else if (!codeRaw) error = "Code manquant";
         else if (isNaN(priceRaw) || priceRaw <= 0) error = "Prix invalide";
         const isDuplicate = Boolean(codeRaw && existingMap.has(codeRaw));
+        // Build the designation the same way the ERP form does:
+        // famille + marque + modèle + couleur (parts that are present)
+        const computedName = [familyName, brandName, nameRaw, colorName].filter(Boolean).join(" ");
+        const designation = computedName || nameRaw;
         return {
-          index: i, excelCategoryId, nameEn: nameRaw, nameAr: nameRaw,
-          // Store the raw name as model so products.model is populated after import
+          index: i, excelCategoryId, nameEn: designation, nameAr: designation,
+          // model = the raw "Modèle" cell so products.model column is populated
           model: nameRaw || null,
           barcode: codeRaw, price: priceRaw, costPrice: costRaw > 0 ? costRaw : null,
           isDuplicate, existingProductId: isDuplicate ? (existingMap.get(codeRaw) ?? null) : null,
@@ -1179,36 +1183,47 @@ router.post(
       const newFamilyIds = new Map<string, number>();
       const newColorIds = new Map<string, number>();
 
-      // Helper: insert-or-fetch an attribute row, returning its id deterministically
-      // even when a concurrent request races and wins the INSERT first.
+      // Helper: find-or-create an attribute row.
+      // Uses SELECT-first to avoid creating duplicate rows when no DB-level UNIQUE
+      // constraint exists on (storeId, nameFr). Falls back to a second SELECT on
+      // the rare concurrent-insert race condition.
       const upsertBrand = async (name: string): Promise<number | null> => {
+        const [existing] = await db.select({ id: schema.productBrandsTable.id }).from(schema.productBrandsTable)
+          .where(and(eq(schema.productBrandsTable.storeId, storeId), sql`lower(${schema.productBrandsTable.nameFr}) = lower(${name})`)).limit(1);
+        if (existing) return existing.id;
         try {
           const [row] = await db.insert(schema.productBrandsTable).values({ storeId, nameFr: name, nameAr: name }).returning({ id: schema.productBrandsTable.id });
           return row?.id ?? null;
         } catch {
-          const [existing] = await db.select({ id: schema.productBrandsTable.id }).from(schema.productBrandsTable)
+          const [race] = await db.select({ id: schema.productBrandsTable.id }).from(schema.productBrandsTable)
             .where(and(eq(schema.productBrandsTable.storeId, storeId), sql`lower(${schema.productBrandsTable.nameFr}) = lower(${name})`)).limit(1);
-          return existing?.id ?? null;
+          return race?.id ?? null;
         }
       };
       const upsertFamily = async (name: string): Promise<number | null> => {
+        const [existing] = await db.select({ id: schema.productFamiliesTable.id }).from(schema.productFamiliesTable)
+          .where(and(eq(schema.productFamiliesTable.storeId, storeId), sql`lower(${schema.productFamiliesTable.nameFr}) = lower(${name})`)).limit(1);
+        if (existing) return existing.id;
         try {
           const [row] = await db.insert(schema.productFamiliesTable).values({ storeId, nameFr: name, nameAr: name }).returning({ id: schema.productFamiliesTable.id });
           return row?.id ?? null;
         } catch {
-          const [existing] = await db.select({ id: schema.productFamiliesTable.id }).from(schema.productFamiliesTable)
+          const [race] = await db.select({ id: schema.productFamiliesTable.id }).from(schema.productFamiliesTable)
             .where(and(eq(schema.productFamiliesTable.storeId, storeId), sql`lower(${schema.productFamiliesTable.nameFr}) = lower(${name})`)).limit(1);
-          return existing?.id ?? null;
+          return race?.id ?? null;
         }
       };
       const upsertColor = async (name: string): Promise<number | null> => {
+        const [existing] = await db.select({ id: schema.productColorsTable.id }).from(schema.productColorsTable)
+          .where(and(eq(schema.productColorsTable.storeId, storeId), sql`lower(${schema.productColorsTable.nameFr}) = lower(${name})`)).limit(1);
+        if (existing) return existing.id;
         try {
           const [row] = await db.insert(schema.productColorsTable).values({ storeId, nameFr: name, nameAr: name }).returning({ id: schema.productColorsTable.id });
           return row?.id ?? null;
         } catch {
-          const [existing] = await db.select({ id: schema.productColorsTable.id }).from(schema.productColorsTable)
+          const [race] = await db.select({ id: schema.productColorsTable.id }).from(schema.productColorsTable)
             .where(and(eq(schema.productColorsTable.storeId, storeId), sql`lower(${schema.productColorsTable.nameFr}) = lower(${name})`)).limit(1);
-          return existing?.id ?? null;
+          return race?.id ?? null;
         }
       };
 

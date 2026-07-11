@@ -251,23 +251,47 @@ export default function Transfers() {
 }
 
 // ─── Shared product search bar ─────────────────────────────────────
-function ProductSearchBar({ products, disabled, onPick, tr, totalCount, autoFocus }: {
-  products: ProductLite[];
+// serverSearch=true → queries the API as the user types (like facture achat).
+// Without it ("Demander depuis" mode), falls back to filtering a pre-fetched list.
+function ProductSearchBar({ products: staticProducts, disabled, onPick, tr, totalCount, autoFocus, serverSearch }: {
+  products?: ProductLite[];
   disabled?: boolean;
   onPick: (p: ProductLite) => void;
   tr: TrFn;
   totalCount?: number;
   autoFocus?: boolean;
+  serverSearch?: boolean;
 }) {
   const [query, setQuery] = useState("");
+  const [debouncedQ, setDebouncedQ] = useState("");
   const [error, setError] = useState<string | null>(null);
+
+  // Debounce typing before hitting the server
+  React.useEffect(() => {
+    const t = setTimeout(() => setDebouncedQ(query.trim()), 300);
+    return () => clearTimeout(t);
+  }, [query]);
+
+  const { data: serverRes, isFetching } = useGetProducts(
+    { search: debouncedQ || undefined, limit: 20 },
+    { query: { enabled: !!serverSearch && !disabled && debouncedQ.length >= 1 } },
+  );
+
+  // Products to display — server results when serverSearch, local list otherwise
+  const displayProducts: ProductLite[] = serverSearch
+    ? ((serverRes?.products ?? []) as ProductLite[])
+    : (staticProducts ?? []);
 
   const candidates = useMemo(() => {
     const tok = query.trim().toLowerCase();
     if (!tok) return [] as ProductLite[];
-    const exact = findByCode(products, tok);
+    if (serverSearch) {
+      // Server already filtered by name / reference / barcode
+      return displayProducts.slice(0, 8);
+    }
+    const exact = findByCode(displayProducts, tok);
     if (exact) return [exact];
-    return products
+    return displayProducts
       .filter(
         (p) =>
           (p.nameEn ?? "").toLowerCase().includes(tok) ||
@@ -276,18 +300,19 @@ function ProductSearchBar({ products, disabled, onPick, tr, totalCount, autoFocu
           (p.barcode ?? "").toLowerCase().includes(tok),
       )
       .slice(0, 8);
-  }, [query, products]);
+  }, [query, displayProducts, serverSearch]);
 
   function pick(p: ProductLite) {
     setError(null);
     setQuery("");
+    setDebouncedQ("");
     onPick(p);
   }
 
   function handleSubmit() {
     const tok = query.trim();
     if (!tok) return;
-    const found = findByCode(products, tok);
+    const found = findByCode(displayProducts, tok);
     if (found) { pick(found); return; }
     if (candidates.length === 1) { pick(candidates[0]); return; }
     if (candidates.length > 1) {
@@ -296,6 +321,8 @@ function ProductSearchBar({ products, disabled, onPick, tr, totalCount, autoFocu
     }
     setError(tr(`Aucun produit ne correspond à "${tok}".`, `لا يوجد منتج يطابق "${tok}".`));
   }
+
+  const showDropdown = candidates.length > 0 || (!!serverSearch && isFetching && debouncedQ.length >= 1);
 
   return (
     <div className="mb-3 relative">
@@ -326,8 +353,11 @@ function ProductSearchBar({ products, disabled, onPick, tr, totalCount, autoFocu
           <Plus className="h-3.5 w-3.5 mr-1" /> {tr("Ajouter", "إضافة")}
         </Button>
       </div>
-      {candidates.length > 0 && (
+      {showDropdown && (
         <div className="mt-1 border rounded-md bg-white shadow-sm max-h-56 overflow-y-auto" data-testid="scan-candidates">
+          {serverSearch && isFetching && candidates.length === 0 && (
+            <div className="px-3 py-2 text-xs text-muted-foreground">{tr("Recherche…", "جارٍ البحث…")}</div>
+          )}
           {candidates.map((p) => (
             <button
               key={p.id}
@@ -347,9 +377,9 @@ function ProductSearchBar({ products, disabled, onPick, tr, totalCount, autoFocu
       {error && (
         <p className="text-[11px] text-red-600 mt-1" data-testid="text-scan-error">{error}</p>
       )}
-      {totalCount !== undefined && totalCount > products.length && (
+      {!serverSearch && totalCount !== undefined && totalCount > (staticProducts?.length ?? 0) && (
         <p className="text-[11px] text-muted-foreground mt-1">
-          {totalCount - products.length} {tr("produit(s) masqués — référence/code-barres manquant.", "منتج مخفي — مرجع/باركود مفقود.")}
+          {totalCount - (staticProducts?.length ?? 0)} {tr("produit(s) masqués — référence/code-barres manquant.", "منتج مخفي — مرجع/باركود مفقود.")}
         </p>
       )}
     </div>
@@ -375,6 +405,9 @@ function CreateTransferDialog({
   const [lines, setLines] = useState<LineDraft[]>([]);
   const { data: productsRes } = useGetProducts({ limit: 500 });
   const products = (productsRes?.products ?? []) as ProductLite[];
+  // Cache products picked via server-side search so line-item display works
+  // even for items beyond the 500-item local list.
+  const [pickedProducts, setPickedProducts] = useState<Record<number, ProductLite>>({});
   const create = useCreateErpTransfer();
 
   const { data: inboundData } = useQuery({
@@ -402,7 +435,7 @@ function CreateTransferDialog({
 
   const reset = () => {
     setDirection("out"); setOtherStoreId(""); setMode("request"); setNotes("");
-    setLines([]);
+    setLines([]); setPickedProducts({});
   };
 
   React.useEffect(() => {
@@ -419,6 +452,9 @@ function CreateTransferDialog({
   );
 
   function addProductToLines(p: ProductLite) {
+    // Cache the full product object so line-item display works even when the
+    // product came from server-side search and isn't in the 500-item local list.
+    setPickedProducts((prev) => ({ ...prev, [p.id]: p }));
     setLines((prev) => {
       const idx = prev.findIndex((l) => Number(l.sourceProductId) === p.id);
       if (idx >= 0) {
@@ -436,10 +472,12 @@ function CreateTransferDialog({
         ...l,
         product:
           direction === "out"
-            ? products.find((p) => p.id === Number(l.sourceProductId))
+            // pickedProducts covers items found via server-side search that may
+            // not appear in the 500-item productsRes list.
+            ? (pickedProducts[Number(l.sourceProductId)] ?? products.find((p) => p.id === Number(l.sourceProductId)))
             : inboundProducts.find((p) => p.id === Number(l.sourceProductId)),
       })),
-    [lines, products, inboundProducts, direction],
+    [lines, products, inboundProducts, direction, pickedProducts],
   );
 
   const hasUnmatchable =
@@ -558,11 +596,12 @@ function CreateTransferDialog({
 
             <ProductSearchBar
               key={`${direction}-${otherStoreId}`}
-              products={direction === "out" ? matchableProducts : inboundMatchable}
+              serverSearch={direction === "out"}
+              products={direction === "in" ? inboundMatchable : undefined}
               disabled={direction === "in" && !otherStoreId}
               onPick={addProductToLines}
               tr={tr}
-              totalCount={direction === "out" ? products.length : inboundProducts.length}
+              totalCount={direction === "in" ? inboundProducts.length : undefined}
               autoFocus={direction === "out"}
             />
 

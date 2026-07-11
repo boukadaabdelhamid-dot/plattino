@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { eq, sql } from "drizzle-orm";
+import { eq, sql, ilike, or, and } from "drizzle-orm";
 import { z } from "zod";
 import { db, schema } from "../lib/db";
 import { authenticate, requireAdmin, requireStaff, requireStore, type AuthRequest } from "../lib/auth";
@@ -225,6 +225,15 @@ router.get("/erp/stores/:id/products", authenticate, requireAdmin, async (req: A
     if (!Number.isFinite(storeId)) {
       res.status(400).json({ error: "Invalid storeId" }); return;
     }
+    const search = (req.query["search"] as string | undefined)?.trim();
+    const searchFilter = search
+      ? or(
+          ilike(schema.productsTable.nameEn, `%${search}%`),
+          ilike(schema.productsTable.nameAr, `%${search}%`),
+          ilike(schema.productsTable.reference, `%${search}%`),
+          ilike(schema.productsTable.barcode, `%${search}%`),
+        )
+      : undefined;
     const products = await db.select({
       id: schema.productsTable.id,
       nameEn: schema.productsTable.nameEn,
@@ -234,8 +243,9 @@ router.get("/erp/stores/:id/products", authenticate, requireAdmin, async (req: A
       stock: schema.productsTable.stock,
     })
       .from(schema.productsTable)
-      .where(eq(schema.productsTable.storeId, storeId))
-      .orderBy(schema.productsTable.nameEn);
+      .where(and(eq(schema.productsTable.storeId, storeId), ...(searchFilter ? [searchFilter] : [])))
+      .orderBy(schema.productsTable.nameEn)
+      .limit(search ? 20 : 500);
     res.json({ products });
   } catch (err) { req.log.error(err); res.status(500).json({ error: "Internal server error" }); }
 });

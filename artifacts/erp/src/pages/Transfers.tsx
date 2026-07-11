@@ -252,8 +252,9 @@ export default function Transfers() {
 
 // ─── Shared product search bar ─────────────────────────────────────
 // serverSearch=true → queries the API as the user types (like facture achat).
-// Without it ("Demander depuis" mode), falls back to filtering a pre-fetched list.
-function ProductSearchBar({ products: staticProducts, disabled, onPick, tr, totalCount, autoFocus, serverSearch }: {
+// storeSearchId → queries another store's products endpoint (cross-store search).
+// Without either, falls back to filtering a pre-fetched list.
+function ProductSearchBar({ products: staticProducts, disabled, onPick, tr, totalCount, autoFocus, serverSearch, storeSearchId }: {
   products?: ProductLite[];
   disabled?: boolean;
   onPick: (p: ProductLite) => void;
@@ -261,6 +262,7 @@ function ProductSearchBar({ products: staticProducts, disabled, onPick, tr, tota
   totalCount?: number;
   autoFocus?: boolean;
   serverSearch?: boolean;
+  storeSearchId?: number;
 }) {
   const [query, setQuery] = useState("");
   const [debouncedQ, setDebouncedQ] = useState("");
@@ -272,20 +274,41 @@ function ProductSearchBar({ products: staticProducts, disabled, onPick, tr, tota
     return () => clearTimeout(t);
   }, [query]);
 
-  const { data: serverRes, isFetching } = useGetProducts(
+  // Own-store server search (Envoyer vers mode)
+  const { data: serverRes, isFetching: isFetchingOwn } = useGetProducts(
     { search: debouncedQ || undefined, limit: 20 },
-    { query: { enabled: !!serverSearch && !disabled && debouncedQ.length >= 1 } },
+    { query: { enabled: !!serverSearch && !storeSearchId && !disabled && debouncedQ.length >= 1 } },
   );
 
-  // Products to display — server results when serverSearch, local list otherwise
-  const displayProducts: ProductLite[] = serverSearch
+  // Cross-store server search (Demander depuis mode)
+  const { data: crossStoreRes, isFetching: isFetchingCross } = useQuery({
+    queryKey: ["/api/erp/stores/products/search", storeSearchId, debouncedQ],
+    enabled: !!storeSearchId && !disabled && debouncedQ.length >= 1,
+    queryFn: async () => {
+      const token = localStorage.getItem("midanic_token");
+      const params = new URLSearchParams({ search: debouncedQ, limit: "20" });
+      const res = await fetch(`${API_BASE}/api/erp/stores/${storeSearchId}/products?${params}`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      if (!res.ok) throw new Error(await res.text());
+      return res.json() as Promise<{ products: ProductLite[] }>;
+    },
+    staleTime: 15_000,
+  });
+
+  const isFetching = isFetchingOwn || isFetchingCross;
+
+  // Products to display — cross-store server results, own-store server results, or local list
+  const displayProducts: ProductLite[] = storeSearchId
+    ? ((crossStoreRes?.products ?? []) as ProductLite[])
+    : serverSearch
     ? ((serverRes?.products ?? []) as ProductLite[])
     : (staticProducts ?? []);
 
   const candidates = useMemo(() => {
     const tok = query.trim().toLowerCase();
     if (!tok) return [] as ProductLite[];
-    if (serverSearch) {
+    if (serverSearch || storeSearchId) {
       // Server already filtered by name / reference / barcode
       return displayProducts.slice(0, 8);
     }
@@ -322,7 +345,7 @@ function ProductSearchBar({ products: staticProducts, disabled, onPick, tr, tota
     setError(tr(`Aucun produit ne correspond à "${tok}".`, `لا يوجد منتج يطابق "${tok}".`));
   }
 
-  const showDropdown = candidates.length > 0 || (!!serverSearch && isFetching && debouncedQ.length >= 1);
+  const showDropdown = candidates.length > 0 || ((!!serverSearch || !!storeSearchId) && isFetching && debouncedQ.length >= 1);
 
   return (
     <div className="mb-3 relative">
@@ -475,7 +498,10 @@ function CreateTransferDialog({
             // pickedProducts covers items found via server-side search that may
             // not appear in the 500-item productsRes list.
             ? (pickedProducts[Number(l.sourceProductId)] ?? products.find((p) => p.id === Number(l.sourceProductId)))
-            : inboundProducts.find((p) => p.id === Number(l.sourceProductId)),
+            // For inbound, pickedProducts is populated by addProductToLines so
+            // cross-store server-search results are available even when not in
+            // the initial inboundProducts list.
+            : (pickedProducts[Number(l.sourceProductId)] ?? inboundProducts.find((p) => p.id === Number(l.sourceProductId))),
       })),
     [lines, products, inboundProducts, direction, pickedProducts],
   );
@@ -597,6 +623,7 @@ function CreateTransferDialog({
             <ProductSearchBar
               key={`${direction}-${otherStoreId}`}
               serverSearch={direction === "out"}
+              storeSearchId={direction === "in" && otherStoreId ? Number(otherStoreId) : undefined}
               products={direction === "in" ? inboundMatchable : undefined}
               disabled={direction === "in" && !otherStoreId}
               onPick={addProductToLines}

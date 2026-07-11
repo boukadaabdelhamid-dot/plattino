@@ -13,6 +13,8 @@ interface ImportRow {
   excelCategoryId: number | null;
   nameEn: string;
   nameAr: string;
+  /** The raw "Modèle" value — written to products.model so the list column shows it */
+  model: string | null;
   barcode: string;
   price: number;
   costPrice: number | null;
@@ -1121,6 +1123,8 @@ router.post(
         const isDuplicate = Boolean(codeRaw && existingMap.has(codeRaw));
         return {
           index: i, excelCategoryId, nameEn: nameRaw, nameAr: nameRaw,
+          // Store the raw name as model so products.model is populated after import
+          model: nameRaw || null,
           barcode: codeRaw, price: priceRaw, costPrice: costRaw > 0 ? costRaw : null,
           isDuplicate, existingProductId: isDuplicate ? (existingMap.get(codeRaw) ?? null) : null,
           resolvedCategoryId,
@@ -1241,6 +1245,11 @@ router.post(
           await db.insert(schema.productsTable).values(
             chunk.map((r) => ({
               storeId, nameEn: r.nameEn, nameAr: r.nameAr,
+              // Write model (= the "Modèle" cell) so the products list Modèle column shows it
+              model: r.model,
+              // Write brand/color strings as well as brandId/colorId so the list columns show them
+              brand: r.brandName ?? null,
+              color: r.colorName ?? null,
               price: String(r.price), costPrice: r.costPrice != null ? String(r.costPrice) : null,
               barcode: r.barcode || null, categoryId: r.resolvedCategoryId,
               brandId: resolveBrandId(r), familyId: resolveFamilyId(r), colorId: resolveColorId(r),
@@ -1258,14 +1267,16 @@ router.post(
           try {
             await db.update(schema.productsTable).set({
               nameEn: row.nameEn, nameAr: row.nameAr,
+              // model field = the "Modèle" cell value; always update it
+              model: row.model,
               price: String(row.price),
               costPrice: row.costPrice != null ? String(row.costPrice) : null,
               ...(row.resolvedCategoryId != null ? { categoryId: row.resolvedCategoryId } : {}),
               // Always write attribute columns when the Excel file contained them,
               // including null — so "Aucune"/empty correctly clears existing values.
-              ...(hasAttr.brand ? { brandId: resolveBrandId(row) } : {}),
+              ...(hasAttr.brand ? { brandId: resolveBrandId(row), brand: row.brandName ?? null } : {}),
               ...(hasAttr.family ? { familyId: resolveFamilyId(row) } : {}),
-              ...(hasAttr.color ? { colorId: resolveColorId(row) } : {}),
+              ...(hasAttr.color ? { colorId: resolveColorId(row), color: row.colorName ?? null } : {}),
             }).where(and(eq(schema.productsTable.id, row.existingProductId), eq(schema.productsTable.storeId, storeId)));
             updated++;
           } catch { errors++; }

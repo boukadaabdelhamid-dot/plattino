@@ -415,7 +415,7 @@ function PurchaseEditor({
         productId: p.id,
         designation: (p.nameEn || p.nameAr || `#${p.id}`).toUpperCase(),
         qty: 1, qtyPrepared: 0, qtyGratuit: 0,
-        pu: parseFloat(p.price ?? "0"),
+        pu: parseFloat(p.costPrice ?? p.price ?? "0"),
       }];
     });
   }

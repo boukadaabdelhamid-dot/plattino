@@ -24,6 +24,9 @@ interface PreviewRow {
   costPrice: number | null;
   excelCategoryId: number | null;
   resolvedCategoryId: number | null;
+  brandName: string | null;
+  familyName: string | null;
+  colorName: string | null;
   isDuplicate: boolean;
   error: string | null;
 }
@@ -211,7 +214,7 @@ export default function ImportExcelModal({ open, onClose, onImported }: Props) {
               <div className="rounded-lg bg-muted/40 px-4 py-3 text-xs text-muted-foreground space-y-1">
                 <p className="font-medium text-foreground">{t("Format attendu", "الصيغة المتوقعة")}</p>
                 <p>{t("Colonnes détectées automatiquement :", "يتم اكتشاف الأعمدة تلقائياً :")}</p>
-                <p className="font-mono">ID Catégorie · Désignation · Code · PU Détail · Coût</p>
+                <p className="font-mono">ID Catégorie · Marque · Famille · Couleur · Code · Modèle · PU Détail · Coût</p>
                 <p>{t("La première ligne d'en-tête est détectée automatiquement.", "يتم اكتشاف سطر الرأس تلقائياً.")}</p>
               </div>
             </div>
@@ -277,6 +280,9 @@ export default function ImportExcelModal({ open, onClose, onImported }: Props) {
                         <TableRow className="text-xs">
                           <TableHead className="w-8">#</TableHead>
                           <TableHead>{t("Désignation", "الاسم")}</TableHead>
+                          <TableHead>{t("Marque", "الماركة")}</TableHead>
+                          <TableHead>{t("Famille", "العائلة")}</TableHead>
+                          <TableHead>{t("Couleur", "اللون")}</TableHead>
                           <TableHead>{t("Code", "الكود")}</TableHead>
                           <TableHead className="text-right">{t("Prix", "السعر")}</TableHead>
                           <TableHead className="text-right">{t("Coût", "التكلفة")}</TableHead>
@@ -287,7 +293,10 @@ export default function ImportExcelModal({ open, onClose, onImported }: Props) {
                         {preview.map((row) => (
                           <TableRow key={row.index} className={`text-xs ${row.error ? "bg-red-50/60" : row.isDuplicate ? "bg-amber-50/60" : ""}`}>
                             <TableCell className="text-muted-foreground">{row.index + 1}</TableCell>
-                            <TableCell className="max-w-[200px] truncate font-medium">{row.nameEn}</TableCell>
+                            <TableCell className="max-w-[180px] truncate font-medium">{row.nameEn}</TableCell>
+                            <TableCell className="text-muted-foreground">{row.brandName ?? "—"}</TableCell>
+                            <TableCell className="text-muted-foreground">{row.familyName ?? "—"}</TableCell>
+                            <TableCell className="text-muted-foreground">{row.colorName ?? "—"}</TableCell>
                             <TableCell className="font-mono text-[11px]">{row.barcode}</TableCell>
                             <TableCell className="text-right">{row.price.toLocaleString()}</TableCell>
                             <TableCell className="text-right">{row.costPrice?.toLocaleString() ?? "—"}</TableCell>

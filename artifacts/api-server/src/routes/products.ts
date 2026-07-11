@@ -19,6 +19,13 @@ interface ImportRow {
   isDuplicate: boolean;
   existingProductId: number | null;
   resolvedCategoryId: number | null;
+  // Attribute columns (Marque / Famille / Couleur)
+  brandName: string | null;
+  familyName: string | null;
+  colorName: string | null;
+  resolvedBrandId: number | null;
+  resolvedFamilyId: number | null;
+  resolvedColorId: number | null;
   error: string | null;
 }
 interface ImportSession {
@@ -30,6 +37,8 @@ interface ImportSession {
   duplicateCount: number;
   errorCount: number;
   missingCategoryIds: number[];
+  // Which attribute columns were present in the source file
+  hasAttributeCols: { brand: boolean; family: boolean; color: boolean };
 }
 const importSessions = new Map<string, ImportSession>();
 setInterval(() => {
@@ -1012,22 +1021,35 @@ router.post(
 
       // Auto-detect header row (rows 0-4) by looking for known column names
       let headerRowIdx = -1;
-      let colMap: { name: number; code: number; price: number; cost?: number; catId?: number } | null = null;
+      let colMap: { name: number; code: number; price: number; cost?: number; catId?: number; brand?: number; family?: number; color?: number } | null = null;
       for (let i = 0; i < Math.min(5, rawData.length); i++) {
         const row = (rawData[i] as unknown[]).map((c) => String(c).toLowerCase().trim());
-        const nameIdx = row.findIndex((c) => c.includes("désignation") || c.includes("designation") || c === "nom" || c.includes("libellé"));
+        const nameIdx = row.findIndex((c) =>
+          c.includes("désignation") || c.includes("designation") || c === "nom" ||
+          c.includes("libellé") || c === "modèle" || c === "modele" || c === "model"
+        );
         const codeIdx = row.findIndex((c) => c === "code" || c.includes("barcode") || c.includes("référence") || c.includes("ref"));
         const priceIdx = row.findIndex((c) => c.includes("détail") || (c.includes("pu") && !c.includes("coût")) || c === "prix");
         const costIdx = row.findIndex((c) => c.includes("coût") || c.includes("cout") || c.includes("cost") || c.includes("achat"));
         const catIdx = row.findIndex((c) => c.includes("catégor") || c.includes("categor"));
+        const brandIdx = row.findIndex((c) => c === "marque" || c === "brand");
+        const familyIdx = row.findIndex((c) => c === "famille" || c === "family" || c.startsWith("famil"));
+        const colorIdx = row.findIndex((c) => c === "couleur" || c === "color");
         if (nameIdx !== -1 && codeIdx !== -1 && priceIdx !== -1) {
           headerRowIdx = i;
-          colMap = { name: nameIdx, code: codeIdx, price: priceIdx, cost: costIdx >= 0 ? costIdx : undefined, catId: catIdx >= 0 ? catIdx : undefined };
+          colMap = {
+            name: nameIdx, code: codeIdx, price: priceIdx,
+            cost: costIdx >= 0 ? costIdx : undefined,
+            catId: catIdx >= 0 ? catIdx : undefined,
+            brand: brandIdx >= 0 ? brandIdx : undefined,
+            family: familyIdx >= 0 ? familyIdx : undefined,
+            color: colorIdx >= 0 ? colorIdx : undefined,
+          };
           break;
         }
       }
       if (!colMap) {
-        res.status(400).json({ error: "Impossible de détecter les colonnes. Colonnes attendues: Désignation, Code, PU Détail, Coût" });
+        res.status(400).json({ error: "Impossible de détecter les colonnes. Colonnes attendues: Désignation (ou Modèle), Code, PU Détail, Coût" });
         return;
       }
 
@@ -1048,10 +1070,18 @@ router.post(
         for (const p of existing) { if (p.barcode) existingMap.set(p.barcode, p.id); }
       }
 
-      // Load store categories
-      const categories = await db.select({ id: schema.categoriesTable.id })
-        .from(schema.categoriesTable).where(eq(schema.categoriesTable.storeId, storeId));
+      // Load store categories, brands, families, colors — all in parallel
+      const [categories, brands, families, colors] = await Promise.all([
+        db.select({ id: schema.categoriesTable.id }).from(schema.categoriesTable).where(eq(schema.categoriesTable.storeId, storeId)),
+        db.select({ id: schema.productBrandsTable.id, nameFr: schema.productBrandsTable.nameFr }).from(schema.productBrandsTable).where(eq(schema.productBrandsTable.storeId, storeId)),
+        db.select({ id: schema.productFamiliesTable.id, nameFr: schema.productFamiliesTable.nameFr }).from(schema.productFamiliesTable).where(eq(schema.productFamiliesTable.storeId, storeId)),
+        db.select({ id: schema.productColorsTable.id, nameFr: schema.productColorsTable.nameFr }).from(schema.productColorsTable).where(eq(schema.productColorsTable.storeId, storeId)),
+      ]);
       const categoryIds = new Set(categories.map((c) => c.id));
+      // Case-insensitive name → id maps for attribute lookup
+      const brandMap = new Map(brands.map((b) => [b.nameFr.toLowerCase().trim(), b.id]));
+      const familyMap = new Map(families.map((f) => [f.nameFr.toLowerCase().trim(), f.id]));
+      const colorMap = new Map(colors.map((c) => [c.nameFr.toLowerCase().trim(), c.id]));
 
       const excelCatIds = new Set<number>();
       dataRows.forEach((r) => {
@@ -1059,6 +1089,13 @@ router.post(
         if (typeof v === "number") excelCatIds.add(v);
       });
       const missingCategoryIds = [...excelCatIds].filter((id) => !categoryIds.has(id));
+
+      // Helper: normalize attribute name; treat "aucune"/empty as null
+      const normAttr = (v: unknown): string | null => {
+        const s = String(v ?? "").trim();
+        if (!s || s.toLowerCase() === "aucune" || s.toLowerCase() === "aucun") return null;
+        return s;
+      };
 
       const rows: ImportRow[] = dataRows.map((r, i) => {
         const row = r as unknown[];
@@ -1069,6 +1106,14 @@ router.post(
         const catRaw = colMap!.catId !== undefined ? row[colMap!.catId] : null;
         const excelCategoryId = typeof catRaw === "number" ? catRaw : null;
         const resolvedCategoryId = excelCategoryId !== null && categoryIds.has(excelCategoryId) ? excelCategoryId : null;
+
+        const brandName = colMap!.brand !== undefined ? normAttr(row[colMap!.brand]) : null;
+        const familyName = colMap!.family !== undefined ? normAttr(row[colMap!.family]) : null;
+        const colorName = colMap!.color !== undefined ? normAttr(row[colMap!.color]) : null;
+        const resolvedBrandId = brandName ? (brandMap.get(brandName.toLowerCase()) ?? null) : null;
+        const resolvedFamilyId = familyName ? (familyMap.get(familyName.toLowerCase()) ?? null) : null;
+        const resolvedColorId = colorName ? (colorMap.get(colorName.toLowerCase()) ?? null) : null;
+
         let error: string | null = null;
         if (!nameRaw) error = "Désignation manquante";
         else if (!codeRaw) error = "Code manquant";
@@ -1078,7 +1123,10 @@ router.post(
           index: i, excelCategoryId, nameEn: nameRaw, nameAr: nameRaw,
           barcode: codeRaw, price: priceRaw, costPrice: costRaw > 0 ? costRaw : null,
           isDuplicate, existingProductId: isDuplicate ? (existingMap.get(codeRaw) ?? null) : null,
-          resolvedCategoryId, error,
+          resolvedCategoryId,
+          brandName, familyName, colorName,
+          resolvedBrandId, resolvedFamilyId, resolvedColorId,
+          error,
         };
       });
 
@@ -1086,13 +1134,16 @@ router.post(
       const duplicateCount = rows.filter((r) => r.isDuplicate && !r.error).length;
       const errorCount = rows.filter((r) => r.error).length;
       const sessionKey = randomUUID();
-      importSessions.set(sessionKey, { storeId, rows, createdAt: Date.now(), totalRows: rows.length, newCount, duplicateCount, errorCount, missingCategoryIds });
+      importSessions.set(sessionKey, {
+        storeId, rows, createdAt: Date.now(), totalRows: rows.length, newCount, duplicateCount, errorCount, missingCategoryIds,
+        hasAttributeCols: { brand: colMap.brand !== undefined, family: colMap.family !== undefined, color: colMap.color !== undefined },
+      });
 
       res.json({
         sessionKey,
         stats: { total: rows.length, new: newCount, duplicates: duplicateCount, errors: errorCount, missingCategoryIds },
-        preview: rows.slice(0, 60).map(({ index, nameEn, barcode, price, costPrice, excelCategoryId, resolvedCategoryId, isDuplicate, error }) =>
-          ({ index, nameEn, barcode, price, costPrice, excelCategoryId, resolvedCategoryId, isDuplicate, error })),
+        preview: rows.slice(0, 60).map(({ index, nameEn, barcode, price, costPrice, excelCategoryId, resolvedCategoryId, isDuplicate, error, brandName, familyName, colorName }) =>
+          ({ index, nameEn, barcode, price, costPrice, excelCategoryId, resolvedCategoryId, isDuplicate, error, brandName, familyName, colorName })),
       });
     } catch (err) { req.log.error(err); res.status(500).json({ error: "Échec du traitement du fichier" }); }
   }
@@ -1114,6 +1165,70 @@ router.post(
       let inserted = 0, updated = 0, skipped = 0, errors = 0;
       const validRows = session.rows.filter((r) => !r.error);
 
+      // ── Create missing brands / families / colors on the fly ───────────────
+      // Collect unique names that were not resolved at parse time
+      const missingBrands = [...new Set(validRows.filter((r) => r.brandName && r.resolvedBrandId == null).map((r) => r.brandName!))];
+      const missingFamilies = [...new Set(validRows.filter((r) => r.familyName && r.resolvedFamilyId == null).map((r) => r.familyName!))];
+      const missingColors = [...new Set(validRows.filter((r) => r.colorName && r.resolvedColorId == null).map((r) => r.colorName!))];
+
+      const newBrandIds = new Map<string, number>();
+      const newFamilyIds = new Map<string, number>();
+      const newColorIds = new Map<string, number>();
+
+      // Helper: insert-or-fetch an attribute row, returning its id deterministically
+      // even when a concurrent request races and wins the INSERT first.
+      const upsertBrand = async (name: string): Promise<number | null> => {
+        try {
+          const [row] = await db.insert(schema.productBrandsTable).values({ storeId, nameFr: name, nameAr: name }).returning({ id: schema.productBrandsTable.id });
+          return row?.id ?? null;
+        } catch {
+          const [existing] = await db.select({ id: schema.productBrandsTable.id }).from(schema.productBrandsTable)
+            .where(and(eq(schema.productBrandsTable.storeId, storeId), sql`lower(${schema.productBrandsTable.nameFr}) = lower(${name})`)).limit(1);
+          return existing?.id ?? null;
+        }
+      };
+      const upsertFamily = async (name: string): Promise<number | null> => {
+        try {
+          const [row] = await db.insert(schema.productFamiliesTable).values({ storeId, nameFr: name, nameAr: name }).returning({ id: schema.productFamiliesTable.id });
+          return row?.id ?? null;
+        } catch {
+          const [existing] = await db.select({ id: schema.productFamiliesTable.id }).from(schema.productFamiliesTable)
+            .where(and(eq(schema.productFamiliesTable.storeId, storeId), sql`lower(${schema.productFamiliesTable.nameFr}) = lower(${name})`)).limit(1);
+          return existing?.id ?? null;
+        }
+      };
+      const upsertColor = async (name: string): Promise<number | null> => {
+        try {
+          const [row] = await db.insert(schema.productColorsTable).values({ storeId, nameFr: name, nameAr: name }).returning({ id: schema.productColorsTable.id });
+          return row?.id ?? null;
+        } catch {
+          const [existing] = await db.select({ id: schema.productColorsTable.id }).from(schema.productColorsTable)
+            .where(and(eq(schema.productColorsTable.storeId, storeId), sql`lower(${schema.productColorsTable.nameFr}) = lower(${name})`)).limit(1);
+          return existing?.id ?? null;
+        }
+      };
+
+      for (const name of missingBrands) {
+        const id = await upsertBrand(name);
+        if (id != null) newBrandIds.set(name.toLowerCase(), id);
+      }
+      for (const name of missingFamilies) {
+        const id = await upsertFamily(name);
+        if (id != null) newFamilyIds.set(name.toLowerCase(), id);
+      }
+      for (const name of missingColors) {
+        const id = await upsertColor(name);
+        if (id != null) newColorIds.set(name.toLowerCase(), id);
+      }
+
+      // Resolve final attribute IDs (parse-resolved ∪ newly-created)
+      const resolveBrandId = (r: ImportRow): number | null =>
+        r.resolvedBrandId ?? (r.brandName ? (newBrandIds.get(r.brandName.toLowerCase()) ?? null) : null);
+      const resolveFamilyId = (r: ImportRow): number | null =>
+        r.resolvedFamilyId ?? (r.familyName ? (newFamilyIds.get(r.familyName.toLowerCase()) ?? null) : null);
+      const resolveColorId = (r: ImportRow): number | null =>
+        r.resolvedColorId ?? (r.colorName ? (newColorIds.get(r.colorName.toLowerCase()) ?? null) : null);
+
       // Split into new vs duplicates
       const newRows = validRows.filter((r) => !r.isDuplicate);
       const dupRows = validRows.filter((r) => r.isDuplicate);
@@ -1128,6 +1243,7 @@ router.post(
               storeId, nameEn: r.nameEn, nameAr: r.nameAr,
               price: String(r.price), costPrice: r.costPrice != null ? String(r.costPrice) : null,
               barcode: r.barcode || null, categoryId: r.resolvedCategoryId,
+              brandId: resolveBrandId(r), familyId: resolveFamilyId(r), colorId: resolveColorId(r),
               descriptionAr: "", descriptionEn: "", stock: 0, isActive: true, isExposed: false,
             }))
           );
@@ -1136,6 +1252,7 @@ router.post(
       }
 
       // Handle duplicates
+      const hasAttr = session.hasAttributeCols;
       for (const row of dupRows) {
         if (mode === "update" && row.existingProductId) {
           try {
@@ -1144,6 +1261,11 @@ router.post(
               price: String(row.price),
               costPrice: row.costPrice != null ? String(row.costPrice) : null,
               ...(row.resolvedCategoryId != null ? { categoryId: row.resolvedCategoryId } : {}),
+              // Always write attribute columns when the Excel file contained them,
+              // including null — so "Aucune"/empty correctly clears existing values.
+              ...(hasAttr.brand ? { brandId: resolveBrandId(row) } : {}),
+              ...(hasAttr.family ? { familyId: resolveFamilyId(row) } : {}),
+              ...(hasAttr.color ? { colorId: resolveColorId(row) } : {}),
             }).where(and(eq(schema.productsTable.id, row.existingProductId), eq(schema.productsTable.storeId, storeId)));
             updated++;
           } catch { errors++; }

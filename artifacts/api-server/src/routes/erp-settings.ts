@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { eq, and } from "drizzle-orm";
+import { eq, and, inArray, sql } from "drizzle-orm";
 import { z } from "zod";
 import { db, schema } from "../lib/db";
 import { authenticate, requireAdmin, requireStaff, requireStore, requirePermission, type AuthRequest } from "../lib/auth";
@@ -225,6 +225,94 @@ router.delete("/erp/settings/products/colors/:id", authenticate, requireStaff, r
     await db.delete(schema.productColorsTable)
       .where(and(eq(schema.productColorsTable.id, pid(req, "id")), eq(schema.productColorsTable.storeId, storeId)));
     res.json({ success: true });
+  } catch (err) { req.log.error(err); res.status(500).json({ error: "Internal server error" }); }
+});
+
+// ── Copy attributes cross-store ───────────────────────────────────────────────
+// POST /erp/settings/products/copy-attributes-to-stores
+// Copies families, brands or colors from the current store to one or more
+// target stores. Uses SELECT-first-then-INSERT to avoid duplicates even when
+// no DB-level UNIQUE constraint exists on (storeId, nameFr).
+router.post("/erp/settings/products/copy-attributes-to-stores", authenticate, requireStaff, requireStore, requirePermission("settings", "create"), async (req: AuthRequest, res) => {
+  try {
+    const storeId = req.currentStoreId!;
+    const { type, ids, targetStoreIds } = req.body as {
+      type: "family" | "brand" | "color";
+      ids?: number[];
+      targetStoreIds: number[];
+    };
+
+    if (!["family", "brand", "color"].includes(type)) {
+      res.status(400).json({ error: "type must be family, brand, or color" }); return;
+    }
+    if (!Array.isArray(targetStoreIds) || targetStoreIds.length === 0) {
+      res.status(400).json({ error: "targetStoreIds is required and must be non-empty" }); return;
+    }
+
+    // Fetch source attribute rows (all or a specific subset)
+    type AttrRow = { id: number; nameFr: string; nameAr: string; hexCode?: string | null };
+    let sourceItems: AttrRow[] = [];
+
+    if (type === "family") {
+      const where = ids?.length
+        ? and(eq(schema.productFamiliesTable.storeId, storeId), inArray(schema.productFamiliesTable.id, ids))
+        : eq(schema.productFamiliesTable.storeId, storeId);
+      sourceItems = await db.select({ id: schema.productFamiliesTable.id, nameFr: schema.productFamiliesTable.nameFr, nameAr: schema.productFamiliesTable.nameAr })
+        .from(schema.productFamiliesTable).where(where);
+    } else if (type === "brand") {
+      const where = ids?.length
+        ? and(eq(schema.productBrandsTable.storeId, storeId), inArray(schema.productBrandsTable.id, ids))
+        : eq(schema.productBrandsTable.storeId, storeId);
+      sourceItems = await db.select({ id: schema.productBrandsTable.id, nameFr: schema.productBrandsTable.nameFr, nameAr: schema.productBrandsTable.nameAr })
+        .from(schema.productBrandsTable).where(where);
+    } else {
+      const where = ids?.length
+        ? and(eq(schema.productColorsTable.storeId, storeId), inArray(schema.productColorsTable.id, ids))
+        : eq(schema.productColorsTable.storeId, storeId);
+      sourceItems = await db.select({ id: schema.productColorsTable.id, nameFr: schema.productColorsTable.nameFr, nameAr: schema.productColorsTable.nameAr, hexCode: schema.productColorsTable.hexCode })
+        .from(schema.productColorsTable).where(where);
+    }
+
+    const results: { targetStoreId: number; copied: number; skipped: number; errors: number }[] = [];
+
+    for (const targetStoreId of targetStoreIds) {
+      if (targetStoreId === storeId) continue;
+      let copied = 0, skipped = 0, errors = 0;
+
+      for (const item of sourceItems) {
+        try {
+          if (type === "family") {
+            const [existing] = await db.select({ id: schema.productFamiliesTable.id })
+              .from(schema.productFamiliesTable)
+              .where(and(eq(schema.productFamiliesTable.storeId, targetStoreId), sql`lower(${schema.productFamiliesTable.nameFr}) = lower(${item.nameFr})`))
+              .limit(1);
+            if (existing) { skipped++; continue; }
+            await db.insert(schema.productFamiliesTable).values({ storeId: targetStoreId, nameFr: item.nameFr, nameAr: item.nameAr });
+            copied++;
+          } else if (type === "brand") {
+            const [existing] = await db.select({ id: schema.productBrandsTable.id })
+              .from(schema.productBrandsTable)
+              .where(and(eq(schema.productBrandsTable.storeId, targetStoreId), sql`lower(${schema.productBrandsTable.nameFr}) = lower(${item.nameFr})`))
+              .limit(1);
+            if (existing) { skipped++; continue; }
+            await db.insert(schema.productBrandsTable).values({ storeId: targetStoreId, nameFr: item.nameFr, nameAr: item.nameAr });
+            copied++;
+          } else {
+            const [existing] = await db.select({ id: schema.productColorsTable.id })
+              .from(schema.productColorsTable)
+              .where(and(eq(schema.productColorsTable.storeId, targetStoreId), sql`lower(${schema.productColorsTable.nameFr}) = lower(${item.nameFr})`))
+              .limit(1);
+            if (existing) { skipped++; continue; }
+            await db.insert(schema.productColorsTable).values({ storeId: targetStoreId, nameFr: item.nameFr, nameAr: item.nameAr, hexCode: item.hexCode ?? null });
+            copied++;
+          }
+        } catch { errors++; }
+      }
+
+      results.push({ targetStoreId, copied, skipped, errors });
+    }
+
+    res.json({ results });
   } catch (err) { req.log.error(err); res.status(500).json({ error: "Internal server error" }); }
 });
 

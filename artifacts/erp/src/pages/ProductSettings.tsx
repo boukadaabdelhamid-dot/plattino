@@ -39,7 +39,8 @@ import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { Pencil, Trash2, Plus, Loader2, Layers, Tag, Palette, LayoutGrid, Image as ImageIcon, Upload, X } from "lucide-react";
+import { Pencil, Trash2, Plus, Loader2, Layers, Tag, Palette, LayoutGrid, Image as ImageIcon, Upload, X, Send } from "lucide-react";
+import CopyAttributesToStoresModal from "@/components/CopyAttributesToStoresModal";
 
 const API_BASE = (import.meta.env.VITE_API_URL as string | undefined) ?? "";
 const tok = () => localStorage.getItem("midanic_token") ?? "";
@@ -49,26 +50,36 @@ type AttributeItem = { id: number; nameAr: string; nameFr: string; hexCode?: str
 type AttributeForm = { nameAr: string; nameFr: string; hexCode?: string; imageUrl?: string };
 
 function AttributeTable({
-  title, titleAr, icon: Icon, items, isLoading, onAdd, onEdit, onDelete, showHex = false, showImage = false, t,
+  title, titleAr, icon: Icon, items, isLoading, onAdd, onEdit, onDelete, onCopy,
+  showHex = false, showImage = false, t,
 }: {
   title: string; titleAr: string; icon: React.ComponentType<{ className?: string }>;
   items: AttributeItem[]; isLoading: boolean;
   onAdd: () => void; onEdit: (item: AttributeItem) => void; onDelete: (item: AttributeItem) => void;
+  onCopy?: () => void;
   showHex?: boolean; showImage?: boolean; t: TFn;
 }) {
   return (
     <Card className="border shadow-sm">
       <CardHeader className="pb-3 pt-4 px-5">
-        <div className="flex items-center justify-between">
+        <div className="flex items-center justify-between gap-2">
           <CardTitle className="text-sm font-semibold flex items-center gap-2 text-[#1B3057]">
             <Icon className="h-4 w-4" />
             {title}
             <span className="text-xs text-muted-foreground font-normal" dir="rtl">/ {titleAr}</span>
           </CardTitle>
-          <Button size="sm" className="bg-[#1B3057] hover:bg-[#152544] h-8 text-xs gap-1" onClick={onAdd}>
-            <Plus className="h-3.5 w-3.5" />
-            {t("Ajouter", "إضافة")}
-          </Button>
+          <div className="flex items-center gap-2 shrink-0">
+            {onCopy && items.length > 0 && (
+              <Button size="sm" variant="outline" className="h-8 text-xs gap-1 border-[#1B3057]/30 text-[#1B3057] hover:bg-[#1B3057]/5" onClick={onCopy}>
+                <Send className="h-3.5 w-3.5" />
+                {t("Copier vers...", "نسخ إلى...")}
+              </Button>
+            )}
+            <Button size="sm" className="bg-[#1B3057] hover:bg-[#152544] h-8 text-xs gap-1" onClick={onAdd}>
+              <Plus className="h-3.5 w-3.5" />
+              {t("Ajouter", "إضافة")}
+            </Button>
+          </div>
         </div>
       </CardHeader>
       <CardContent className="px-5 pb-4">
@@ -180,6 +191,9 @@ export default function ProductSettings() {
   const [saving, setSaving] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<{ item: AttributeItem; type: "family" | "brand" | "color" | "type" } | null>(null);
+
+  // Copy-to-stores modal state
+  const [copyModal, setCopyModal] = useState<{ open: boolean; type: "family" | "brand" | "color" } | null>(null);
 
   const imageFileRef = useRef<HTMLInputElement>(null);
 
@@ -336,26 +350,65 @@ export default function ProductSettings() {
         </TabsContent>
 
         <TabsContent value="families">
-          <AttributeTable title={t("Familles de produits", "عائلات المنتجات")} titleAr="عائلات المنتجات" icon={Layers}
-            items={families} isLoading={loadingFamilies}
-            onAdd={() => openAdd("family")} onEdit={(item) => openEdit("family", item)}
-            onDelete={(item) => setDeleteTarget({ item, type: "family" })} t={t} />
+          <AttributeTable
+            title={t("Familles de produits", "عائلات المنتجات")}
+            titleAr="عائلات المنتجات"
+            icon={Layers}
+            items={families}
+            isLoading={loadingFamilies}
+            onAdd={() => openAdd("family")}
+            onEdit={(item) => openEdit("family", item)}
+            onDelete={(item) => setDeleteTarget({ item, type: "family" })}
+            onCopy={() => setCopyModal({ open: true, type: "family" })}
+            t={t}
+          />
         </TabsContent>
 
         <TabsContent value="brands">
-          <AttributeTable title={t("Marques", "العلامات التجارية")} titleAr="العلامات التجارية" icon={Tag}
-            items={brands} isLoading={loadingBrands}
-            onAdd={() => openAdd("brand")} onEdit={(item) => openEdit("brand", item)}
-            onDelete={(item) => setDeleteTarget({ item, type: "brand" })} t={t} />
+          <AttributeTable
+            title={t("Marques", "العلامات التجارية")}
+            titleAr="العلامات التجارية"
+            icon={Tag}
+            items={brands}
+            isLoading={loadingBrands}
+            onAdd={() => openAdd("brand")}
+            onEdit={(item) => openEdit("brand", item)}
+            onDelete={(item) => setDeleteTarget({ item, type: "brand" })}
+            onCopy={() => setCopyModal({ open: true, type: "brand" })}
+            t={t}
+          />
         </TabsContent>
 
         <TabsContent value="colors">
-          <AttributeTable title={t("Couleurs", "الألوان")} titleAr="الألوان" icon={Palette}
-            items={colors} isLoading={loadingColors}
-            onAdd={() => openAdd("color")} onEdit={(item) => openEdit("color", item)}
-            onDelete={(item) => setDeleteTarget({ item, type: "color" })} showHex t={t} />
+          <AttributeTable
+            title={t("Couleurs", "الألوان")}
+            titleAr="الألوان"
+            icon={Palette}
+            items={colors}
+            isLoading={loadingColors}
+            onAdd={() => openAdd("color")}
+            onEdit={(item) => openEdit("color", item)}
+            onDelete={(item) => setDeleteTarget({ item, type: "color" })}
+            onCopy={() => setCopyModal({ open: true, type: "color" })}
+            showHex
+            t={t}
+          />
         </TabsContent>
       </Tabs>
+
+      {/* Copy-to-stores modal */}
+      {copyModal && (
+        <CopyAttributesToStoresModal
+          open={copyModal.open}
+          onClose={() => setCopyModal(null)}
+          type={copyModal.type}
+          itemCount={
+            copyModal.type === "family" ? families.length
+              : copyModal.type === "brand" ? brands.length
+              : colors.length
+          }
+        />
+      )}
 
       {/* Shared dialog for add/edit */}
       <Dialog open={dialog.open} onOpenChange={(v) => setDialog((d) => ({ ...d, open: v }))}>

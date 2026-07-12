@@ -48,6 +48,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import ProductDetailsDialog from "@/components/ProductDetailsDialog";
 import CopyToStoresModal from "@/components/CopyToStoresModal";
+import { SearchableSelect } from "@/components/ui/searchable-select";
 import ImportExcelModal from "@/components/ImportExcelModal";
 
 // ── Store identity ──────────────────────────────────────────────────
@@ -1358,25 +1359,18 @@ export default function Products() {
                     <div>
                       <Label className="text-xs mb-1 block">{t("Marque", "الماركة")}</Label>
                       {refBrands.length > 0 ? (
-                        <Select
-                          value={form.brandId || NONE_VAL}
-                          onValueChange={(v) => {
-                            const val = sf(v);
+                        <SearchableSelect
+                          value={form.brandId || ""}
+                          onValueChange={(val) => {
                             const brand = refBrands.find((b) => String(b.id) === val);
                             setForm((f) => ({ ...f, brandId: val, brand: brand?.nameFr ?? f.brand }));
                           }}
-                        >
-                          <SelectTrigger className="h-8 text-sm"><SelectValue placeholder="Sélectionner..." /></SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value={NONE_VAL}>— Aucune marque</SelectItem>
-                            {refBrands.map((b) => (
-                              <SelectItem key={b.id} value={String(b.id)}>
-                                {b.nameFr}
-                                {b.nameAr && <span className="ml-2 text-xs text-muted-foreground" dir="rtl">/ {b.nameAr}</span>}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
+                          options={refBrands.map((b) => ({ value: String(b.id), labelFr: b.nameFr, labelAr: b.nameAr }))}
+                          placeholder={t("Sélectionner...", "اختر...")}
+                          searchPlaceholder={t("Rechercher une marque…", "ابحث عن ماركة...")}
+                          noneLabel={t("— Aucune marque", "— بدون ماركة")}
+                          emptyText={t("Aucun résultat", "لا توجد نتائج")}
+                        />
                       ) : (
                         <Input value={form.brand} onChange={(e) => setForm((f) => ({ ...f, brand: e.target.value }))} placeholder="Ex: L'Oréal" className="h-8 text-sm" />
                       )}
@@ -1396,29 +1390,18 @@ export default function Products() {
                     <div>
                       <Label className="text-xs mb-1 block">{t("Couleur", "اللون")}</Label>
                       {refColors.length > 0 ? (
-                        <Select
-                          value={form.colorId || NONE_VAL}
-                          onValueChange={(v) => {
-                            const val = sf(v);
+                        <SearchableSelect
+                          value={form.colorId || ""}
+                          onValueChange={(val) => {
                             const color = refColors.find((c) => String(c.id) === val);
                             setForm((f) => ({ ...f, colorId: val, color: color?.nameFr ?? f.color }));
                           }}
-                        >
-                          <SelectTrigger className="h-8 text-sm"><SelectValue placeholder="Sélectionner..." /></SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value={NONE_VAL}>— Aucune couleur</SelectItem>
-                            {refColors.map((c) => (
-                              <SelectItem key={c.id} value={String(c.id)}>
-                                <div className="flex items-center gap-2">
-                                  {c.hexCode && (
-                                    <span className="inline-block w-3 h-3 rounded-full border" style={{ backgroundColor: c.hexCode }} />
-                                  )}
-                                  {c.nameFr}
-                                </div>
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
+                          options={refColors.map((c) => ({ value: String(c.id), labelFr: c.nameFr, labelAr: c.nameAr, hexCode: c.hexCode }))}
+                          placeholder={t("Sélectionner...", "اختر...")}
+                          searchPlaceholder={t("Rechercher une couleur…", "ابحث عن لون...")}
+                          noneLabel={t("— Aucune couleur", "— بدون لون")}
+                          emptyText={t("Aucun résultat", "لا توجد نتائج")}
+                        />
                       ) : (
                         <Input value={form.color} onChange={(e) => setForm((f) => ({ ...f, color: e.target.value }))} placeholder="Ex: Noir" className="h-8 text-sm" />
                       )}
@@ -1435,21 +1418,15 @@ export default function Products() {
                   <div className="grid grid-cols-4 gap-3 mt-3">
                     <div>
                       <Label className="text-xs mb-1 block">{t("Famille", "العائلة")}</Label>
-                      <Select
-                        value={form.familyId || NONE_VAL}
-                        onValueChange={(v) => setForm((f) => ({ ...f, familyId: sf(v) }))}
-                      >
-                        <SelectTrigger className="h-8 text-sm"><SelectValue placeholder="— Aucune famille" /></SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value={NONE_VAL}>— Aucune famille</SelectItem>
-                          {refFamilies.map((fam) => (
-                            <SelectItem key={fam.id} value={String(fam.id)}>
-                              {fam.nameFr}
-                              {fam.nameAr && <span className="ml-2 text-xs text-muted-foreground" dir="rtl">/ {fam.nameAr}</span>}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
+                      <SearchableSelect
+                        value={form.familyId || ""}
+                        onValueChange={(val) => setForm((f) => ({ ...f, familyId: val }))}
+                        options={refFamilies.map((fam) => ({ value: String(fam.id), labelFr: fam.nameFr, labelAr: fam.nameAr }))}
+                        placeholder={t("Sélectionner...", "اختر...")}
+                        searchPlaceholder={t("Rechercher une famille…", "ابحث عن عائلة...")}
+                        noneLabel={t("— Aucune famille", "— بدون عائلة")}
+                        emptyText={t("Aucun résultat", "لا توجد نتائج")}
+                      />
                     </div>
                     <div>
                       <Label className="text-xs mb-1 block">Stock</Label>

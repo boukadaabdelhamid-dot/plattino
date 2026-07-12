@@ -124,6 +124,11 @@ function StoreSwitcher({ collapsed }: { collapsed: boolean }) {
         setToken(res.token);
         setCurrentStoreId(res.currentStoreId);
         setStores(stores, res.currentStoreId);
+        // Cancel all in-flight requests BEFORE clearing the cache.
+        // Without this, a background refetch that was already dispatched with
+        // the previous store's JWT can complete after qc.clear() and repopulate
+        // the cache with the wrong store's data (race condition → store mixing).
+        qc.cancelQueries();
         qc.clear();
         setOpen(false);
       },

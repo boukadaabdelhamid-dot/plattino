@@ -58,7 +58,15 @@ export default function PurchaseOrders() {
   const qc = useQueryClient();
   const { lang } = useLang();
   const t: TFn = (fr, ar) => lang === "ar" ? ar : fr;
-  const { data: rawPos, isLoading } = useGetPurchaseOrders();
+  // Resolve the current store FIRST so we can use its id as part of the
+  // React Query cache key. This scopes the cache per-store and prevents
+  // data from store A from briefly appearing in store B's list after a
+  // store switch (race condition: old in-flight request completing after
+  // qc.clear() would overwrite the freshly-cleared cache).
+  const store = useCurrentStore();
+  const { data: rawPos, isLoading } = useGetPurchaseOrders({
+    query: { queryKey: [...getGetPurchaseOrdersQueryKey(), store?.id ?? null] },
+  });
   const pos = (rawPos ?? []) as ExtendedPO[];
   const { data: suppliers } = useGetSuppliers();
   const { data: productsRes } = useGetProducts({ limit: 500 });
@@ -81,9 +89,17 @@ export default function PurchaseOrders() {
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
 
-  const store = useCurrentStore();
   const [editorOpen, setEditorOpen] = useState(false);
   const [editingPO, setEditingPO] = useState<PurchaseOrder | null>(null);
+
+  // Safety net: close the editor whenever the active store changes.
+  // Prevents editing a PO that belongs to a different store, which would
+  // cause the PUT /erp/purchase-orders/:id to return 404 (storeId mismatch).
+  React.useEffect(() => {
+    setEditorOpen(false);
+    setEditingPO(null);
+  }, [store?.id]);
+
   const [invoiceOpen, setInvoiceOpen] = useState(false);
   const [invoiceShowTva, setInvoiceShowTva] = useState(false);
   const [invoiceBaseData, setInvoiceBaseData] = useState<Omit<import("@/components/InvoiceTemplate").InvoiceData, "showTva"> | null>(null);

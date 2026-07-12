@@ -842,6 +842,68 @@ export interface PurchaseOrderItem {
   totalCharges?: string;
 }
 
+// ─── Product History ──────────────────────────────────────────────────────────
+export interface ProductHistoryPurchase {
+  purchaseOrderId: number;
+  quantity: number;
+  unitCost: string;
+  status: string;
+  createdAt?: string | null;
+  receivedAt?: string | null;
+  supplierName?: string | null;
+  storeId: number;
+  storeNameAr?: string | null;
+  storeNameEn?: string | null;
+}
+
+export interface ProductHistorySale {
+  orderId: number;
+  quantity: number;
+  unitPrice: string;
+  customerName?: string | null;
+  customerPhone?: string | null;
+  status: string;
+  createdAt?: string | null;
+  storeId: number;
+  storeNameAr?: string | null;
+  storeNameEn?: string | null;
+}
+
+export interface ProductHistoryMovementEntry {
+  kind: "movement";
+  id: string;
+  date?: string | null;
+  movementType: string;
+  quantity: number;
+  reason?: string | null;
+  reference?: string | null;
+  storeId: number;
+  storeNameAr?: string | null;
+  storeNameEn?: string | null;
+}
+
+export interface ProductHistoryTransferEntry {
+  kind: "transfer";
+  id: string;
+  date?: string | null;
+  status: string;
+  transferId: number;
+  quantity: number;
+  sourceStoreId: number;
+  sourceStoreNameAr?: string | null;
+  sourceStoreNameEn?: string | null;
+  destStoreId: number;
+  destStoreNameAr?: string | null;
+  destStoreNameEn?: string | null;
+}
+
+export interface ProductHistoryResponse {
+  purchases: ProductHistoryPurchase[];
+  sales: ProductHistorySale[];
+  timeline: (ProductHistoryMovementEntry | ProductHistoryTransferEntry)[];
+  currentStoreId: number;
+}
+
 export interface PurchaseAnnexeCharge {
   id: number;
   storeId: number;

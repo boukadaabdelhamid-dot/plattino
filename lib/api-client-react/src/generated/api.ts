@@ -112,6 +112,11 @@ import type {
   ProductType,
   ProductTypeListResponse,
   ProductsResponse,
+  ProductHistoryResponse,
+  ProductHistoryPurchase,
+  ProductHistorySale,
+  ProductHistoryMovementEntry,
+  ProductHistoryTransferEntry,
   PurchaseAnnexeCharge,
   CreatePurchaseAnnexeChargeRequest,
   PurchaseOrder,
@@ -11995,3 +12000,59 @@ export const useDeletePurchaseAnnexeCharge = <
 > => {
   return useMutation(getDeletePurchaseAnnexeChargeMutationOptions(options));
 };
+
+// ─── Product History ──────────────────────────────────────────────────────────
+
+export const getGetProductHistoryUrl = (productId: number) =>
+  `/api/erp/products/${productId}/history`;
+
+export const getProductHistory = async (
+  productId: number,
+  options?: RequestInit,
+): Promise<ProductHistoryResponse> =>
+  customFetch<ProductHistoryResponse>(getGetProductHistoryUrl(productId), {
+    ...options,
+    method: "GET",
+  });
+
+export const getGetProductHistoryQueryKey = (productId: number) =>
+  [`/api/erp/products/${productId}/history`] as const;
+
+export const getGetProductHistoryQueryOptions = <
+  TData = Awaited<ReturnType<typeof getProductHistory>>,
+  TError = ErrorType<unknown>,
+>(
+  productId: number,
+  options?: {
+    query?: UseQueryOptions<Awaited<ReturnType<typeof getProductHistory>>, TError, TData>;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+  const queryKey = queryOptions?.queryKey ?? getGetProductHistoryQueryKey(productId);
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof getProductHistory>>> = ({ signal }) =>
+    getProductHistory(productId, { signal, ...requestOptions });
+  return { queryKey, queryFn, enabled: !!productId, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getProductHistory>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetProductHistoryQueryResult = NonNullable<Awaited<ReturnType<typeof getProductHistory>>>;
+export type GetProductHistoryQueryError = ErrorType<unknown>;
+
+export function useGetProductHistory<
+  TData = Awaited<ReturnType<typeof getProductHistory>>,
+  TError = ErrorType<unknown>,
+>(
+  productId: number,
+  options?: {
+    query?: UseQueryOptions<Awaited<ReturnType<typeof getProductHistory>>, TError, TData>;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetProductHistoryQueryOptions(productId, options);
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & { queryKey: QueryKey };
+  return { ...query, queryKey: queryOptions.queryKey };
+}

@@ -42,11 +42,13 @@ import {
   Smartphone, DollarSign, LayoutGrid, Image as ImageIcon, Eye, EyeOff,
   Columns3, Printer, Sparkles, MoreVertical, Copy, Info, Boxes,
   ChevronDown, QrCode, Send, Star, ArrowUp, ArrowDown, FileSpreadsheet,
+  History,
 } from "lucide-react";
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import ProductDetailsDialog from "@/components/ProductDetailsDialog";
+import ProductHistorySheet from "@/components/ProductHistorySheet";
 import CopyToStoresModal from "@/components/CopyToStoresModal";
 import { SearchableSelect } from "@/components/ui/searchable-select";
 import ImportExcelModal from "@/components/ImportExcelModal";
@@ -321,6 +323,7 @@ export default function Products() {
   const generateBarcode = useGenerateProductBarcode();
   const [labelDialog, setLabelDialog] = useState<{ items: LabelTarget[] } | null>(null);
   const [detailsProduct, setDetailsProduct] = useState<Product | null>(null);
+  const [historyProduct, setHistoryProduct] = useState<Product | null>(null);
 
   const [dialog, setDialog] = useState<{ open: boolean; editing: Product | null }>({ open: false, editing: null });
   const [dialogError, setDialogError] = useState<string | null>(null);
@@ -1157,6 +1160,13 @@ export default function Products() {
             <Info className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
             <span>{t("Détails", "تفاصيل المنتج")}</span>
           </button>
+          <button
+            className="flex w-full items-center gap-2.5 px-3 py-2 hover:bg-muted/60 transition-colors text-right"
+            onClick={() => { setOpenMenuId(null); setMenuPos(null); setMenuProduct(null); setHistoryProduct(menuProduct); }}
+          >
+            <History className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+            <span>{t("Historique", "سجل الحركات")}</span>
+          </button>
           <div className="my-1 border-t" />
           <button
             className={`flex w-full items-center gap-2.5 px-3 py-2 transition-colors text-right ${menuProduct.barcode ? "hover:bg-muted/60" : "opacity-40 cursor-not-allowed"}`}
@@ -1793,6 +1803,11 @@ export default function Products() {
         onClose={() => setDetailsProduct(null)}
       />
 
+      <ProductHistorySheet
+        product={historyProduct}
+        onClose={() => setHistoryProduct(null)}
+      />
+
       <CopyToStoresModal
         open={copyModal.open}
         onClose={() => setCopyModal({ open: false, productIds: [] })}
@@ -1803,7 +1818,7 @@ export default function Products() {
       <ImportExcelModal
         open={importModal}
         onClose={() => setImportModal(false)}
-        onImported={() => { queryClient.invalidateQueries({ queryKey: getGetProductsQueryKey() }); }}
+        onImported={() => { qc.invalidateQueries({ queryKey: getGetProductsQueryKey() }); }}
       />
     </div>
   );

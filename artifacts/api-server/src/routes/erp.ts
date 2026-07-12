@@ -1556,6 +1556,32 @@ router.get("/erp/purchase-orders/:id/items", authenticate, requireStaff, require
   } catch (err) { req.log.error(err); res.status(500).json({ error: "Internal server error" }); }
 });
 
+router.delete("/erp/purchase-orders/:id", authenticate, requireStaff, requireStore, requirePermission("purchases", "edit"), async (req: AuthRequest, res) => {
+  try {
+    const storeId = req.currentStoreId!;
+    const poId = pid(req, "id");
+
+    const [existing] = await db.select({ status: schema.purchaseOrdersTable.status })
+      .from(schema.purchaseOrdersTable)
+      .where(and(eq(schema.purchaseOrdersTable.id, poId), eq(schema.purchaseOrdersTable.storeId, storeId)))
+      .limit(1);
+
+    if (!existing) { res.status(404).json({ error: "Purchase order not found" }); return; }
+    if (existing.status !== "pending") {
+      res.status(409).json({ error: `Cannot delete a purchase order with status "${existing.status}"` }); return;
+    }
+
+    await db.transaction(async (tx) => {
+      await tx.delete(schema.purchaseItemsTable)
+        .where(eq(schema.purchaseItemsTable.purchaseOrderId, poId));
+      await tx.delete(schema.purchaseOrdersTable)
+        .where(and(eq(schema.purchaseOrdersTable.id, poId), eq(schema.purchaseOrdersTable.storeId, storeId)));
+    });
+
+    res.status(204).send();
+  } catch (err) { req.log.error(err); res.status(500).json({ error: "Internal server error" }); }
+});
+
 router.put("/erp/purchase-orders/:id/receive", authenticate, requireStaff, requireStore, requirePermission("purchases", "edit"), async (req: AuthRequest, res) => {
   try {
     const storeId = req.currentStoreId!;

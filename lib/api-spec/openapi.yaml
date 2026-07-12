@@ -1422,6 +1422,25 @@ paths:
                 items:
                   $ref: "#/components/schemas/PurchaseOrderItem"
 
+  /erp/purchase-orders/{id}:
+    delete:
+      operationId: deletePurchaseOrder
+      tags: [erp]
+      summary: Delete a pending purchase order (cannot delete received orders)
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: integer
+      responses:
+        "204":
+          description: Deleted
+        "409":
+          description: Cannot delete a received or cancelled order
+
   /erp/purchase-orders/{id}/receive:
     put:
       operationId: receivePurchaseOrder

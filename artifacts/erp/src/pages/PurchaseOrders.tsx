@@ -1,6 +1,7 @@
 import React, { useMemo, useState } from "react";
 import {
   useGetPurchaseOrders, useCreatePurchaseOrder, useReceivePurchaseOrder,
+  useDeletePurchaseOrder,
   useGetSuppliers, useGetProducts, useCreateSupplier,
   useGetPurchaseOrderItems,
   getGetPurchaseOrdersQueryKey, getGetSuppliersQueryKey,
@@ -25,7 +26,7 @@ import {
 } from "@/components/ui/table";
 import {
   Plus, Pencil, Trash2, Search, Save, Eye, EyeOff,
-  FileText, Filter, X, Check, ShoppingBag, RefreshCw, Cloud, History, Settings, Printer,
+  FileText, Filter, X, Check, ShoppingBag, RefreshCw, Cloud, History, Settings, Printer, AlertTriangle,
 } from "lucide-react";
 import { format } from "date-fns";
 import InvoiceDialog from "@/components/InvoiceDialog";
@@ -63,6 +64,7 @@ export default function PurchaseOrders() {
   const { data: productsRes } = useGetProducts({ limit: 500 });
   const createPO = useCreatePurchaseOrder();
   const receivePO = useReceivePurchaseOrder();
+  const deletePO = useDeletePurchaseOrder();
 
   const products: Product[] = (productsRes?.products ?? []) as Product[];
   const supplierMap: Record<number, Supplier> = useMemo(() => {
@@ -289,6 +291,23 @@ export default function PurchaseOrders() {
                                 <Check className="h-4 w-4 mr-2" />
                                 {t("Clôturer le bon", "إغلاق البون")}
                               </DropdownMenuItem>
+                              <DropdownMenuItem
+                                disabled={po.status !== "pending"}
+                                className="text-red-600 focus:text-red-600"
+                                onClick={() => {
+                                  if (!confirm(t(
+                                    `Supprimer le bon d'achat N°${po.id} ? Cette action est irréversible.`,
+                                    `حذف سند الشراء رقم ${po.id}؟ هذا الإجراء لا يمكن التراجع عنه.`
+                                  ))) return;
+                                  deletePO.mutate({ id: po.id }, {
+                                    onSuccess: () => qc.invalidateQueries({ queryKey: getGetPurchaseOrdersQueryKey() }),
+                                    onError: (err) => alert(`Erreur: ${(err as Error).message}`),
+                                  });
+                                }}
+                              >
+                                <Trash2 className="h-4 w-4 mr-2" />
+                                {t("Supprimer", "حذف")}
+                              </DropdownMenuItem>
                             </DropdownMenuContent>
                           </DropdownMenu>
                         </TableCell>
@@ -321,7 +340,13 @@ export default function PurchaseOrders() {
             onSettled: () => { qc.invalidateQueries({ queryKey: getGetPurchaseOrdersQueryKey() }); setEditorOpen(false); },
           });
         }}
-        saving={createPO.isPending || receivePO.isPending}
+        onDelete={(po) => {
+          deletePO.mutate({ id: po.id }, {
+            onSuccess: () => { qc.invalidateQueries({ queryKey: getGetPurchaseOrdersQueryKey() }); setEditorOpen(false); },
+            onError: (err) => alert(`Erreur: ${(err as Error).message}`),
+          });
+        }}
+        saving={createPO.isPending || receivePO.isPending || deletePO.isPending}
       />
       <InvoiceDialog
         open={invoiceOpen}
@@ -348,12 +373,14 @@ type EditLine = {
 };
 
 function PurchaseEditor({
-  open, onOpenChange, editing, suppliers, products, onSave, onClose, saving, onPrint,
+  open, onOpenChange, editing, suppliers, products, onSave, onClose, onDelete, saving, onPrint,
 }: {
   open: boolean; onOpenChange: (o: boolean) => void; editing: ExtendedPO | null;
   suppliers: Supplier[]; products: Product[];
   onSave: (payload: { supplierId: number; notes?: string; paymentMethod: string; items: { productId: number; quantity: number; unitCost: number }[] }) => void;
-  onClose: (po: PurchaseOrder) => void; saving: boolean;
+  onClose: (po: PurchaseOrder) => void;
+  onDelete: (po: PurchaseOrder) => void;
+  saving: boolean;
   onPrint: (baseData: Omit<import("@/components/InvoiceTemplate").InvoiceData, "showTva">) => void;
 }) {
   const { lang } = useLang();
@@ -373,8 +400,15 @@ function PurchaseEditor({
     query: { enabled: open && !!editing },
   });
 
+  // Guard: load items from server only once per dialog open.
+  // Without this, any background refetch of existingItems (e.g. triggered by a
+  // WS purchase_received event) would overwrite in-progress edits.
+  const hasLoadedItemsRef = React.useRef(false);
+
   React.useEffect(() => {
     if (!open) return;
+    // Reset the guard whenever the dialog opens/switches to a different PO.
+    hasLoadedItemsRef.current = false;
     if (editing) {
       setRefAchat(editing.notes || `Bon N°${editing.id}`);
       setDate(editing.createdAt ? editing.createdAt.slice(0, 16) : new Date().toISOString().slice(0, 16));
@@ -395,6 +429,10 @@ function PurchaseEditor({
 
   React.useEffect(() => {
     if (!open || !editing || !existingItems) return;
+    // Only populate lines on the first load; ignore subsequent refetches so
+    // background WS invalidations do not overwrite the user's in-progress edits.
+    if (hasLoadedItemsRef.current) return;
+    hasLoadedItemsRef.current = true;
     setLines(existingItems.map((it) => ({
       productId: it.productId,
       designation: (it.productNameEn || it.productNameAr || `#${it.productId}`).toUpperCase(),
@@ -755,6 +793,21 @@ function PurchaseEditor({
               data-testid="button-print-purchase-invoice">
               <Printer className="h-4 w-4 mr-1.5" />
               {t("Facture", "فاتورة")}
+            </Button>
+          )}
+          {isExisting && !isReceived && (
+            <Button variant="outline" className="border-red-300 text-red-600 hover:bg-red-50"
+              onClick={() => {
+                if (!editing) return;
+                if (!confirm(t(
+                  `Supprimer le bon d'achat N°${editing.id} ? Cette action est irréversible.`,
+                  `حذف سند الشراء رقم ${editing.id}؟ هذا الإجراء لا يمكن التراجع عنه.`
+                ))) return;
+                onDelete(editing);
+              }}
+              disabled={saving} data-testid="button-supprimer-achat">
+              <AlertTriangle className="h-4 w-4 mr-1.5" />
+              {t("Supprimer", "حذف")}
             </Button>
           )}
           {isExisting && !isReceived && (

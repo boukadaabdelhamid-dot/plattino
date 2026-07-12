@@ -228,10 +228,13 @@ export function useRealtimeWS(): void {
             invalidatePrefix("/api/erp/inventory");
             break;
           case "purchase_received":
-            // Receiving a PO increments stock — refresh product/inventory/PO views.
+            // Receiving a PO increments stock — refresh product/inventory/PO list.
+            // NOTE: invalidatePrefix is intentionally NOT used here for purchase-orders
+            // because its startsWith logic would also match /erp/purchase-orders/:id/items
+            // and reset the in-progress editor while the user is typing.
             invalidatePrefix("/api/erp/products");
             invalidatePrefix("/api/erp/inventory");
-            invalidatePrefix("/api/erp/purchase-orders");
+            qc.invalidateQueries({ queryKey: ["/api/erp/purchase-orders"] });
             break;
           case "caisse_changed":
             invalidatePrefix("/api/erp/caisses");

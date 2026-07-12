@@ -112,6 +112,8 @@ import type {
   ProductType,
   ProductTypeListResponse,
   ProductsResponse,
+  PurchaseAnnexeCharge,
+  CreatePurchaseAnnexeChargeRequest,
   PurchaseOrder,
   PurchaseOrderItem,
   RegisterRequest,
@@ -11813,4 +11815,183 @@ export const useUploadImage = <
   TContext
 > => {
   return useMutation(getUploadImageMutationOptions(options));
+};
+
+// ─── Purchase Annexe Charges ─────────────────────────────────────────────────
+
+export const getGetPurchaseAnnexeChargesUrl = () => `/api/erp/purchase-annexe-charges`;
+
+export const getPurchaseAnnexeCharges = async (
+  options?: RequestInit,
+): Promise<PurchaseAnnexeCharge[]> => {
+  return customFetch<PurchaseAnnexeCharge[]>(getGetPurchaseAnnexeChargesUrl(), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetPurchaseAnnexeChargesQueryKey = () =>
+  [`/api/erp/purchase-annexe-charges`] as const;
+
+export const getGetPurchaseAnnexeChargesQueryOptions = <
+  TData = Awaited<ReturnType<typeof getPurchaseAnnexeCharges>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<Awaited<ReturnType<typeof getPurchaseAnnexeCharges>>, TError, TData>;
+  request?: SecondParameter<typeof customFetch>;
+}) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+  const queryKey = queryOptions?.queryKey ?? getGetPurchaseAnnexeChargesQueryKey();
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof getPurchaseAnnexeCharges>>> = ({ signal }) =>
+    getPurchaseAnnexeCharges({ signal, ...requestOptions });
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getPurchaseAnnexeCharges>>, TError, TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetPurchaseAnnexeChargesQueryResult = NonNullable<Awaited<ReturnType<typeof getPurchaseAnnexeCharges>>>;
+export type GetPurchaseAnnexeChargesQueryError = ErrorType<unknown>;
+
+export function useGetPurchaseAnnexeCharges<
+  TData = Awaited<ReturnType<typeof getPurchaseAnnexeCharges>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<Awaited<ReturnType<typeof getPurchaseAnnexeCharges>>, TError, TData>;
+  request?: SecondParameter<typeof customFetch>;
+}): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetPurchaseAnnexeChargesQueryOptions(options);
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & { queryKey: QueryKey };
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+// POST /api/erp/purchase-annexe-charges
+export const getCreatePurchaseAnnexeChargeUrl = () => `/api/erp/purchase-annexe-charges`;
+
+export const createPurchaseAnnexeCharge = async (
+  data: CreatePurchaseAnnexeChargeRequest,
+  options?: RequestInit,
+): Promise<PurchaseAnnexeCharge> => {
+  return customFetch<PurchaseAnnexeCharge>(getCreatePurchaseAnnexeChargeUrl(), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(data),
+  });
+};
+
+export const getCreatePurchaseAnnexeChargeMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof createPurchaseAnnexeCharge>>,
+    TError,
+    { data: BodyType<CreatePurchaseAnnexeChargeRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof createPurchaseAnnexeCharge>>,
+  TError,
+  { data: BodyType<CreatePurchaseAnnexeChargeRequest> },
+  TContext
+> => {
+  const { mutation: mutationOptions, request: requestOptions } = options ?? {};
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof createPurchaseAnnexeCharge>>,
+    { data: BodyType<CreatePurchaseAnnexeChargeRequest> }
+  > = (props) => {
+    const { data } = props ?? {};
+    return createPurchaseAnnexeCharge(data, requestOptions);
+  };
+  return { mutationFn, ...mutationOptions };
+};
+
+export type CreatePurchaseAnnexeChargeMutationResult = NonNullable<Awaited<ReturnType<typeof createPurchaseAnnexeCharge>>>;
+export type CreatePurchaseAnnexeChargeMutationBody = BodyType<CreatePurchaseAnnexeChargeRequest>;
+export type CreatePurchaseAnnexeChargeMutationError = ErrorType<unknown>;
+
+export const useCreatePurchaseAnnexeCharge = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof createPurchaseAnnexeCharge>>,
+    TError,
+    { data: BodyType<CreatePurchaseAnnexeChargeRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof createPurchaseAnnexeCharge>>,
+  TError,
+  { data: BodyType<CreatePurchaseAnnexeChargeRequest> },
+  TContext
+> => {
+  return useMutation(getCreatePurchaseAnnexeChargeMutationOptions(options));
+};
+
+// DELETE /api/erp/purchase-annexe-charges/:id
+export const getDeletePurchaseAnnexeChargeUrl = (id: number) =>
+  `/api/erp/purchase-annexe-charges/${id}`;
+
+export const deletePurchaseAnnexeCharge = async (
+  id: number,
+  options?: RequestInit,
+): Promise<void> => {
+  return customFetch<void>(getDeletePurchaseAnnexeChargeUrl(id), {
+    ...options,
+    method: "DELETE",
+  });
+};
+
+export const getDeletePurchaseAnnexeChargeMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof deletePurchaseAnnexeCharge>>,
+    TError,
+    { id: number },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof deletePurchaseAnnexeCharge>>,
+  TError,
+  { id: number },
+  TContext
+> => {
+  const { mutation: mutationOptions, request: requestOptions } = options ?? {};
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof deletePurchaseAnnexeCharge>>,
+    { id: number }
+  > = (props) => {
+    const { id } = props ?? {};
+    return deletePurchaseAnnexeCharge(id, requestOptions);
+  };
+  return { mutationFn, ...mutationOptions };
+};
+
+export type DeletePurchaseAnnexeChargeMutationResult = NonNullable<Awaited<ReturnType<typeof deletePurchaseAnnexeCharge>>>;
+export type DeletePurchaseAnnexeChargeMutationError = ErrorType<unknown>;
+
+export const useDeletePurchaseAnnexeCharge = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof deletePurchaseAnnexeCharge>>,
+    TError,
+    { id: number },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof deletePurchaseAnnexeCharge>>,
+  TError,
+  { id: number },
+  TContext
+> => {
+  return useMutation(getDeletePurchaseAnnexeChargeMutationOptions(options));
 };

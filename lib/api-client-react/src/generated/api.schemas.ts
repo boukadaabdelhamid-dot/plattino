@@ -838,6 +838,27 @@ export interface PurchaseOrderItem {
   unitCost: string;
   productNameEn?: string | null;
   productNameAr?: string | null;
+  /** Sum of all annexe charge allocations for this item (DA). "0" when none. */
+  totalCharges?: string;
+}
+
+export interface PurchaseAnnexeCharge {
+  id: number;
+  storeId: number;
+  description: string;
+  totalAmount: string;
+  date: string;
+  notes?: string | null;
+  createdAt: string;
+  purchaseOrderIds: number[];
+}
+
+export interface CreatePurchaseAnnexeChargeRequest {
+  description: string;
+  totalAmount: number;
+  date: string;
+  notes?: string;
+  purchaseOrderIds: number[];
 }
 
 export type CreatePurchaseOrderRequestItemsItem = {

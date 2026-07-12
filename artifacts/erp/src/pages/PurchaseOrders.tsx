@@ -5,8 +5,10 @@ import {
   useGetSuppliers, useGetProducts, useCreateSupplier,
   useGetPurchaseOrderItems,
   getGetPurchaseOrdersQueryKey, getGetSuppliersQueryKey,
+  getGetPurchaseAnnexeChargesQueryKey,
+  useGetPurchaseAnnexeCharges, useCreatePurchaseAnnexeCharge, useDeletePurchaseAnnexeCharge,
   getProducts,
-  type PurchaseOrder, type Supplier, type Product,
+  type PurchaseOrder, type Supplier, type Product, type PurchaseAnnexeCharge,
 } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useLang } from "@/hooks/use-lang";
@@ -91,6 +93,7 @@ export default function PurchaseOrders() {
 
   const [editorOpen, setEditorOpen] = useState(false);
   const [editingPO, setEditingPO] = useState<PurchaseOrder | null>(null);
+  const [chargesOpen, setChargesOpen] = useState(false);
 
   // Safety net: close the editor whenever the active store changes.
   // Prevents editing a PO that belongs to a different store, which would
@@ -187,7 +190,11 @@ export default function PurchaseOrders() {
                 aria-label={t("Rafraîchir", "تحديث")}>
                 <RefreshCw className="h-4 w-4" />
               </Button>
-              <Button size="icon" variant="ghost" className="h-8 w-8" aria-label={t("Importer", "استيراد")}><Cloud className="h-4 w-4" /></Button>
+              <Button size="sm" variant="outline" className="h-8 text-xs border-orange-300 text-orange-700 hover:bg-orange-50"
+                onClick={() => setChargesOpen(true)} aria-label={t("Charges annexes", "المصاريف الإضافية")}>
+                <Cloud className="h-4 w-4 mr-1" />
+                {t("Charges", "المصاريف")}
+              </Button>
               <Button size="icon" variant="ghost" className="h-8 w-8" aria-label={t("Historique", "التاريخ")}><History className="h-4 w-4" /></Button>
               <Button size="icon" variant="ghost" className="h-8 w-8" aria-label={t("Documents", "مستندات")}><FileText className="h-4 w-4" /></Button>
               <Button size="icon" variant="ghost" className="h-8 w-8" aria-label={t("Paramètres", "الإعدادات")}><Settings className="h-4 w-4" /></Button>
@@ -378,6 +385,12 @@ export default function PurchaseOrders() {
         onShowTvaChange={setInvoiceShowTva}
         data={finalInvoiceData}
       />
+      <ChargesManagerDialog
+        open={chargesOpen}
+        onOpenChange={setChargesOpen}
+        pos={pos}
+        supplierMap={supplierMap}
+      />
     </div>
   );
 }
@@ -394,6 +407,8 @@ function FilterInput({ value, onChange }: { value: string; onChange: (v: string)
 type EditLine = {
   productId: number; designation: string;
   qty: number; qtyPrepared: number; qtyGratuit: number; pu: number;
+  /** Total annexe charges allocated to this item (sum across all charge records, in DA). */
+  charges: number;
 };
 
 function PurchaseEditor({
@@ -464,6 +479,7 @@ function PurchaseEditor({
       qtyPrepared: editing.status === "received" ? it.quantity : 0,
       qtyGratuit: 0,
       pu: parseFloat(it.unitCost ?? "0"),
+      charges: parseFloat(it.totalCharges ?? "0"),
     })));
   }, [open, editing, existingItems]);
 
@@ -478,6 +494,7 @@ function PurchaseEditor({
         designation: (p.nameEn || p.nameAr || `#${p.id}`).toUpperCase(),
         qty: 1, qtyPrepared: 0, qtyGratuit: 0,
         pu: parseFloat(p.costPrice ?? p.price ?? "0"),
+        charges: 0,
       }];
     });
   }
@@ -533,6 +550,8 @@ function PurchaseEditor({
 
   const isExisting = !!editing;
   const isReceived = editing?.status === "received";
+  const hasCharges = isExisting && lines.some(l => l.charges > 0);
+  const totalChargesAmt = lines.reduce((s, l) => s + l.charges, 0);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -719,7 +738,9 @@ function PurchaseEditor({
                       <TableHead className="font-semibold text-center w-24">{t("Progression", "التقدم")}</TableHead>
                       <TableHead className="font-semibold text-center w-24">{t("Qté Gratuite", "مجانية")}</TableHead>
                       <TableHead className="font-semibold text-right w-24">{t("PU", "ث.و")}</TableHead>
+                      {hasCharges && showMontant && <TableHead className="font-semibold text-right w-24 text-orange-600">{t("Frais", "المصاريف")}</TableHead>}
                       {showMontant && <TableHead className="font-semibold text-right w-28">{t("Montant", "المبلغ")}</TableHead>}
+                      {hasCharges && showMontant && <TableHead className="font-semibold text-right w-28 text-emerald-700">{t("Total eff.", "المجموع الفعلي")}</TableHead>}
                       <TableHead className="w-10" />
                     </TableRow>
                   </TableHeader>
@@ -762,8 +783,16 @@ function PurchaseEditor({
                                   onChange={(e) => updateLine(idx, { pu: parseFloat(e.target.value) || 0 })}
                                   className="h-7 w-20 text-right text-xs ml-auto" disabled={isReceived} />
                               </TableCell>
+                              {hasCharges && showMontant && (
+                                <TableCell className="text-right text-xs tabular-nums text-orange-600">
+                                  {l.charges > 0 ? fmt(l.charges) : "—"}
+                                </TableCell>
+                              )}
                               {showMontant && (
                                 <TableCell className="text-right font-semibold tabular-nums">{fmt(l.pu * l.qty)}</TableCell>
+                              )}
+                              {hasCharges && showMontant && (
+                                <TableCell className="text-right font-semibold tabular-nums text-emerald-700">{fmt(l.pu * l.qty + l.charges)}</TableCell>
                               )}
                               <TableCell>
                                 <Button size="icon" variant="ghost" className="h-7 w-7 text-red-500"
@@ -775,15 +804,27 @@ function PurchaseEditor({
                           );
                         })}
                         <TableRow className="bg-slate-50 font-bold">
-                          <TableCell>{t("Total", "المجموع")} ({lines.length})</TableCell>
+                          <TableCell>{hasCharges ? t("Sous-total P.A.", "مجموع الشراء") : t("Total", "المجموع")} ({lines.length})</TableCell>
                           <TableCell className="text-center">{lines.reduce((s, l) => s + l.qty, 0)}</TableCell>
                           <TableCell className="text-center">{lines.reduce((s, l) => s + l.qtyPrepared, 0)}</TableCell>
                           <TableCell />
                           <TableCell className="text-center">{lines.reduce((s, l) => s + l.qtyGratuit, 0)}</TableCell>
                           <TableCell />
+                          {hasCharges && showMontant && <TableCell />}
                           {showMontant && <TableCell className="text-right tabular-nums">{fmt(subtotal)}</TableCell>}
+                          {hasCharges && showMontant && <TableCell />}
                           <TableCell />
                         </TableRow>
+                        {hasCharges && showMontant && (
+                          <TableRow className="bg-orange-50 font-bold border-t-2 border-orange-200">
+                            <TableCell className="text-orange-700 text-xs">{t("Total charges annexes", "مجموع المصاريف الإضافية")}</TableCell>
+                            <TableCell /><TableCell /><TableCell /><TableCell /><TableCell />
+                            <TableCell className="text-right tabular-nums text-orange-700">{fmt(totalChargesAmt)}</TableCell>
+                            <TableCell />
+                            <TableCell className="text-right tabular-nums font-bold text-emerald-700">{fmt(subtotal + totalChargesAmt)}</TableCell>
+                            <TableCell />
+                          </TableRow>
+                        )}
                       </>
                     )}
                   </TableBody>
@@ -1059,6 +1100,219 @@ function ProductPickerDialog({
               </button>
             ))
           )}
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ─── Charges Manager Dialog ───────────────────────────────────────────────────
+function ChargesManagerDialog({
+  open, onOpenChange, pos, supplierMap,
+}: {
+  open: boolean; onOpenChange: (o: boolean) => void;
+  pos: ExtendedPO[]; supplierMap: Record<number, Supplier>;
+}) {
+  const qc = useQueryClient();
+  const { lang } = useLang();
+  const t: TFn = (fr, ar) => lang === "ar" ? ar : fr;
+
+  const { data: charges, isLoading } = useGetPurchaseAnnexeCharges();
+  const createCharge = useCreatePurchaseAnnexeCharge();
+  const deleteCharge = useDeletePurchaseAnnexeCharge();
+
+  const [showCreate, setShowCreate] = useState(false);
+  const [description, setDescription] = useState("");
+  const [amount, setAmount] = useState("");
+  const [date, setDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [notes, setNotes] = useState("");
+  const [selectedPoIds, setSelectedPoIds] = useState<number[]>([]);
+
+  React.useEffect(() => {
+    if (!open) { setShowCreate(false); setDescription(""); setAmount(""); setSelectedPoIds([]); setNotes(""); }
+  }, [open]);
+
+  const amountNum = parseFloat(amount);
+  const selectedPos = useMemo(() => pos.filter(p => selectedPoIds.includes(p.id)), [pos, selectedPoIds]);
+  const totalPurchaseValue = selectedPos.reduce((s, p) => s + parseFloat(p.totalAmount ?? "0"), 0);
+
+  function togglePo(id: number) {
+    setSelectedPoIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
+  }
+
+  function handleCreate() {
+    if (!description.trim() || !amount || selectedPoIds.length === 0 || isNaN(amountNum) || amountNum <= 0) return;
+    createCharge.mutate({ data: { description: description.trim(), totalAmount: amountNum, date, notes: notes || undefined, purchaseOrderIds: selectedPoIds } }, {
+      onSuccess: () => {
+        qc.invalidateQueries({ queryKey: getGetPurchaseAnnexeChargesQueryKey() });
+        qc.invalidateQueries({ queryKey: getGetPurchaseOrdersQueryKey() });
+        setShowCreate(false); setDescription(""); setAmount(""); setNotes(""); setSelectedPoIds([]);
+      },
+      onError: (err) => alert(`Erreur: ${(err as Error).message}`),
+    });
+  }
+
+  const sortedPos = useMemo(() =>
+    [...pos].sort((a, b) => new Date(b.createdAt ?? "").getTime() - new Date(a.createdAt ?? "").getTime()),
+  [pos]);
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-4xl max-h-[92vh] overflow-y-auto p-0">
+        <div className="bg-orange-600 text-white px-5 py-3 flex items-center justify-between">
+          <DialogHeader className="flex-1">
+            <DialogTitle className="text-white text-base flex items-center gap-2">
+              <X className="h-4 w-4 cursor-pointer" onClick={() => onOpenChange(false)} />
+              {t("Charges annexes", "المصاريف الإضافية")}
+            </DialogTitle>
+          </DialogHeader>
+          <Button size="sm" className="bg-white text-orange-700 hover:bg-orange-50 h-7 text-xs"
+            onClick={() => setShowCreate(v => !v)}>
+            <Plus className="h-3.5 w-3.5 mr-1" />
+            {t("Nouveau", "جديد")}
+          </Button>
+        </div>
+
+        <div className="p-5 space-y-4">
+          {showCreate && (
+            <Card className="border border-orange-200 shadow-sm">
+              <div className="bg-orange-50 px-4 py-2.5 border-b">
+                <h3 className="font-semibold text-orange-800 text-sm">{t("Nouvelle charge annexe", "مصروف إضافي جديد")}</h3>
+              </div>
+              <CardContent className="p-4 space-y-3">
+                <div className="grid grid-cols-3 gap-3">
+                  <div className="col-span-2">
+                    <Label className="text-xs mb-1 block">{t("Description *", "الوصف *")}</Label>
+                    <Input value={description} onChange={e => setDescription(e.target.value)}
+                      placeholder={t("Ex: Frais de transport, Douanes…", "مثال: فروع الشحن، الجمارك…")} className="h-9" />
+                  </div>
+                  <div>
+                    <Label className="text-xs mb-1 block">{t("Date *", "التاريخ *")}</Label>
+                    <Input type="date" value={date} onChange={e => setDate(e.target.value)} className="h-9" />
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <Label className="text-xs mb-1 block">{t("Montant total (DA) *", "المبلغ الإجمالي (DA) *")}</Label>
+                    <Input type="number" step="0.01" min="0" value={amount} onChange={e => setAmount(e.target.value)} placeholder="0.00" className="h-9" />
+                  </div>
+                  <div>
+                    <Label className="text-xs mb-1 block">{t("Notes", "ملاحظات")}</Label>
+                    <Input value={notes} onChange={e => setNotes(e.target.value)} placeholder="…" className="h-9" />
+                  </div>
+                </div>
+
+                <div>
+                  <Label className="text-xs mb-1 block">
+                    {t("Bons d'achat concernés *", "بونات الشراء المعنية *")}
+                    {selectedPoIds.length > 0 && (
+                      <span className="ml-2 text-orange-600 font-semibold">
+                        ({selectedPoIds.length} {t("sélectionné(s)", "مختار")})
+                        {!isNaN(amountNum) && amountNum > 0 && totalPurchaseValue > 0 && (
+                          <span className="ml-1 text-muted-foreground font-normal text-xs">
+                            — {t("valeur totale", "القيمة الإجمالية")} {fmt(totalPurchaseValue)} DA
+                          </span>
+                        )}
+                      </span>
+                    )}
+                  </Label>
+                  <div className="border rounded-md max-h-52 overflow-y-auto divide-y">
+                    {sortedPos.length === 0 ? (
+                      <div className="text-center py-6 text-muted-foreground text-sm italic">{t("Aucun bon d'achat", "لا توجد بونات شراء")}</div>
+                    ) : sortedPos.map(po => {
+                      const checked = selectedPoIds.includes(po.id);
+                      const poValue = parseFloat(po.totalAmount ?? "0");
+                      const estimatedCharge = !isNaN(amountNum) && amountNum > 0 && totalPurchaseValue > 0
+                        ? (poValue / totalPurchaseValue) * amountNum : null;
+                      return (
+                        <label key={po.id} className={`flex items-center gap-3 px-3 py-2 cursor-pointer hover:bg-slate-50 ${checked ? "bg-orange-50" : ""}`}>
+                          <input type="checkbox" checked={checked} onChange={() => togglePo(po.id)} className="accent-orange-600 h-4 w-4" />
+                          <span className="flex-1 text-sm">
+                            <span className="font-semibold text-slate-700">N°{String(po.id).padStart(6, "0")}</span>
+                            <span className="text-muted-foreground ml-2 text-xs">{po.createdAt ? format(new Date(po.createdAt), "yyyy-MM-dd") : ""}</span>
+                            <span className={`ml-2 text-xs px-1.5 py-0.5 rounded-full font-medium ${statusClass(po.status)}`}>{statusLabel(po.status, t)}</span>
+                            <span className="ml-2 text-xs text-muted-foreground">{supplierMap[po.supplierId]?.name ?? ""}</span>
+                          </span>
+                          <span className="tabular-nums text-sm font-semibold text-slate-700">{fmt(poValue)} DA</span>
+                          {checked && estimatedCharge !== null && (
+                            <span className="text-xs text-orange-600 font-semibold w-24 text-right">≈ {fmt(estimatedCharge)} DA</span>
+                          )}
+                        </label>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                <div className="flex justify-end gap-2 pt-1">
+                  <Button size="sm" variant="outline" onClick={() => setShowCreate(false)}>{t("Annuler", "إلغاء")}</Button>
+                  <Button size="sm" className="bg-orange-600 hover:bg-orange-700"
+                    onClick={handleCreate}
+                    disabled={createCharge.isPending || !description.trim() || !amount || selectedPoIds.length === 0 || isNaN(amountNum) || amountNum <= 0}>
+                    <Save className="h-3.5 w-3.5 mr-1" />
+                    {createCharge.isPending ? t("Enregistrement…", "جارٍ الحفظ…") : t("Enregistrer", "حفظ")}
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
+          )}
+
+          <Card className="border shadow-sm">
+            <div className="bg-slate-50 px-4 py-2.5 border-b">
+              <h3 className="font-semibold text-sm">{t("Charges enregistrées", "المصاريف المسجلة")} ({(charges ?? []).length})</h3>
+            </div>
+            <CardContent className="p-0">
+              {isLoading ? (
+                <div className="p-4 space-y-2">{[...Array(3)].map((_, i) => <Skeleton key={i} className="h-10" />)}</div>
+              ) : (charges ?? []).length === 0 ? (
+                <div className="text-center py-10 text-muted-foreground italic text-sm">{t("Aucune charge enregistrée", "لا توجد مصاريف مسجلة")}</div>
+              ) : (
+                <Table>
+                  <TableHeader className="bg-slate-50/50">
+                    <TableRow>
+                      <TableHead>{t("Date", "التاريخ")}</TableHead>
+                      <TableHead>{t("Description", "الوصف")}</TableHead>
+                      <TableHead className="text-center">{t("Bons", "البونات")}</TableHead>
+                      <TableHead className="text-right">{t("Montant", "المبلغ")}</TableHead>
+                      <TableHead className="w-10" />
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {(charges as PurchaseAnnexeCharge[]).map(c => (
+                      <TableRow key={c.id}>
+                        <TableCell className="text-sm text-muted-foreground">{c.date}</TableCell>
+                        <TableCell className="font-medium">{c.description}</TableCell>
+                        <TableCell className="text-center text-xs text-muted-foreground">
+                          {(c.purchaseOrderIds ?? []).map(id => `N°${String(id).padStart(6, "0")}`).join(", ") || "—"}
+                        </TableCell>
+                        <TableCell className="text-right font-bold tabular-nums text-orange-700">
+                          {fmt(parseFloat(c.totalAmount ?? "0"))} DA
+                        </TableCell>
+                        <TableCell>
+                          <Button size="icon" variant="ghost" className="h-7 w-7 text-red-500"
+                            onClick={() => {
+                              if (!confirm(t(
+                                `Supprimer "${c.description}" ? Cette action recalculera les CUMP des produits concernés.`,
+                                `حذف "${c.description}"؟ سيعيد هذا احتساب CUMP للمنتجات المتأثرة.`
+                              ))) return;
+                              deleteCharge.mutate({ id: c.id }, {
+                                onSuccess: () => {
+                                  qc.invalidateQueries({ queryKey: getGetPurchaseAnnexeChargesQueryKey() });
+                                  qc.invalidateQueries({ queryKey: getGetPurchaseOrdersQueryKey() });
+                                },
+                                onError: err => alert(`Erreur: ${(err as Error).message}`),
+                              });
+                            }}
+                            disabled={deleteCharge.isPending}>
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </Button>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              )}
+            </CardContent>
+          </Card>
         </div>
       </DialogContent>
     </Dialog>

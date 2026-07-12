@@ -130,6 +130,39 @@ export const purchaseItemsTable = pgTable("purchase_items", {
   unitCost: numeric("unit_cost", { precision: 10, scale: 2 }).notNull(),
 });
 
+// ─── Purchase Annexe Charges ─────────────────────────────────────────────────
+// Global charge records (frais de transport, douanes, etc.) applied across
+// one or more purchase orders. The total is distributed proportionally
+// across every product line in the selected bons based on line value weight.
+export const purchaseAnnexeChargesTable = pgTable("purchase_annexe_charges", {
+  id: serial("id").primaryKey(),
+  storeId: integer("store_id").references(() => storesTable.id).notNull(),
+  description: text("description").notNull(),
+  totalAmount: numeric("total_amount", { precision: 12, scale: 2 }).notNull(),
+  date: date("date").notNull(),
+  notes: text("notes"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+// Junction: which purchase orders a charge applies to
+export const purchaseAnnexeChargeOrdersTable = pgTable("purchase_annexe_charge_orders", {
+  chargeId: integer("charge_id").references(() => purchaseAnnexeChargesTable.id, { onDelete: "cascade" }).notNull(),
+  purchaseOrderId: integer("purchase_order_id").references(() => purchaseOrdersTable.id).notNull(),
+});
+
+// Per-item allocation: how much of the charge is assigned to each purchase_items row
+export const purchaseAnnexeChargeLinesTable = pgTable("purchase_annexe_charge_lines", {
+  id: serial("id").primaryKey(),
+  chargeId: integer("charge_id").references(() => purchaseAnnexeChargesTable.id, { onDelete: "cascade" }).notNull(),
+  purchaseItemId: integer("purchase_item_id").references(() => purchaseItemsTable.id).notNull(),
+  purchaseOrderId: integer("purchase_order_id").references(() => purchaseOrdersTable.id).notNull(),
+  productId: integer("product_id").references(() => productsTable.id).notNull(),
+  allocatedAmount: numeric("allocated_amount", { precision: 12, scale: 2 }).notNull(),
+});
+
+export type PurchaseAnnexeCharge = typeof purchaseAnnexeChargesTable.$inferSelect;
+export type PurchaseAnnexeChargeLine = typeof purchaseAnnexeChargeLinesTable.$inferSelect;
+
 // ─── Inventory Movements ──────────────────────────────────────────────────────
 export const inventoryMovementTypeEnum = pgEnum("inventory_movement_type", ["in", "out", "adjustment"]);
 

@@ -1490,6 +1490,43 @@ router.post("/erp/suppliers/:id/adjust", authenticate, requireStaff, requireStor
 });
 
 // Purchase Orders
+/**
+ * Recalculate CUMP for a product across all received purchase orders in a store,
+ * including any annexe charge allocations distributed to individual purchase items.
+ * Call inside a transaction after any change that affects charge lines or item costs.
+ */
+async function recalcProductCump(tx: DbLike, productId: number, storeId: number) {
+  const [cumpRow] = await (tx as typeof db)
+    .select({
+      cump: sql<string>`ROUND(
+        SUM(
+          ${schema.purchaseItemsTable.quantity} * CAST(${schema.purchaseItemsTable.unitCost} AS numeric)
+          + COALESCE((
+              SELECT SUM(CAST(cl.allocated_amount AS numeric))
+              FROM purchase_annexe_charge_lines cl
+              WHERE cl.purchase_item_id = ${schema.purchaseItemsTable.id}
+            ), 0)
+        )
+        / NULLIF(SUM(${schema.purchaseItemsTable.quantity}), 0),
+      2)`,
+    })
+    .from(schema.purchaseItemsTable)
+    .innerJoin(
+      schema.purchaseOrdersTable,
+      eq(schema.purchaseItemsTable.purchaseOrderId, schema.purchaseOrdersTable.id),
+    )
+    .where(and(
+      eq(schema.purchaseItemsTable.productId, productId),
+      eq(schema.purchaseOrdersTable.storeId, storeId),
+      eq(schema.purchaseOrdersTable.status, "received"),
+    ));
+  if (cumpRow?.cump != null) {
+    await (tx as typeof db).update(schema.productsTable)
+      .set({ costPrice: String(cumpRow.cump) })
+      .where(eq(schema.productsTable.id, productId));
+  }
+}
+
 router.get("/erp/purchase-orders", authenticate, requireStaff, requireStore, requirePermission("purchases", "view"), async (req: AuthRequest, res) => {
   try {
     const storeId = req.currentStoreId!;
@@ -1543,6 +1580,12 @@ router.get("/erp/purchase-orders/:id/items", authenticate, requireStaff, require
       unitCost: schema.purchaseItemsTable.unitCost,
       productNameEn: schema.productsTable.nameEn,
       productNameAr: schema.productsTable.nameAr,
+      // Sum of all annexe charge allocations for this item across all charge records
+      totalCharges: sql<string>`COALESCE((
+        SELECT SUM(CAST(cl.allocated_amount AS numeric))
+        FROM purchase_annexe_charge_lines cl
+        WHERE cl.purchase_item_id = ${schema.purchaseItemsTable.id}
+      ), '0')`,
     })
       .from(schema.purchaseItemsTable)
       // Only join product names when the product belongs to current store
@@ -1668,28 +1711,9 @@ router.put("/erp/purchase-orders/:id/receive", authenticate, requireStaff, requi
 
           // Recalculate CUMP (Coût Unitaire Moyen Pondéré) across ALL received POs for this product.
           // The current PO is already marked 'received' above, so it is included in this query.
-          const [cumpRow] = await tx
-            .select({
-              cump: sql<string>`ROUND(
-                SUM(${schema.purchaseItemsTable.quantity} * CAST(${schema.purchaseItemsTable.unitCost} AS numeric))
-                / NULLIF(SUM(${schema.purchaseItemsTable.quantity}), 0),
-              2)`,
-            })
-            .from(schema.purchaseItemsTable)
-            .innerJoin(
-              schema.purchaseOrdersTable,
-              eq(schema.purchaseItemsTable.purchaseOrderId, schema.purchaseOrdersTable.id),
-            )
-            .where(and(
-              eq(schema.purchaseItemsTable.productId, item.productId),
-              eq(schema.purchaseOrdersTable.storeId, storeId),
-              eq(schema.purchaseOrdersTable.status, "received"),
-            ));
-          if (cumpRow?.cump != null) {
-            await tx.update(schema.productsTable)
-              .set({ costPrice: String(cumpRow.cump) })
-              .where(eq(schema.productsTable.id, item.productId));
-          }
+          // Annexe charge allocations (frais de transport, douanes…) are included via a correlated
+          // subquery so that effective unit cost = unitCost + (total_charges / qty) per item.
+          await recalcProductCump(tx, item.productId, storeId);
         }
       }
 
@@ -1778,6 +1802,137 @@ router.put("/erp/purchase-orders/:id/receive", authenticate, requireStaff, requi
       await broadcastCaisseChanged(storeId, [comptantCaisseId]);
     }
     res.json(result);
+  } catch (err) { req.log.error(err); res.status(500).json({ error: "Internal server error" }); }
+});
+
+// ─── Purchase Annexe Charges ─────────────────────────────────────────────────
+
+// GET /erp/purchase-annexe-charges — list all charges for this store with linked bon IDs
+router.get("/erp/purchase-annexe-charges", authenticate, requireStaff, requireStore, requirePermission("purchases", "view"), async (req: AuthRequest, res) => {
+  try {
+    const storeId = req.currentStoreId!;
+    const charges = await db.select().from(schema.purchaseAnnexeChargesTable)
+      .where(eq(schema.purchaseAnnexeChargesTable.storeId, storeId))
+      .orderBy(desc(schema.purchaseAnnexeChargesTable.createdAt));
+    const result = await Promise.all(charges.map(async (c) => {
+      const orders = await db.select({ purchaseOrderId: schema.purchaseAnnexeChargeOrdersTable.purchaseOrderId })
+        .from(schema.purchaseAnnexeChargeOrdersTable)
+        .where(eq(schema.purchaseAnnexeChargeOrdersTable.chargeId, c.id));
+      return { ...c, purchaseOrderIds: orders.map(o => o.purchaseOrderId) };
+    }));
+    res.json(result);
+  } catch (err) { req.log.error(err); res.status(500).json({ error: "Internal server error" }); }
+});
+
+// POST /erp/purchase-annexe-charges — create charge and distribute proportionally across all items in selected bons
+router.post("/erp/purchase-annexe-charges", authenticate, requireStaff, requireStore, requirePermission("purchases", "create"), async (req: AuthRequest, res) => {
+  try {
+    const storeId = req.currentStoreId!;
+    const { description, totalAmount: rawAmount, date: rawDate, notes, purchaseOrderIds } = req.body;
+
+    if (!description?.trim()) { res.status(400).json({ error: "Description is required" }); return; }
+    const totalAmount = parseFloat(rawAmount);
+    if (isNaN(totalAmount) || totalAmount <= 0) { res.status(400).json({ error: "totalAmount must be > 0" }); return; }
+    if (!Array.isArray(purchaseOrderIds) || purchaseOrderIds.length === 0) {
+      res.status(400).json({ error: "purchaseOrderIds must be a non-empty array" }); return;
+    }
+
+    // Verify all bons belong to this store
+    const bons = await db.select({ id: schema.purchaseOrdersTable.id, status: schema.purchaseOrdersTable.status })
+      .from(schema.purchaseOrdersTable)
+      .where(and(inArray(schema.purchaseOrdersTable.id, purchaseOrderIds), eq(schema.purchaseOrdersTable.storeId, storeId)));
+    if (bons.length !== purchaseOrderIds.length) {
+      res.status(400).json({ error: "One or more purchase orders not found in this store" }); return;
+    }
+
+    // Get all purchase items for the selected bons
+    const items = await db.select({
+      id: schema.purchaseItemsTable.id,
+      purchaseOrderId: schema.purchaseItemsTable.purchaseOrderId,
+      productId: schema.purchaseItemsTable.productId,
+      quantity: schema.purchaseItemsTable.quantity,
+      unitCost: schema.purchaseItemsTable.unitCost,
+    }).from(schema.purchaseItemsTable)
+      .where(inArray(schema.purchaseItemsTable.purchaseOrderId, purchaseOrderIds));
+    if (items.length === 0) { res.status(400).json({ error: "Selected purchase orders have no items" }); return; }
+
+    // Total line value = denominator for proportional distribution
+    const totalValue = items.reduce((s, it) => s + parseFloat(it.unitCost) * it.quantity, 0);
+    if (totalValue === 0) { res.status(400).json({ error: "Total value of items is zero — cannot distribute charges" }); return; }
+
+    const result = await db.transaction(async (tx) => {
+      const today = rawDate ?? new Date().toISOString().slice(0, 10);
+      const [charge] = await tx.insert(schema.purchaseAnnexeChargesTable).values({
+        storeId, description: description.trim(), totalAmount: totalAmount.toFixed(2), date: today,
+        notes: notes?.trim() || null,
+      }).returning();
+
+      // Link charge to selected bons
+      await tx.insert(schema.purchaseAnnexeChargeOrdersTable).values(
+        purchaseOrderIds.map((poId: number) => ({ chargeId: charge.id, purchaseOrderId: poId }))
+      );
+
+      // Distribute charge proportionally: allocation_i = (value_i / total_value) × totalAmount
+      for (const item of items) {
+        const itemValue = parseFloat(item.unitCost) * item.quantity;
+        const allocated = (itemValue / totalValue) * totalAmount;
+        await tx.insert(schema.purchaseAnnexeChargeLinesTable).values({
+          chargeId: charge.id, purchaseItemId: item.id, purchaseOrderId: item.purchaseOrderId,
+          productId: item.productId, allocatedAmount: allocated.toFixed(2),
+        });
+      }
+
+      // Recalculate CUMP for products that appear in received bons only
+      const receivedBonIds = new Set(bons.filter(b => b.status === "received").map(b => b.id));
+      if (receivedBonIds.size > 0) {
+        const affectedProductIds = [...new Set(
+          items.filter(it => receivedBonIds.has(it.purchaseOrderId)).map(it => it.productId)
+        )];
+        for (const productId of affectedProductIds) {
+          await recalcProductCump(tx, productId, storeId);
+        }
+      }
+      return charge;
+    });
+
+    res.status(201).json(result);
+  } catch (err) { req.log.error(err); res.status(500).json({ error: "Internal server error" }); }
+});
+
+// DELETE /erp/purchase-annexe-charges/:id — delete charge and revert CUMP for affected received bons
+router.delete("/erp/purchase-annexe-charges/:id", authenticate, requireStaff, requireStore, requirePermission("purchases", "edit"), async (req: AuthRequest, res) => {
+  try {
+    const storeId = req.currentStoreId!;
+    const chargeId = pid(req, "id");
+
+    const [charge] = await db.select({ id: schema.purchaseAnnexeChargesTable.id })
+      .from(schema.purchaseAnnexeChargesTable)
+      .where(and(eq(schema.purchaseAnnexeChargesTable.id, chargeId), eq(schema.purchaseAnnexeChargesTable.storeId, storeId)))
+      .limit(1);
+    if (!charge) { res.status(404).json({ error: "Charge not found" }); return; }
+
+    // Capture affected products + received bons BEFORE deleting
+    const lines = await db.select({ productId: schema.purchaseAnnexeChargeLinesTable.productId, purchaseOrderId: schema.purchaseAnnexeChargeLinesTable.purchaseOrderId })
+      .from(schema.purchaseAnnexeChargeLinesTable).where(eq(schema.purchaseAnnexeChargeLinesTable.chargeId, chargeId));
+    const poIds = [...new Set(lines.map(l => l.purchaseOrderId))];
+    const receivedPOs = poIds.length > 0
+      ? await db.select({ id: schema.purchaseOrdersTable.id }).from(schema.purchaseOrdersTable)
+        .where(and(inArray(schema.purchaseOrdersTable.id, poIds), eq(schema.purchaseOrdersTable.status, "received")))
+      : [];
+    const receivedPoIds = new Set(receivedPOs.map(p => p.id));
+    const affectedProductIds = [...new Set(lines.filter(l => receivedPoIds.has(l.purchaseOrderId)).map(l => l.productId))];
+
+    await db.transaction(async (tx) => {
+      // CASCADE on charge_id deletes charge_orders + charge_lines automatically
+      await tx.delete(schema.purchaseAnnexeChargesTable)
+        .where(and(eq(schema.purchaseAnnexeChargesTable.id, chargeId), eq(schema.purchaseAnnexeChargesTable.storeId, storeId)));
+      // Recalculate CUMP now that this charge's allocations are gone
+      for (const productId of affectedProductIds) {
+        await recalcProductCump(tx, productId, storeId);
+      }
+    });
+
+    res.status(204).send();
   } catch (err) { req.log.error(err); res.status(500).json({ error: "Internal server error" }); }
 });
 

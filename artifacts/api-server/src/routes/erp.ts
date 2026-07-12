@@ -1582,6 +1582,55 @@ router.delete("/erp/purchase-orders/:id", authenticate, requireStaff, requireSto
   } catch (err) { req.log.error(err); res.status(500).json({ error: "Internal server error" }); }
 });
 
+// PUT /erp/purchase-orders/:id — update a pending purchase order (header + items)
+router.put("/erp/purchase-orders/:id", authenticate, requireStaff, requireStore, requirePermission("purchases", "edit"), async (req: AuthRequest, res) => {
+  try {
+    const storeId = req.currentStoreId!;
+    const poId = pid(req, "id");
+    const { supplierId, items, notes, paymentMethod: pmRaw } = req.body;
+    const paymentMethod = pmRaw === "comptant" ? "comptant" : "a_terme";
+
+    const [existing] = await db.select({ status: schema.purchaseOrdersTable.status })
+      .from(schema.purchaseOrdersTable)
+      .where(and(eq(schema.purchaseOrdersTable.id, poId), eq(schema.purchaseOrdersTable.storeId, storeId)))
+      .limit(1);
+
+    if (!existing) { res.status(404).json({ error: "Purchase order not found" }); return; }
+    if (existing.status !== "pending") {
+      res.status(409).json({ error: `Cannot edit a purchase order with status "${existing.status}"` }); return;
+    }
+
+    // Verify supplier belongs to this store
+    const [sup] = await db.select({ id: schema.suppliersTable.id }).from(schema.suppliersTable)
+      .where(and(eq(schema.suppliersTable.id, supplierId), eq(schema.suppliersTable.storeId, storeId))).limit(1);
+    if (!sup) { res.status(400).json({ error: "Supplier not found in this store" }); return; }
+
+    // Verify every productId belongs to this store
+    for (const item of (items || [])) {
+      const [prod] = await db.select({ id: schema.productsTable.id }).from(schema.productsTable)
+        .where(and(eq(schema.productsTable.id, item.productId), eq(schema.productsTable.storeId, storeId))).limit(1);
+      if (!prod) { res.status(400).json({ error: `Product ${item.productId} not found in this store` }); return; }
+    }
+
+    let total = 0;
+    for (const item of (items || [])) { total += item.quantity * item.unitCost; }
+
+    const [po] = await db.transaction(async (tx) => {
+      const [updated] = await tx.update(schema.purchaseOrdersTable)
+        .set({ supplierId, notes, paymentMethod, totalAmount: total.toFixed(2) })
+        .where(and(eq(schema.purchaseOrdersTable.id, poId), eq(schema.purchaseOrdersTable.storeId, storeId)))
+        .returning();
+      await tx.delete(schema.purchaseItemsTable).where(eq(schema.purchaseItemsTable.purchaseOrderId, poId));
+      for (const item of (items || [])) {
+        await tx.insert(schema.purchaseItemsTable).values({ purchaseOrderId: poId, ...item });
+      }
+      return [updated];
+    });
+
+    res.json(po);
+  } catch (err) { req.log.error(err); res.status(500).json({ error: "Internal server error" }); }
+});
+
 router.put("/erp/purchase-orders/:id/receive", authenticate, requireStaff, requireStore, requirePermission("purchases", "edit"), async (req: AuthRequest, res) => {
   try {
     const storeId = req.currentStoreId!;

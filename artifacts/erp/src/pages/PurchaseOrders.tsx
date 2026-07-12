@@ -1,6 +1,6 @@
 import React, { useMemo, useState } from "react";
 import {
-  useGetPurchaseOrders, useCreatePurchaseOrder, useReceivePurchaseOrder,
+  useGetPurchaseOrders, useCreatePurchaseOrder, useUpdatePurchaseOrder, useReceivePurchaseOrder,
   useDeletePurchaseOrder,
   useGetSuppliers, useGetProducts, useCreateSupplier,
   useGetPurchaseOrderItems,
@@ -63,6 +63,7 @@ export default function PurchaseOrders() {
   const { data: suppliers } = useGetSuppliers();
   const { data: productsRes } = useGetProducts({ limit: 500 });
   const createPO = useCreatePurchaseOrder();
+  const updatePO = useUpdatePurchaseOrder();
   const receivePO = useReceivePurchaseOrder();
   const deletePO = useDeletePurchaseOrder();
 
@@ -330,10 +331,17 @@ export default function PurchaseOrders() {
         products={products}
         onSave={(payload) => {
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          createPO.mutate({ data: payload as any }, {
-            onSuccess: () => { qc.invalidateQueries({ queryKey: getGetPurchaseOrdersQueryKey() }); setEditorOpen(false); },
-            onError: (err) => alert(`Erreur: ${(err as Error).message}`),
-          });
+          if (editingPO) {
+            updatePO.mutate({ id: editingPO.id, data: payload as any }, {
+              onSuccess: () => { qc.invalidateQueries({ queryKey: getGetPurchaseOrdersQueryKey() }); setEditorOpen(false); },
+              onError: (err) => alert(`Erreur: ${(err as Error).message}`),
+            });
+          } else {
+            createPO.mutate({ data: payload as any }, {
+              onSuccess: () => { qc.invalidateQueries({ queryKey: getGetPurchaseOrdersQueryKey() }); setEditorOpen(false); },
+              onError: (err) => alert(`Erreur: ${(err as Error).message}`),
+            });
+          }
         }}
         onClose={(po) => {
           receivePO.mutate({ id: po.id }, {
@@ -346,7 +354,7 @@ export default function PurchaseOrders() {
             onError: (err) => alert(`Erreur: ${(err as Error).message}`),
           });
         }}
-        saving={createPO.isPending || receivePO.isPending || deletePO.isPending}
+        saving={createPO.isPending || updatePO.isPending || receivePO.isPending || deletePO.isPending}
       />
       <InvoiceDialog
         open={invoiceOpen}

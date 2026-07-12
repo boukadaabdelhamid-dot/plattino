@@ -5377,6 +5377,91 @@ export const useDeletePurchaseOrder = <
 };
 
 /**
+ * @summary Update a pending purchase order
+ */
+export const getUpdatePurchaseOrderUrl = (id: number) => {
+  return `/api/erp/purchase-orders/${id}`;
+};
+
+export const updatePurchaseOrder = async (
+  id: number,
+  updatePurchaseOrderRequest: CreatePurchaseOrderRequest,
+  options?: RequestInit,
+): Promise<PurchaseOrder> => {
+  return customFetch<PurchaseOrder>(getUpdatePurchaseOrderUrl(id), {
+    ...options,
+    method: "PUT",
+    body: JSON.stringify(updatePurchaseOrderRequest),
+  });
+};
+
+export const getUpdatePurchaseOrderMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof updatePurchaseOrder>>,
+    TError,
+    { id: number; data: BodyType<CreatePurchaseOrderRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof updatePurchaseOrder>>,
+  TError,
+  { id: number; data: BodyType<CreatePurchaseOrderRequest> },
+  TContext
+> => {
+  const mutationKey = ["updatePurchaseOrder"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof updatePurchaseOrder>>,
+    { id: number; data: BodyType<CreatePurchaseOrderRequest> }
+  > = (props) => {
+    const { id, data } = props ?? {};
+    return updatePurchaseOrder(id, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type UpdatePurchaseOrderMutationResult = NonNullable<
+  Awaited<ReturnType<typeof updatePurchaseOrder>>
+>;
+
+export type UpdatePurchaseOrderMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Update a pending purchase order
+ */
+export const useUpdatePurchaseOrder = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof updatePurchaseOrder>>,
+    TError,
+    { id: number; data: BodyType<CreatePurchaseOrderRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof updatePurchaseOrder>>,
+  TError,
+  { id: number; data: BodyType<CreatePurchaseOrderRequest> },
+  TContext
+> => {
+  return useMutation(getUpdatePurchaseOrderMutationOptions(options));
+};
+
+/**
  * @summary Mark purchase order as received (updates stock)
  */
 export const getReceivePurchaseOrderUrl = (id: number) => {

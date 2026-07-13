@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useMemo } from "react";
 import * as XLSX from "xlsx";
 import {
   useGetErpCustomers, useGetErpCustomer, useCreateCustomerNote,
@@ -12,7 +12,7 @@ import {
   type CustomerSummary, type CustomerNote, type CustomerClassification, type PriceTier,
   type CustomerOperation,
 } from "@workspace/api-client-react";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQueryClient, keepPreviousData } from "@tanstack/react-query";
 import { useMe } from "@/hooks/use-me";
 import { useLang } from "@/hooks/use-lang";
 import { Card, CardContent } from "@/components/ui/card";
@@ -1861,6 +1861,8 @@ export default function Customers() {
     creditLimit: "", minBalanceAlert: "", currentBalance: "0", foreignCurrency: false,
   });
 
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(10);
   const [search, setSearch] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
   const [filterClassif, setFilterClassif] = useState<string>("all");
@@ -1874,18 +1876,24 @@ export default function Customers() {
     return () => { if (debounceRef.current) clearTimeout(debounceRef.current); };
   }, [search]);
 
-  const queryParams = {
+  useEffect(() => { setPage(1); }, [debouncedSearch, filterClassif, filterTier, filterWilaya]);
+
+  const queryParams = useMemo(() => ({
     ...(debouncedSearch ? { search: debouncedSearch } : {}),
     ...(filterClassif !== "all" && filterClassif !== "none" ? { classificationId: parseInt(filterClassif) } : {}),
     ...(filterWilaya !== "all" ? { wilaya: filterWilaya } : {}),
     ...(filterTier !== "all" && filterTier !== "none" ? { priceTierId: parseInt(filterTier) } : {}),
-  };
+    page,
+    limit: pageSize,
+  }), [debouncedSearch, filterClassif, filterWilaya, filterTier, page, pageSize]);
 
-  const { data: customers, isLoading } = useGetErpCustomers(queryParams, {
-    query: { queryKey: getGetErpCustomersQueryKey(queryParams) },
+  const { data: customersPage, isLoading } = useGetErpCustomers(queryParams, {
+    query: { queryKey: getGetErpCustomersQueryKey(queryParams), placeholderData: keepPreviousData },
   });
+  const total = customersPage?.total ?? 0;
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
 
-  const filtered = (customers ?? []) as ExtCustomer[];
+  const filtered = (customersPage?.data ?? []) as ExtCustomer[];
   const displayedCustomers = filterClassif === "none"
     ? filtered.filter((c) => c.classification == null)
     : filterTier === "none"
@@ -2006,7 +2014,7 @@ export default function Customers() {
             ))}
           </SelectContent>
         </Select>
-        <span className="text-xs text-muted-foreground">{displayedCustomers.length} {t("client(s)", "عميل")}</span>
+        <span className="text-xs text-muted-foreground">{total} {t("client(s)", "عميل")}</span>
       </div>
 
       {/* Table */}
@@ -2114,6 +2122,57 @@ export default function Customers() {
           )}
         </CardContent>
       </Card>
+
+      {/* Pagination bar */}
+      {total > 0 && (
+        <div className="flex items-center justify-between px-1 py-2 flex-wrap gap-2">
+          <span className="text-xs text-muted-foreground">
+            {total} {t("client(s)", "عميل")}
+          </span>
+          <div className="flex items-center gap-2">
+            <Select value={String(pageSize)} onValueChange={(v) => { setPageSize(Number(v)); setPage(1); }}>
+              <SelectTrigger className="h-8 w-[90px] text-xs"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                {[10, 25, 50, 100, 200].map((n) => (
+                  <SelectItem key={n} value={String(n)} className="text-xs">{n} / {t("page", "صفحة")}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <div className="flex items-center gap-1">
+              <Button variant="outline" size="sm" className="h-8 px-2 text-xs"
+                onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page === 1}>
+                ← {t("Préc.", "السابق")}
+              </Button>
+              {(() => {
+                const pages: (number | "...")[] = [];
+                if (totalPages <= 7) { for (let i = 1; i <= totalPages; i++) pages.push(i); }
+                else {
+                  pages.push(1);
+                  if (page > 3) pages.push("...");
+                  for (let i = Math.max(2, page - 1); i <= Math.min(totalPages - 1, page + 1); i++) pages.push(i);
+                  if (page < totalPages - 2) pages.push("...");
+                  pages.push(totalPages);
+                }
+                return pages.map((pg, i) =>
+                  pg === "..." ? (
+                    <span key={`e${i}`} className="px-1 text-muted-foreground text-xs select-none">…</span>
+                  ) : (
+                    <Button key={pg} variant={pg === page ? "default" : "outline"} size="sm"
+                      className={`h-8 w-8 p-0 text-xs ${pg === page ? "bg-[#1B3057] hover:bg-[#1B3057]/90" : ""}`}
+                      onClick={() => setPage(pg as number)}>
+                      {pg}
+                    </Button>
+                  )
+                );
+              })()}
+              <Button variant="outline" size="sm" className="h-8 px-2 text-xs"
+                onClick={() => setPage((p) => Math.min(totalPages, p + 1))} disabled={page === totalPages}>
+                {t("Suiv.", "التالي")} →
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* CustomerDetailSheet — view-only with tabs DÉTAIL/BALANCE/VENTES/RETOURS */}
       <Sheet open={!!detailId} onOpenChange={(v) => !v && setDetailId(null)}>

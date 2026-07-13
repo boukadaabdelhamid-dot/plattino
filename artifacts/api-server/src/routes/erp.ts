@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { randomUUID } from "node:crypto";
-import { eq, desc, asc, sql, and, gt, ne, or, inArray, isNull, notLike } from "drizzle-orm";
+import { eq, desc, asc, sql, and, gt, ne, or, inArray, isNull, notLike, ilike } from "drizzle-orm";
 import bcrypt from "bcryptjs";
 import { db, schema } from "../lib/db";
 import { authenticate, requireAdmin, requireStaff, requireStore, isAdmin, requirePermission, type AuthRequest } from "../lib/auth";
@@ -889,24 +889,43 @@ router.put("/erp/leaves/:id/status", authenticate, requireStaff, requireStore, r
 router.get("/erp/suppliers", authenticate, requireStaff, requireStore, requirePermission("suppliers", "view"), async (req: AuthRequest, res) => {
   try {
     const storeId = req.currentStoreId!;
+    const { page = "1", limit = "10", search } = req.query as Record<string, string | undefined>;
+    const pageNum  = Math.max(1, parseInt(page  || "1")  || 1);
+    const limitNum = Math.min(500, Math.max(1, parseInt(limit || "10") || 10));
+    const offset   = (pageNum - 1) * limitNum;
+
+    const conditions = [eq(schema.suppliersTable.storeId, storeId)];
+    if (search) conditions.push(ilike(schema.suppliersTable.name, `%${search}%`));
+
+    const [{ count }] = await db
+      .select({ count: sql<number>`count(*)` })
+      .from(schema.suppliersTable)
+      .where(and(...conditions));
+
     const suppliers = await db.select().from(schema.suppliersTable)
-      .where(eq(schema.suppliersTable.storeId, storeId))
-      .orderBy(schema.suppliersTable.name);
+      .where(and(...conditions))
+      .orderBy(schema.suppliersTable.name)
+      .limit(limitNum).offset(offset);
+
     const csContactIds = suppliers
       .filter((s) => s.contactType === "customer_supplier" && s.contactId != null)
       .map((s) => s.contactId!);
+
     if (csContactIds.length > 0) {
       const contactRows = await db.select({ id: schema.contactsTable.id, currentBalance: schema.contactsTable.currentBalance })
         .from(schema.contactsTable).where(inArray(schema.contactsTable.id, csContactIds));
       const balMap = new Map(contactRows.map((c) => [c.id, c.currentBalance]));
-      res.json(suppliers.map((s) =>
-        s.contactType === "customer_supplier" && s.contactId != null && balMap.has(s.contactId)
-          ? { ...s, currentBalance: balMap.get(s.contactId)! }
-          : s
-      ));
+      res.json({
+        data: suppliers.map((s) =>
+          s.contactType === "customer_supplier" && s.contactId != null && balMap.has(s.contactId)
+            ? { ...s, currentBalance: balMap.get(s.contactId)! }
+            : s
+        ),
+        total: Number(count), page: pageNum, limit: limitNum,
+      });
       return;
     }
-    res.json(suppliers);
+    res.json({ data: suppliers, total: Number(count), page: pageNum, limit: limitNum });
   } catch (err) { req.log.error(err); res.status(500).json({ error: "Internal server error" }); }
 });
 
@@ -1530,10 +1549,22 @@ async function recalcProductCump(tx: DbLike, productId: number, storeId: number)
 router.get("/erp/purchase-orders", authenticate, requireStaff, requireStore, requirePermission("purchases", "view"), async (req: AuthRequest, res) => {
   try {
     const storeId = req.currentStoreId!;
+    const { page = "1", limit = "10" } = req.query as Record<string, string>;
+    const pageNum  = Math.max(1, parseInt(page)  || 1);
+    const limitNum = Math.min(500, Math.max(1, parseInt(limit) || 10));
+    const offset   = (pageNum - 1) * limitNum;
+
+    const [{ count }] = await db
+      .select({ count: sql<number>`count(*)` })
+      .from(schema.purchaseOrdersTable)
+      .where(eq(schema.purchaseOrdersTable.storeId, storeId));
+
     const pos = await db.select().from(schema.purchaseOrdersTable)
       .where(eq(schema.purchaseOrdersTable.storeId, storeId))
-      .orderBy(desc(schema.purchaseOrdersTable.createdAt));
-    res.json(pos);
+      .orderBy(desc(schema.purchaseOrdersTable.createdAt))
+      .limit(limitNum).offset(offset);
+
+    res.json({ data: pos, total: Number(count), page: pageNum, limit: limitNum });
   } catch (err) { req.log.error(err); res.status(500).json({ error: "Internal server error" }); }
 });
 
@@ -2262,7 +2293,33 @@ router.get("/erp/accounting-summary", authenticate, requireStaff, requireStore, 
 router.get("/erp/customers", authenticate, requireStaff, requireStore, requirePermission("customers", "view"), async (req: AuthRequest, res) => {
   try {
     const storeId = req.currentStoreId!;
-    const { search, wilaya, classificationId, priceTierId } = req.query as Record<string, string | undefined>;
+    const { search, wilaya, classificationId, priceTierId, page = "1", limit = "10" } = req.query as Record<string, string | undefined>;
+    const pageNum  = Math.max(1, parseInt(page  || "1")  || 1);
+    const limitNum = Math.min(500, Math.max(1, parseInt(limit || "10") || 10));
+    const offset   = (pageNum - 1) * limitNum;
+
+    const searchCond = search
+      ? sql`(lower(u.name) LIKE ${'%' + search.toLowerCase() + '%'} OR lower(u.email) LIKE ${'%' + search.toLowerCase() + '%'} OR lower(coalesce(u.phone,'')) LIKE ${'%' + search.toLowerCase() + '%'})`
+      : sql`true`;
+    const wilayaCond  = wilaya          ? sql`cp.wilaya = ${wilaya}`                                 : sql`true`;
+    const classifCond = classificationId ? sql`cp.classification_id = ${parseInt(classificationId)}` : sql`true`;
+    const tierCond    = priceTierId      ? sql`cp.price_tier_id = ${parseInt(priceTierId)}`          : sql`true`;
+
+    const countResult = await db.execute(sql`
+      SELECT COUNT(*) as count FROM (
+        SELECT u.id
+        FROM users u
+        LEFT JOIN orders o ON o.user_id = u.id AND o.store_id = ${storeId}
+        LEFT JOIN customer_profiles cp ON cp.user_id = u.id AND cp.store_id = ${storeId}
+        WHERE u.role = 'customer'
+          AND COALESCE(cp.contact_type, 'customer') IN ('customer', 'customer_supplier')
+          AND (${searchCond}) AND (${wilayaCond}) AND (${classifCond}) AND (${tierCond})
+        GROUP BY u.id, cp.store_id
+        HAVING COUNT(o.id) > 0 OR cp.store_id = ${storeId}
+      ) AS subq
+    `);
+    const total = Number((countResult.rows[0] as Record<string, unknown>)?.count ?? 0);
+
     const customers = await db.execute(sql`
       SELECT u.id, u.name, u.email, u.phone, u.address, u.city, u.created_at,
         COUNT(o.id) as total_orders,
@@ -2286,18 +2343,7 @@ router.get("/erp/customers", authenticate, requireStaff, requireStore, requirePe
       LEFT JOIN price_tiers pt ON pt.id = cp.price_tier_id
       WHERE u.role = 'customer'
         AND COALESCE(cp.contact_type, 'customer') IN ('customer', 'customer_supplier')
-        AND (
-          ${search ? sql`(lower(u.name) LIKE ${'%' + search.toLowerCase() + '%'} OR lower(u.email) LIKE ${'%' + search.toLowerCase() + '%'} OR lower(coalesce(u.phone,'')) LIKE ${'%' + search.toLowerCase() + '%'})` : sql`true`}
-        )
-        AND (
-          ${wilaya ? sql`cp.wilaya = ${wilaya}` : sql`true`}
-        )
-        AND (
-          ${classificationId ? sql`cp.classification_id = ${parseInt(classificationId)}` : sql`true`}
-        )
-        AND (
-          ${priceTierId ? sql`cp.price_tier_id = ${parseInt(priceTierId)}` : sql`true`}
-        )
+        AND (${searchCond}) AND (${wilayaCond}) AND (${classifCond}) AND (${tierCond})
       GROUP BY u.id, u.name, u.email, u.phone, u.address, u.city, u.created_at,
         cp.contact_id, cp.wilaya, cp.contact_type, cp.rc, cp.nif, cp.ai, cp.nis,
         cp.account_number, cp.credit_limit, cp.current_balance,
@@ -2306,15 +2352,12 @@ router.get("/erp/customers", authenticate, requireStaff, requireStore, requirePe
         pt.id, pt.label_fr, pt.label_ar, pt.code, pt.sort_order
       HAVING COUNT(o.id) > 0 OR cp.store_id = ${storeId}
       ORDER BY total_spent DESC
+      LIMIT ${limitNum} OFFSET ${offset}
     `);
-    if (isAdmin(req)) {
-      res.json(customers.rows);
-    } else {
-      res.json(customers.rows.map((r: Record<string, unknown>) => {
-        const { total_spent: _ts, ...rest } = r;
-        return rest;
-      }));
-    }
+    const data = isAdmin(req)
+      ? customers.rows
+      : customers.rows.map((r: Record<string, unknown>) => { const { total_spent: _ts, ...rest } = r; return rest; });
+    res.json({ data, total, page: pageNum, limit: limitNum });
   } catch (err) { req.log.error(err); res.status(500).json({ error: "Internal server error" }); }
 });
 

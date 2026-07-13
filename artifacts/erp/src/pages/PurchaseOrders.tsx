@@ -10,13 +10,16 @@ import {
   getProducts,
   type PurchaseOrder, type Supplier, type Product, type PurchaseAnnexeCharge,
 } from "@workspace/api-client-react";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQueryClient, keepPreviousData } from "@tanstack/react-query";
 import { useLang } from "@/hooks/use-lang";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
+import {
+  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+} from "@/components/ui/select";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
 } from "@/components/ui/dialog";
@@ -93,11 +96,19 @@ export default function PurchaseOrders() {
   // store switch (race condition: old in-flight request completing after
   // qc.clear() would overwrite the freshly-cleared cache).
   const store = useCurrentStore();
-  const { data: rawPos, isLoading } = useGetPurchaseOrders({
-    query: { queryKey: [...getGetPurchaseOrdersQueryKey(), store?.id ?? null] },
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(10);
+  const poParams = useMemo(() => ({ page, limit: pageSize }), [page, pageSize]);
+  const { data: rawPosRes, isLoading } = useGetPurchaseOrders(poParams, {
+    query: {
+      queryKey: [...getGetPurchaseOrdersQueryKey(poParams), store?.id ?? null],
+      placeholderData: keepPreviousData,
+    },
   });
-  const pos = (rawPos ?? []) as ExtendedPO[];
-  const { data: suppliers } = useGetSuppliers();
+  const pos = (rawPosRes?.data ?? []) as ExtendedPO[];
+  const totalPos = rawPosRes?.total ?? 0;
+  const totalPages = Math.max(1, Math.ceil(totalPos / pageSize));
+  const { data: suppliersRes } = useGetSuppliers({ limit: 9999 });
   const { data: productsRes } = useGetProducts({ limit: 500 });
   const createPO = useCreatePurchaseOrder();
   const updatePO = useUpdatePurchaseOrder();
@@ -107,9 +118,9 @@ export default function PurchaseOrders() {
   const products: Product[] = (productsRes?.products ?? []) as Product[];
   const supplierMap: Record<number, Supplier> = useMemo(() => {
     const m: Record<number, Supplier> = {};
-    (suppliers ?? []).forEach((s: Supplier) => { m[s.id] = s; });
+    (suppliersRes?.data ?? []).forEach((s: Supplier) => { m[s.id] = s; });
     return m;
-  }, [suppliers]);
+  }, [suppliersRes]);
 
   const [refFilter, setRefFilter] = useState("");
   const [supplierFilter, setSupplierFilter] = useState("");
@@ -117,6 +128,9 @@ export default function PurchaseOrders() {
   const [paymentFilter, setPaymentFilter] = useState("");
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
+
+  // Reset to page 1 when any filter changes
+  React.useEffect(() => { setPage(1); }, [refFilter, supplierFilter, statusFilter, paymentFilter, dateFrom, dateTo]);
 
   const [editorOpen, setEditorOpen] = useState(false);
   const [editingPO, setEditingPO] = useState<PurchaseOrder | null>(null);
@@ -245,7 +259,7 @@ export default function PurchaseOrders() {
       <Card className="border shadow-sm">
         <CardContent className="p-0">
           <div className="flex items-center justify-between px-4 py-3 border-b bg-slate-50/50">
-            <h2 className="font-semibold text-base">{t("Achats", "المشتريات")} ({filtered.length})</h2>
+            <h2 className="font-semibold text-base">{t("Achats", "المشتريات")} ({totalPos})</h2>
             <div className="flex items-center gap-1">
               <Button size="sm" className="h-8 bg-[#1B3057] hover:bg-[#142441]" onClick={openNew} data-testid="button-new-achat">
                 <Plus className="h-4 w-4 mr-1.5" />
@@ -445,6 +459,57 @@ export default function PurchaseOrders() {
         </CardContent>
       </Card>
 
+      {/* Pagination bar */}
+      {totalPos > 0 && (
+        <div className="flex items-center justify-between px-1 py-2 flex-wrap gap-2">
+          <span className="text-xs text-muted-foreground">
+            {t(`${totalPos} bon(s) au total`, `إجمالي ${totalPos} سند(ات)`)}
+          </span>
+          <div className="flex items-center gap-2">
+            <Select value={String(pageSize)} onValueChange={(v) => { setPageSize(Number(v)); setPage(1); }}>
+              <SelectTrigger className="h-8 w-[90px] text-xs"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                {[10, 25, 50, 100, 200].map((n) => (
+                  <SelectItem key={n} value={String(n)} className="text-xs">{n} / {t("page", "صفحة")}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <div className="flex items-center gap-1">
+              <Button variant="outline" size="sm" className="h-8 px-2 text-xs"
+                onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page === 1}>
+                ← {t("Préc.", "السابق")}
+              </Button>
+              {(() => {
+                const pages: (number | "...")[] = [];
+                if (totalPages <= 7) { for (let i = 1; i <= totalPages; i++) pages.push(i); }
+                else {
+                  pages.push(1);
+                  if (page > 3) pages.push("...");
+                  for (let i = Math.max(2, page - 1); i <= Math.min(totalPages - 1, page + 1); i++) pages.push(i);
+                  if (page < totalPages - 2) pages.push("...");
+                  pages.push(totalPages);
+                }
+                return pages.map((pg, i) =>
+                  pg === "..." ? (
+                    <span key={`e${i}`} className="px-1 text-muted-foreground text-xs select-none">…</span>
+                  ) : (
+                    <Button key={pg} variant={pg === page ? "default" : "outline"} size="sm"
+                      className={`h-8 w-8 p-0 text-xs ${pg === page ? "bg-[#1B3057] hover:bg-[#1B3057]/90" : ""}`}
+                      onClick={() => setPage(pg as number)}>
+                      {pg}
+                    </Button>
+                  )
+                );
+              })()}
+              <Button variant="outline" size="sm" className="h-8 px-2 text-xs"
+                onClick={() => setPage((p) => Math.min(totalPages, p + 1))} disabled={page === totalPages}>
+                {t("Suiv.", "التالي")} →
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <PurchaseHistorySheet
         open={historyOpen}
         onClose={() => setHistoryOpen(false)}
@@ -456,7 +521,7 @@ export default function PurchaseOrders() {
         onOpenChange={setEditorOpen}
         editing={editingPO}
         onPrint={handlePrint}
-        suppliers={suppliers ?? []}
+        suppliers={(suppliersRes?.data ?? []) as Supplier[]}
         products={products}
         columnSettings={columnSettings}
         onSave={(payload) => {

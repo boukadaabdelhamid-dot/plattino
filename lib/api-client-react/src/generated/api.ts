@@ -89,7 +89,12 @@ import type {
   GetMonthlyReportParams,
   GetProductProfitReportParams,
   GetProductsParams,
+  GetPurchaseOrdersParams,
   GetSupplierReportParams,
+  GetSuppliersParams,
+  PaginatedCustomers,
+  PaginatedPurchaseOrders,
+  PaginatedSuppliers,
   HealthStatus,
   InventoryMovement,
   Leave,
@@ -4625,44 +4630,46 @@ export const useUpdateLeaveStatus = <
 };
 
 /**
- * @summary List suppliers
+ * @summary List suppliers (paginated)
  */
-export const getGetSuppliersUrl = () => {
-  return `/api/erp/suppliers`;
+export const getGetSuppliersUrl = (params?: GetSuppliersParams) => {
+  const p = new URLSearchParams();
+  if (params?.page  !== undefined) p.append("page",   String(params.page));
+  if (params?.limit !== undefined) p.append("limit",  String(params.limit));
+  if (params?.search)               p.append("search", params.search);
+  const qs = p.toString();
+  return qs ? `/api/erp/suppliers?${qs}` : `/api/erp/suppliers`;
 };
 
 export const getSuppliers = async (
+  params?: GetSuppliersParams,
   options?: RequestInit,
-): Promise<Supplier[]> => {
-  return customFetch<Supplier[]>(getGetSuppliersUrl(), {
+): Promise<PaginatedSuppliers> => {
+  return customFetch<PaginatedSuppliers>(getGetSuppliersUrl(params), {
     ...options,
     method: "GET",
   });
 };
 
-export const getGetSuppliersQueryKey = () => {
-  return [`/api/erp/suppliers`] as const;
+export const getGetSuppliersQueryKey = (params?: GetSuppliersParams) => {
+  return [`/api/erp/suppliers`, ...(params ? [params] : [])] as const;
 };
 
 export const getGetSuppliersQueryOptions = <
   TData = Awaited<ReturnType<typeof getSuppliers>>,
   TError = ErrorType<unknown>,
->(options?: {
-  query?: UseQueryOptions<
-    Awaited<ReturnType<typeof getSuppliers>>,
-    TError,
-    TData
-  >;
-  request?: SecondParameter<typeof customFetch>;
-}) => {
+>(
+  params?: GetSuppliersParams,
+  options?: {
+    query?: UseQueryOptions<Awaited<ReturnType<typeof getSuppliers>>, TError, TData>;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
   const { query: queryOptions, request: requestOptions } = options ?? {};
-
-  const queryKey = queryOptions?.queryKey ?? getGetSuppliersQueryKey();
-
+  const queryKey = queryOptions?.queryKey ?? getGetSuppliersQueryKey(params);
   const queryFn: QueryFunction<Awaited<ReturnType<typeof getSuppliers>>> = ({
     signal,
-  }) => getSuppliers({ signal, ...requestOptions });
-
+  }) => getSuppliers(params, { signal, ...requestOptions });
   return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
     Awaited<ReturnType<typeof getSuppliers>>,
     TError,
@@ -4676,26 +4683,21 @@ export type GetSuppliersQueryResult = NonNullable<
 export type GetSuppliersQueryError = ErrorType<unknown>;
 
 /**
- * @summary List suppliers
+ * @summary List suppliers (paginated)
  */
 
 export function useGetSuppliers<
   TData = Awaited<ReturnType<typeof getSuppliers>>,
   TError = ErrorType<unknown>,
->(options?: {
-  query?: UseQueryOptions<
-    Awaited<ReturnType<typeof getSuppliers>>,
-    TError,
-    TData
-  >;
-  request?: SecondParameter<typeof customFetch>;
-}): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
-  const queryOptions = getGetSuppliersQueryOptions(options);
-
-  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
-    queryKey: QueryKey;
-  };
-
+>(
+  params?: GetSuppliersParams,
+  options?: {
+    query?: UseQueryOptions<Awaited<ReturnType<typeof getSuppliers>>, TError, TData>;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetSuppliersQueryOptions(params, options);
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & { queryKey: QueryKey };
   return { ...query, queryKey: queryOptions.queryKey };
 }
 
@@ -5052,44 +5054,45 @@ export const useCreateSupplierOperation = <
 };
 
 /**
- * @summary List purchase orders
+ * @summary List purchase orders (paginated)
  */
-export const getGetPurchaseOrdersUrl = () => {
-  return `/api/erp/purchase-orders`;
+export const getGetPurchaseOrdersUrl = (params?: GetPurchaseOrdersParams) => {
+  const p = new URLSearchParams();
+  if (params?.page  !== undefined) p.append("page",  String(params.page));
+  if (params?.limit !== undefined) p.append("limit", String(params.limit));
+  const qs = p.toString();
+  return qs ? `/api/erp/purchase-orders?${qs}` : `/api/erp/purchase-orders`;
 };
 
 export const getPurchaseOrders = async (
+  params?: GetPurchaseOrdersParams,
   options?: RequestInit,
-): Promise<PurchaseOrder[]> => {
-  return customFetch<PurchaseOrder[]>(getGetPurchaseOrdersUrl(), {
+): Promise<PaginatedPurchaseOrders> => {
+  return customFetch<PaginatedPurchaseOrders>(getGetPurchaseOrdersUrl(params), {
     ...options,
     method: "GET",
   });
 };
 
-export const getGetPurchaseOrdersQueryKey = () => {
-  return [`/api/erp/purchase-orders`] as const;
+export const getGetPurchaseOrdersQueryKey = (params?: GetPurchaseOrdersParams) => {
+  return [`/api/erp/purchase-orders`, ...(params ? [params] : [])] as const;
 };
 
 export const getGetPurchaseOrdersQueryOptions = <
   TData = Awaited<ReturnType<typeof getPurchaseOrders>>,
   TError = ErrorType<unknown>,
->(options?: {
-  query?: UseQueryOptions<
-    Awaited<ReturnType<typeof getPurchaseOrders>>,
-    TError,
-    TData
-  >;
-  request?: SecondParameter<typeof customFetch>;
-}) => {
+>(
+  params?: GetPurchaseOrdersParams,
+  options?: {
+    query?: UseQueryOptions<Awaited<ReturnType<typeof getPurchaseOrders>>, TError, TData>;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
   const { query: queryOptions, request: requestOptions } = options ?? {};
-
-  const queryKey = queryOptions?.queryKey ?? getGetPurchaseOrdersQueryKey();
-
-  const queryFn: QueryFunction<
-    Awaited<ReturnType<typeof getPurchaseOrders>>
-  > = ({ signal }) => getPurchaseOrders({ signal, ...requestOptions });
-
+  const queryKey = queryOptions?.queryKey ?? getGetPurchaseOrdersQueryKey(params);
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof getPurchaseOrders>>> = ({
+    signal,
+  }) => getPurchaseOrders(params, { signal, ...requestOptions });
   return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
     Awaited<ReturnType<typeof getPurchaseOrders>>,
     TError,
@@ -5103,26 +5106,21 @@ export type GetPurchaseOrdersQueryResult = NonNullable<
 export type GetPurchaseOrdersQueryError = ErrorType<unknown>;
 
 /**
- * @summary List purchase orders
+ * @summary List purchase orders (paginated)
  */
 
 export function useGetPurchaseOrders<
   TData = Awaited<ReturnType<typeof getPurchaseOrders>>,
   TError = ErrorType<unknown>,
->(options?: {
-  query?: UseQueryOptions<
-    Awaited<ReturnType<typeof getPurchaseOrders>>,
-    TError,
-    TData
-  >;
-  request?: SecondParameter<typeof customFetch>;
-}): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
-  const queryOptions = getGetPurchaseOrdersQueryOptions(options);
-
-  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
-    queryKey: QueryKey;
-  };
-
+>(
+  params?: GetPurchaseOrdersParams,
+  options?: {
+    query?: UseQueryOptions<Awaited<ReturnType<typeof getPurchaseOrders>>, TError, TData>;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetPurchaseOrdersQueryOptions(params, options);
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & { queryKey: QueryKey };
   return { ...query, queryKey: queryOptions.queryKey };
 }
 
@@ -8358,8 +8356,8 @@ export const getGetErpCustomersUrl = (params?: GetErpCustomersParams) => {
 export const getErpCustomers = async (
   params?: GetErpCustomersParams,
   options?: RequestInit,
-): Promise<CustomerSummary[]> => {
-  return customFetch<CustomerSummary[]>(getGetErpCustomersUrl(params), {
+): Promise<PaginatedCustomers> => {
+  return customFetch<PaginatedCustomers>(getGetErpCustomersUrl(params), {
     ...options,
     method: "GET",
   });

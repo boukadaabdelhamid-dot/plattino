@@ -713,9 +713,10 @@ function NouveauRetourDialog({ open, onOpenChange, onCreated }: {
   const [error, setError] = useState<string | null>(null);
   const clientPickerRef = React.useRef<HTMLDivElement>(null);
 
-  const { data: customerResults = [] } = useGetErpCustomers(
-    clientSearch.trim().length > 0 ? { search: clientSearch.trim() } : {}
+  const { data: _custRes } = useGetErpCustomers(
+    clientSearch.trim().length > 0 ? { search: clientSearch.trim(), limit: 20 } : { limit: 20 }
   );
+  const customerResults = _custRes?.data ?? [];
 
   const createRetour = useCreateStandaloneRetour();
   const [clotureOpen, setClotureOpen] = useState(false);

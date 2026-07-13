@@ -55,7 +55,7 @@ export default function Pos() {
   const t = (fr: string, ar: string) => lang === "ar" ? ar : fr;
   const currency = lang === "ar" ? "دج" : "DA";
   const { data: productsResp } = useGetProducts({ limit: 9999, inStockOnly: true });
-  const { data: customersResp } = useGetErpCustomers();
+  const { data: _custRes } = useGetErpCustomers({ limit: 9999 });
   const createOrder = useCreateOrder();
   const updateOrderStatus = useUpdateOrderStatus();
   const [invoice, setInvoice] = useState<{ data: InvoiceData; auto: boolean } | null>(null);
@@ -86,7 +86,7 @@ export default function Pos() {
     }
     return m;
   }, [extraBarcodesData]);
-  const customers: CustomerSummary[] = (customersResp ?? []) as CustomerSummary[];
+  const customers: CustomerSummary[] = (_custRes?.data ?? []) as CustomerSummary[];
 
   const [lines, setLines] = useState<CartLine[]>([]);
   const [code, setCode] = useState("");

@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useMemo, useEffect } from "react";
 import {
   useGetSuppliers, useCreateSupplier, useUpdateSupplier,
   useGetSupplierOperations, useCreateSupplierOperation,
@@ -6,7 +6,7 @@ import {
   getGetSuppliersQueryKey, getGetSupplierOperationsQueryKey, getGetErpCustomersQueryKey,
 } from "@workspace/api-client-react";
 import type { Supplier, SupplierOperation } from "@workspace/api-client-react";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQueryClient, keepPreviousData } from "@tanstack/react-query";
 import { useLang } from "@/hooks/use-lang";
 import { useStoreContext } from "@/hooks/use-store";
 import { Card, CardContent } from "@/components/ui/card";
@@ -18,6 +18,9 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import {
+  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+} from "@/components/ui/select";
 import { Plus, Pencil, CreditCard, TrendingDown, TrendingUp, FileText, RefreshCw, SlidersHorizontal, MoreVertical, Link2, Store, UserPlus } from "lucide-react";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { ContactFormDialog, emptyContactForm, type ContactFormState } from "@/components/ContactFormDialog";
@@ -529,18 +532,41 @@ export default function Suppliers() {
   const qc = useQueryClient();
   const { lang } = useLang();
   const t = (fr: string, ar: string) => lang === "ar" ? ar : fr;
-  const { data: suppliers, isLoading } = useGetSuppliers();
-  const createSupplier = useCreateSupplier();
-  const updateSupplier = useUpdateSupplier();
 
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(10);
   const [filterName, setFilterName] = useState("");
   const [filterContact, setFilterContact] = useState("");
   const [filterEmail, setFilterEmail] = useState("");
   const [filterPhone, setFilterPhone] = useState("");
   const [filterBalance, setFilterBalance] = useState("");
 
-  const filteredSuppliers = (suppliers ?? []).filter((s: Supplier) => {
-    if (filterName && !s.name?.toLowerCase().includes(filterName.toLowerCase())) return false;
+  // Debounce name for server-side search
+  const [debouncedFilterName, setDebouncedFilterName] = useState("");
+  const debounceRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(() => setDebouncedFilterName(filterName), 350);
+    return () => { if (debounceRef.current) clearTimeout(debounceRef.current); };
+  }, [filterName]);
+  useEffect(() => { setPage(1); }, [debouncedFilterName]);
+
+  const supplierParams = useMemo(() => ({
+    page, limit: pageSize,
+    ...(debouncedFilterName ? { search: debouncedFilterName } : {}),
+  }), [page, pageSize, debouncedFilterName]);
+
+  const { data: suppliersPage, isLoading } = useGetSuppliers(supplierParams, {
+    query: { queryKey: getGetSuppliersQueryKey(supplierParams), placeholderData: keepPreviousData },
+  });
+  const totalSuppliers = suppliersPage?.total ?? 0;
+  const totalPages = Math.max(1, Math.ceil(totalSuppliers / pageSize));
+
+  const createSupplier = useCreateSupplier();
+  const updateSupplier = useUpdateSupplier();
+
+  // Contact/email/phone/balance filters are client-side on the current page
+  const filteredSuppliers = (suppliersPage?.data ?? []).filter((s: Supplier) => {
     if (filterContact && !s.contactName?.toLowerCase().includes(filterContact.toLowerCase())) return false;
     if (filterEmail && !s.email?.toLowerCase().includes(filterEmail.toLowerCase())) return false;
     if (filterPhone && !s.phone?.toLowerCase().includes(filterPhone.toLowerCase())) return false;
@@ -732,6 +758,57 @@ export default function Suppliers() {
           )}
         </CardContent>
       </Card>
+
+      {/* Pagination bar */}
+      {totalSuppliers > 0 && (
+        <div className="flex items-center justify-between px-1 py-2 flex-wrap gap-2">
+          <span className="text-xs text-muted-foreground">
+            {totalSuppliers} {t("fournisseur(s)", "مورد")}
+          </span>
+          <div className="flex items-center gap-2">
+            <Select value={String(pageSize)} onValueChange={(v) => { setPageSize(Number(v)); setPage(1); }}>
+              <SelectTrigger className="h-8 w-[90px] text-xs"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                {[10, 25, 50, 100, 200].map((n) => (
+                  <SelectItem key={n} value={String(n)} className="text-xs">{n} / {t("page", "صفحة")}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <div className="flex items-center gap-1">
+              <Button variant="outline" size="sm" className="h-8 px-2 text-xs"
+                onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page === 1}>
+                ← {t("Préc.", "السابق")}
+              </Button>
+              {(() => {
+                const pages: (number | "...")[] = [];
+                if (totalPages <= 7) { for (let i = 1; i <= totalPages; i++) pages.push(i); }
+                else {
+                  pages.push(1);
+                  if (page > 3) pages.push("...");
+                  for (let i = Math.max(2, page - 1); i <= Math.min(totalPages - 1, page + 1); i++) pages.push(i);
+                  if (page < totalPages - 2) pages.push("...");
+                  pages.push(totalPages);
+                }
+                return pages.map((pg, i) =>
+                  pg === "..." ? (
+                    <span key={`e${i}`} className="px-1 text-muted-foreground text-xs select-none">…</span>
+                  ) : (
+                    <Button key={pg} variant={pg === page ? "default" : "outline"} size="sm"
+                      className={`h-8 w-8 p-0 text-xs ${pg === page ? "bg-[#1B3057] hover:bg-[#1B3057]/90" : ""}`}
+                      onClick={() => setPage(pg as number)}>
+                      {pg}
+                    </Button>
+                  )
+                );
+              })()}
+              <Button variant="outline" size="sm" className="h-8 px-2 text-xs"
+                onClick={() => setPage((p) => Math.min(totalPages, p + 1))} disabled={page === totalPages}>
+                {t("Suiv.", "التالي")} →
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Create / Edit Dialog — reuses the shared "Nouveau client" 4-tab form */}
       <ContactFormDialog

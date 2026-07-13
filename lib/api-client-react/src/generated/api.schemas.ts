@@ -2009,6 +2009,40 @@ export type GetErpCustomersParams = {
   wilaya?: string;
   classificationId?: number;
   priceTierId?: number;
+  page?: number;
+  limit?: number;
+};
+
+export type GetSuppliersParams = {
+  page?: number;
+  limit?: number;
+  search?: string;
+};
+
+export type GetPurchaseOrdersParams = {
+  page?: number;
+  limit?: number;
+};
+
+export type PaginatedSuppliers = {
+  data: Supplier[];
+  total: number;
+  page: number;
+  limit: number;
+};
+
+export type PaginatedPurchaseOrders = {
+  data: PurchaseOrder[];
+  total: number;
+  page: number;
+  limit: number;
+};
+
+export type PaginatedCustomers = {
+  data: CustomerSummary[];
+  total: number;
+  page: number;
+  limit: number;
 };
 
 export type SetErpStaffStoresBody = {

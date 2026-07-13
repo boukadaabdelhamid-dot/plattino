@@ -35,8 +35,8 @@ export default function Settings() {
 
   const queryClient = useQueryClient();
   const currentStore = useCurrentStore();
-  const { data: customersResp } = useGetErpCustomers();
-  const customers: CustomerSummary[] = (customersResp ?? []) as CustomerSummary[];
+  const { data: _custRes } = useGetErpCustomers({ limit: 9999 });
+  const customers: CustomerSummary[] = (_custRes?.data ?? []) as CustomerSummary[];
   const updateStore = useUpdateErpStore();
 
   function handleSetDefaultComptoir(value: string) {

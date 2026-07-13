@@ -1,4 +1,5 @@
-import { pgTable, serial, text, timestamp, integer } from "drizzle-orm/pg-core";
+import { pgTable, serial, text, timestamp, integer, uniqueIndex } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";
 import { storesTable } from "./stores";
@@ -17,7 +18,10 @@ export const productFamiliesTable = pgTable("product_families", {
   nameAr: text("name_ar").notNull(),
   nameFr: text("name_fr").notNull(),
   createdAt: timestamp("created_at").defaultNow().notNull(),
-});
+}, (t) => [
+  // Prevent duplicate family names (case-insensitive) per store.
+  uniqueIndex("product_families_store_lower_name_fr_key").on(t.storeId, sql`lower(${t.nameFr})`),
+]);
 
 export const productBrandsTable = pgTable("product_brands", {
   id: serial("id").primaryKey(),
@@ -25,7 +29,9 @@ export const productBrandsTable = pgTable("product_brands", {
   nameAr: text("name_ar").notNull(),
   nameFr: text("name_fr").notNull(),
   createdAt: timestamp("created_at").defaultNow().notNull(),
-});
+}, (t) => [
+  uniqueIndex("product_brands_store_lower_name_fr_key").on(t.storeId, sql`lower(${t.nameFr})`),
+]);
 
 export const productColorsTable = pgTable("product_colors", {
   id: serial("id").primaryKey(),
@@ -34,7 +40,9 @@ export const productColorsTable = pgTable("product_colors", {
   nameFr: text("name_fr").notNull(),
   hexCode: text("hex_code"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
-});
+}, (t) => [
+  uniqueIndex("product_colors_store_lower_name_fr_key").on(t.storeId, sql`lower(${t.nameFr})`),
+]);
 
 export const insertProductFamilySchema = createInsertSchema(productFamiliesTable).omit({ id: true, createdAt: true, storeId: true });
 export const insertProductBrandSchema = createInsertSchema(productBrandsTable).omit({ id: true, createdAt: true, storeId: true });

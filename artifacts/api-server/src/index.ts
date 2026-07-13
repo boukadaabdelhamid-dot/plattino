@@ -746,6 +746,69 @@ async function initStorage() {
   }
 }
 
+async function runAttributeUniqueIndexMigration() {
+  // Each attribute table is handled independently so one failure doesn't block the others.
+  // Before creating the unique index we deduplicate existing rows (keep lowest id per
+  // store+lower(name_fr), re-point products references, then delete extras) so the index
+  // creation never fails due to pre-existing duplicates.
+
+  const tables = [
+    {
+      name:       "product_families",
+      fkCol:      "family_id",
+      idxName:    "product_families_store_lower_name_fr_key",
+    },
+    {
+      name:       "product_brands",
+      fkCol:      "brand_id",
+      idxName:    "product_brands_store_lower_name_fr_key",
+    },
+    {
+      name:       "product_colors",
+      fkCol:      "color_id",
+      idxName:    "product_colors_store_lower_name_fr_key",
+    },
+  ] as const;
+
+  for (const tbl of tables) {
+    try {
+      // 1. Re-point products that reference a duplicate row to the canonical (lowest) id.
+      await pool.query(`
+        UPDATE products p
+        SET    ${tbl.fkCol} = canon.keep_id
+        FROM   (
+                 SELECT id,
+                        MIN(id) OVER (PARTITION BY store_id, lower(name_fr)) AS keep_id
+                 FROM   ${tbl.name}
+               ) canon
+        WHERE  p.${tbl.fkCol} = canon.id
+          AND  canon.id <> canon.keep_id
+      `);
+      // 2. Delete the duplicate (non-canonical) rows now that nothing references them.
+      await pool.query(`
+        DELETE FROM ${tbl.name}
+        WHERE id IN (
+          SELECT id
+          FROM   (
+                   SELECT id,
+                          MIN(id) OVER (PARTITION BY store_id, lower(name_fr)) AS keep_id
+                   FROM   ${tbl.name}
+                 ) sub
+          WHERE  id <> keep_id
+        )
+      `);
+      // 3. Create the unique expression index — safe now that duplicates are gone.
+      await pool.query(`
+        CREATE UNIQUE INDEX IF NOT EXISTS ${tbl.idxName}
+          ON ${tbl.name} (store_id, lower(name_fr))
+      `);
+      logger.info({ table: tbl.name }, "Attribute unique index ready.");
+    } catch (err) {
+      logger.warn({ err, table: tbl.name }, "Attribute unique index migration skipped (non-fatal)");
+    }
+  }
+}
+
 async function runWebSettingsMigration() {
   try {
     await pool.query(`
@@ -779,6 +842,7 @@ server.listen(port, async () => {
   await runMigrations();
   await runCaisseGlobalMigration(pool);
   await runContactGlobalLinkMigration(pool);
+  await runAttributeUniqueIndexMigration();
   await runWebSettingsMigration();
   await runBootstrap();
 });

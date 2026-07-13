@@ -1174,56 +1174,112 @@ router.post(
       const validRows = session.rows.filter((r) => !r.error);
 
       // ── Create missing brands / families / colors on the fly ───────────────
-      // Collect unique names that were not resolved at parse time
-      const missingBrands = [...new Set(validRows.filter((r) => r.brandName && r.resolvedBrandId == null).map((r) => r.brandName!))];
-      const missingFamilies = [...new Set(validRows.filter((r) => r.familyName && r.resolvedFamilyId == null).map((r) => r.familyName!))];
-      const missingColors = [...new Set(validRows.filter((r) => r.colorName && r.resolvedColorId == null).map((r) => r.colorName!))];
+      // Deduplicate case-insensitively so "APPAREIL" and "Appareil" collapse to one
+      // entry before we hit the DB. The upsert below is atomic (ON CONFLICT) so
+      // concurrent import sessions can no longer race-insert the same name.
+      const uniqueLower = (names: (string | null)[], resolvedIds: (number | null)[]): string[] => {
+        const seen = new Set<string>();
+        const result: string[] = [];
+        for (let i = 0; i < names.length; i++) {
+          const n = names[i];
+          if (n && resolvedIds[i] == null) {
+            const key = n.toLowerCase();
+            if (!seen.has(key)) { seen.add(key); result.push(n); }
+          }
+        }
+        return result;
+      };
+      const missingBrands  = uniqueLower(validRows.map((r) => r.brandName ?? null),  validRows.map((r) => r.resolvedBrandId  ?? null));
+      const missingFamilies = uniqueLower(validRows.map((r) => r.familyName ?? null), validRows.map((r) => r.resolvedFamilyId ?? null));
+      const missingColors  = uniqueLower(validRows.map((r) => r.colorName ?? null),  validRows.map((r) => r.resolvedColorId  ?? null));
 
       const newBrandIds = new Map<string, number>();
       const newFamilyIds = new Map<string, number>();
       const newColorIds = new Map<string, number>();
 
-      // Helper: find-or-create an attribute row.
-      // Uses SELECT-first to avoid creating duplicate rows when no DB-level UNIQUE
-      // constraint exists on (storeId, nameFr). Falls back to a second SELECT on
-      // the rare concurrent-insert race condition.
+      // Atomic find-or-create using the DB-level unique index on (store_id, lower(name_fr)).
+      // ON CONFLICT DO NOTHING is race-proof when the index exists. If the index was not
+      // created (rare: migration warning path), we fall back to the old SELECT-INSERT-SELECT
+      // pattern so import still succeeds rather than throwing.
       const upsertBrand = async (name: string): Promise<number | null> => {
-        const [existing] = await db.select({ id: schema.productBrandsTable.id }).from(schema.productBrandsTable)
-          .where(and(eq(schema.productBrandsTable.storeId, storeId), sql`lower(${schema.productBrandsTable.nameFr}) = lower(${name})`)).limit(1);
-        if (existing) return existing.id;
         try {
-          const [row] = await db.insert(schema.productBrandsTable).values({ storeId, nameFr: name, nameAr: name }).returning({ id: schema.productBrandsTable.id });
-          return row?.id ?? null;
-        } catch {
-          const [race] = await db.select({ id: schema.productBrandsTable.id }).from(schema.productBrandsTable)
+          const res = await db.execute<{ id: number }>(sql`
+            INSERT INTO product_brands (store_id, name_fr, name_ar)
+            VALUES (${storeId}, ${name}, ${name})
+            ON CONFLICT (store_id, lower(name_fr)) DO NOTHING
+            RETURNING id
+          `);
+          if (res.rows[0]) return Number(res.rows[0].id);
+          const [existing] = await db.select({ id: schema.productBrandsTable.id }).from(schema.productBrandsTable)
             .where(and(eq(schema.productBrandsTable.storeId, storeId), sql`lower(${schema.productBrandsTable.nameFr}) = lower(${name})`)).limit(1);
-          return race?.id ?? null;
+          return existing?.id ?? null;
+        } catch {
+          // Fallback: unique index absent — use non-atomic SELECT / INSERT / SELECT
+          const [ex] = await db.select({ id: schema.productBrandsTable.id }).from(schema.productBrandsTable)
+            .where(and(eq(schema.productBrandsTable.storeId, storeId), sql`lower(${schema.productBrandsTable.nameFr}) = lower(${name})`)).limit(1);
+          if (ex) return ex.id;
+          try {
+            const [row] = await db.insert(schema.productBrandsTable).values({ storeId, nameFr: name, nameAr: name }).returning({ id: schema.productBrandsTable.id });
+            return row?.id ?? null;
+          } catch {
+            const [race] = await db.select({ id: schema.productBrandsTable.id }).from(schema.productBrandsTable)
+              .where(and(eq(schema.productBrandsTable.storeId, storeId), sql`lower(${schema.productBrandsTable.nameFr}) = lower(${name})`)).limit(1);
+            return race?.id ?? null;
+          }
         }
       };
       const upsertFamily = async (name: string): Promise<number | null> => {
-        const [existing] = await db.select({ id: schema.productFamiliesTable.id }).from(schema.productFamiliesTable)
-          .where(and(eq(schema.productFamiliesTable.storeId, storeId), sql`lower(${schema.productFamiliesTable.nameFr}) = lower(${name})`)).limit(1);
-        if (existing) return existing.id;
         try {
-          const [row] = await db.insert(schema.productFamiliesTable).values({ storeId, nameFr: name, nameAr: name }).returning({ id: schema.productFamiliesTable.id });
-          return row?.id ?? null;
-        } catch {
-          const [race] = await db.select({ id: schema.productFamiliesTable.id }).from(schema.productFamiliesTable)
+          const res = await db.execute<{ id: number }>(sql`
+            INSERT INTO product_families (store_id, name_fr, name_ar)
+            VALUES (${storeId}, ${name}, ${name})
+            ON CONFLICT (store_id, lower(name_fr)) DO NOTHING
+            RETURNING id
+          `);
+          if (res.rows[0]) return Number(res.rows[0].id);
+          const [existing] = await db.select({ id: schema.productFamiliesTable.id }).from(schema.productFamiliesTable)
             .where(and(eq(schema.productFamiliesTable.storeId, storeId), sql`lower(${schema.productFamiliesTable.nameFr}) = lower(${name})`)).limit(1);
-          return race?.id ?? null;
+          return existing?.id ?? null;
+        } catch {
+          // Fallback: unique index absent — use non-atomic SELECT / INSERT / SELECT
+          const [ex] = await db.select({ id: schema.productFamiliesTable.id }).from(schema.productFamiliesTable)
+            .where(and(eq(schema.productFamiliesTable.storeId, storeId), sql`lower(${schema.productFamiliesTable.nameFr}) = lower(${name})`)).limit(1);
+          if (ex) return ex.id;
+          try {
+            const [row] = await db.insert(schema.productFamiliesTable).values({ storeId, nameFr: name, nameAr: name }).returning({ id: schema.productFamiliesTable.id });
+            return row?.id ?? null;
+          } catch {
+            const [race] = await db.select({ id: schema.productFamiliesTable.id }).from(schema.productFamiliesTable)
+              .where(and(eq(schema.productFamiliesTable.storeId, storeId), sql`lower(${schema.productFamiliesTable.nameFr}) = lower(${name})`)).limit(1);
+            return race?.id ?? null;
+          }
         }
       };
       const upsertColor = async (name: string): Promise<number | null> => {
-        const [existing] = await db.select({ id: schema.productColorsTable.id }).from(schema.productColorsTable)
-          .where(and(eq(schema.productColorsTable.storeId, storeId), sql`lower(${schema.productColorsTable.nameFr}) = lower(${name})`)).limit(1);
-        if (existing) return existing.id;
         try {
-          const [row] = await db.insert(schema.productColorsTable).values({ storeId, nameFr: name, nameAr: name }).returning({ id: schema.productColorsTable.id });
-          return row?.id ?? null;
-        } catch {
-          const [race] = await db.select({ id: schema.productColorsTable.id }).from(schema.productColorsTable)
+          const res = await db.execute<{ id: number }>(sql`
+            INSERT INTO product_colors (store_id, name_fr, name_ar)
+            VALUES (${storeId}, ${name}, ${name})
+            ON CONFLICT (store_id, lower(name_fr)) DO NOTHING
+            RETURNING id
+          `);
+          if (res.rows[0]) return Number(res.rows[0].id);
+          const [existing] = await db.select({ id: schema.productColorsTable.id }).from(schema.productColorsTable)
             .where(and(eq(schema.productColorsTable.storeId, storeId), sql`lower(${schema.productColorsTable.nameFr}) = lower(${name})`)).limit(1);
-          return race?.id ?? null;
+          return existing?.id ?? null;
+        } catch {
+          // Fallback: unique index absent — use non-atomic SELECT / INSERT / SELECT
+          const [ex] = await db.select({ id: schema.productColorsTable.id }).from(schema.productColorsTable)
+            .where(and(eq(schema.productColorsTable.storeId, storeId), sql`lower(${schema.productColorsTable.nameFr}) = lower(${name})`)).limit(1);
+          if (ex) return ex.id;
+          try {
+            const [row] = await db.insert(schema.productColorsTable).values({ storeId, nameFr: name, nameAr: name }).returning({ id: schema.productColorsTable.id });
+            return row?.id ?? null;
+          } catch {
+            const [race] = await db.select({ id: schema.productColorsTable.id }).from(schema.productColorsTable)
+              .where(and(eq(schema.productColorsTable.storeId, storeId), sql`lower(${schema.productColorsTable.nameFr}) = lower(${name})`)).limit(1);
+            return race?.id ?? null;
+          }
         }
       };
 

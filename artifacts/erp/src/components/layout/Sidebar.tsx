@@ -7,7 +7,7 @@ import {
   ChevronLeft, ChevronRight, Store as StoreIcon, Check,
   ArrowLeftRight, Bell, Volume2, VolumeX, Settings,
   ChevronDown, Layers, User, BellRing, Languages, HardDrive, Shield,
-  TrendingUp, KeyRound, Globe,
+  TrendingUp, KeyRound, Globe, RotateCcw, Receipt,
 } from "lucide-react";
 import logoPath from "@assets/logo_des_13_midanic_1777739613232.jpeg";
 import { useAuth } from "@/hooks/use-auth";
@@ -55,7 +55,18 @@ const navEntries: NavEntry[] = [
   { href: "/realtime", icon: Activity, labelEn: "Temps Réel", labelAr: "الوقت الفعلي", section: "realtime" },
   { href: "/caisse", icon: Wallet, labelEn: "Caisses", labelAr: "الصناديق", section: "caisse" },
   { href: "/caisse/reports", icon: BarChart2, labelEn: "Rapport caisses", labelAr: "تقرير الصناديق", adminOnly: true },
-  { href: "/orders", icon: ShoppingCart, labelEn: "Ventes", labelAr: "المبيعات", section: "orders" },
+  {
+    group: true,
+    icon: ShoppingCart,
+    labelEn: "Ventes",
+    labelAr: "المبيعات",
+    section: "orders" as PermSection,
+    children: [
+      { href: "/orders", icon: ShoppingCart, labelEn: "Vente rapide", labelAr: "بيع سريع" },
+      { href: "/sale-orders", icon: Receipt, labelEn: "Bons de vente", labelAr: "بونات البيع" },
+      { href: "/retours", icon: RotateCcw, labelEn: "Retours", labelAr: "المرتجعات" },
+    ],
+  },
   { href: "/online-orders", icon: Bell, labelEn: "Commandes en ligne", labelAr: "طلبات المتجر", badge: "online-orders-pending", section: "orders" },
   { href: "/products", icon: Package, labelEn: "Articles", labelAr: "المنتجات", section: "products" },
   { href: "/purchase-orders", icon: FileText, labelEn: "Achats", labelAr: "المشتريات", section: "purchases" },
@@ -235,9 +246,11 @@ export function Sidebar() {
     return window.localStorage.getItem(COLLAPSE_KEY) === "1";
   });
   const [muted, setMuted] = useState<boolean>(() => isChimeMuted(userId));
-  const [settingsOpen, setSettingsOpen] = useState<boolean>(() =>
-    location.startsWith("/settings")
-  );
+  const [groupsOpen, setGroupsOpen] = useState<Record<string, boolean>>(() => ({
+    Ventes: location === "/orders" || location.startsWith("/sale-orders") || location.startsWith("/retours"),
+    Paramètres: location.startsWith("/settings"),
+  }));
+  const toggleGroup = (key: string) => setGroupsOpen((prev) => ({ ...prev, [key]: !prev[key] }));
 
   useEffect(() => {
     if (typeof window !== "undefined") {
@@ -287,12 +300,13 @@ export function Sidebar() {
           if ("group" in entry) {
             const { icon: Icon, labelEn, labelAr, children } = entry;
             const groupActive = children.some((c) => location === c.href || location.startsWith(c.href + "/"));
+            const isOpen = groupsOpen[labelEn] ?? false;
             if (isCollapsed) {
               return (
                 <div key={labelEn} title={t(labelEn, labelAr)} className="relative">
                   <button
                     type="button"
-                    onClick={() => setSettingsOpen((v) => !v)}
+                    onClick={() => toggleGroup(labelEn)}
                     className={cn(
                       "w-full flex items-center justify-center rounded-md text-sm font-medium transition-colors px-2 py-2.5",
                       groupActive
@@ -302,7 +316,7 @@ export function Sidebar() {
                   >
                     <Icon className="h-4 w-4" />
                   </button>
-                  {settingsOpen && (
+                  {isOpen && (
                     <div className="absolute left-full top-0 ml-2 z-50 w-52 rounded-md border bg-popover text-popover-foreground shadow-lg overflow-hidden py-1">
                       {children.map(({ href, icon: ChildIcon, labelEn: cEn, labelAr: cAr }) => {
                         const active = location === href || (href !== "/settings" && location.startsWith(href + "/"));
@@ -327,7 +341,7 @@ export function Sidebar() {
               <div key={labelEn}>
                 <button
                   type="button"
-                  onClick={() => setSettingsOpen((v) => !v)}
+                  onClick={() => toggleGroup(labelEn)}
                   className={cn(
                     "w-full flex items-center gap-3 px-3 py-2.5 rounded-md text-sm font-medium transition-colors",
                     groupActive
@@ -339,9 +353,9 @@ export function Sidebar() {
                   <div className="flex-1 min-w-0 text-left">
                     <div className="truncate">{t(labelEn, labelAr)}</div>
                   </div>
-                  <ChevronDown className={cn("h-3.5 w-3.5 shrink-0 transition-transform", settingsOpen && "rotate-180")} />
+                  <ChevronDown className={cn("h-3.5 w-3.5 shrink-0 transition-transform", isOpen && "rotate-180")} />
                 </button>
-                {settingsOpen && (
+                {isOpen && (
                   <div className="ml-3 mt-0.5 space-y-0.5 border-l border-sidebar-border pl-2">
                     {children.map(({ href, icon: ChildIcon, labelEn: cEn, labelAr: cAr }) => {
                       const active = location === href || (href !== "/settings" && location.startsWith(href + "/"));

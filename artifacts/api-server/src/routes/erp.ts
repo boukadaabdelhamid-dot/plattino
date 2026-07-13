@@ -3908,4 +3908,280 @@ router.get("/erp/purchases/history/:productId", authenticate, requireStaff, requ
   } catch (err) { req.log.error(err); res.status(500).json({ error: "Internal server error" }); }
 });
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Bons de Vente  (order_source = 'bon')
+// ─────────────────────────────────────────────────────────────────────────────
+// Helpers for sale-order payload validation
+// ─────────────────────────────────────────────────────────────────────────────
+
+type SaleOrderItem = { productId: number; quantity: number; unitPrice: number };
+
+function validateSaleItems(items: unknown): string | null {
+  if (!Array.isArray(items) || items.length === 0) return "items must be a non-empty array";
+  for (const it of items) {
+    if (typeof it !== "object" || it === null) return "each item must be an object";
+    const { productId, quantity, unitPrice } = it as Record<string, unknown>;
+    if (!Number.isInteger(Number(productId)) || Number(productId) <= 0) return `invalid productId: ${String(productId)}`;
+    if (typeof quantity !== "number" || !isFinite(quantity) || quantity <= 0) return `quantity must be a positive number`;
+    if (typeof unitPrice !== "number" || !isFinite(unitPrice) || unitPrice < 0) return `unitPrice must be a non-negative number`;
+  }
+  return null;
+}
+
+// Verify all product IDs belong to the given store; return first invalid id or null.
+async function checkProductsInStore(productIds: number[], storeId: number): Promise<number | null> {
+  if (productIds.length === 0) return null;
+  const rows = await db.execute(sql`SELECT id FROM products WHERE id = ANY(${productIds}) AND store_id = ${storeId}`);
+  const found = new Set((rows.rows as Array<{ id: number }>).map(r => r.id));
+  return productIds.find(id => !found.has(id) ) ?? null;
+}
+
+// GET /erp/sale-orders
+router.get("/erp/sale-orders", authenticate, requireStaff, requireStore, requirePermission("orders", "view"), async (req: AuthRequest, res) => {
+  try {
+    const storeId = req.currentStoreId!;
+    const { page = "1", limit = "50", search, status } = req.query as Record<string, string | undefined>;
+    const pageNum = Math.max(1, parseInt(page, 10) || 1);
+    const limitNum = Math.max(1, Math.min(200, parseInt(limit, 10) || 50));
+    const offset = (pageNum - 1) * limitNum;
+
+    const searchClause = search ? `AND (lower(o.customer_name) LIKE lower('%${search.replace(/'/g, "''")}%') OR CAST(o.id AS TEXT) LIKE '%${search.replace(/'/g, "''")}%')` : "";
+    const statusClause = status ? `AND o.status = '${status.replace(/'/g, "''")}'` : "";
+
+    const result = await db.execute(sql`
+      SELECT
+        o.id,
+        o.status,
+        o.customer_name,
+        o.customer_phone,
+        o.user_id,
+        o.total_amount,
+        o.discount_amount,
+        o.created_at,
+        o.updated_at,
+        COALESCE(SUM(
+          CAST(oi.quantity AS numeric) * (CAST(oi.unit_price AS numeric) - COALESCE(CAST(oi.cost_price AS numeric), 0))
+        ), 0)::numeric(14,2) AS benefice,
+        COUNT(*) OVER() AS total_count
+      FROM orders o
+      LEFT JOIN order_items oi ON oi.order_id = o.id
+      WHERE o.store_id = ${storeId}
+        AND o.order_source = 'bon'
+        ${sql.raw(searchClause)}
+        ${sql.raw(statusClause)}
+      GROUP BY o.id
+      ORDER BY o.created_at DESC
+      LIMIT ${limitNum} OFFSET ${offset}
+    `);
+
+    const rows = result.rows as Array<Record<string, unknown>>;
+    const total = rows.length > 0 ? Number(rows[0].total_count) : 0;
+    res.json({ data: rows.map(({ total_count: _tc, ...r }) => r), total, page: pageNum, limit: limitNum });
+  } catch (err) { req.log.error(err); res.status(500).json({ error: "Internal server error" }); }
+});
+
+// GET /erp/sale-orders/:id
+router.get("/erp/sale-orders/:id", authenticate, requireStaff, requireStore, requirePermission("orders", "view"), async (req: AuthRequest, res) => {
+  try {
+    const storeId = req.currentStoreId!;
+    const id = pid(req, "id");
+    const result = await db.execute(sql`
+      SELECT
+        o.id, o.status, o.customer_name, o.customer_phone, o.user_id,
+        o.total_amount, o.discount_amount, o.created_at, o.updated_at,
+        COALESCE(json_agg(json_build_object(
+          'id', oi.id,
+          'product_id', oi.product_id,
+          'quantity', oi.quantity,
+          'unit_price', oi.unit_price,
+          'cost_price', oi.cost_price,
+          'product_name_en', p.name_en,
+          'product_name_ar', p.name_ar,
+          'product_reference', p.reference
+        ) ORDER BY oi.id) FILTER (WHERE oi.id IS NOT NULL), '[]') AS items
+      FROM orders o
+      LEFT JOIN order_items oi ON oi.order_id = o.id
+      LEFT JOIN products p ON p.id = oi.product_id
+      WHERE o.id = ${id} AND o.store_id = ${storeId} AND o.order_source = 'bon'
+      GROUP BY o.id
+    `);
+    if (!result.rows[0]) { res.status(404).json({ error: "Not found" }); return; }
+    res.json(result.rows[0]);
+  } catch (err) { req.log.error(err); res.status(500).json({ error: "Internal server error" }); }
+});
+
+// POST /erp/sale-orders
+router.post("/erp/sale-orders", authenticate, requireStaff, requireStore, requirePermission("orders", "edit"), async (req: AuthRequest, res) => {
+  try {
+    const storeId = req.currentStoreId!;
+    const { customerUserId, customerName, customerPhone, items, notes } = req.body as {
+      customerUserId?: number | null;
+      customerName?: string;
+      customerPhone?: string;
+      items: SaleOrderItem[];
+      notes?: string;
+    };
+
+    const validErr = validateSaleItems(items);
+    if (validErr) { res.status(400).json({ error: validErr }); return; }
+
+    const productIds = (items as SaleOrderItem[]).map(i => Number(i.productId));
+    const badId = await checkProductsInStore(productIds, storeId);
+    if (badId !== null) { res.status(400).json({ error: `Product ${badId} does not belong to this store` }); return; }
+
+    let cName = (customerName ?? "").trim() || "DIVERS COMPTOIR";
+    let cPhone = (customerPhone ?? "").trim();
+
+    if (customerUserId) {
+      const profRes = await db.execute(sql`SELECT name, phone FROM users WHERE id = ${customerUserId} LIMIT 1`);
+      const u = profRes.rows[0] as { name?: string; phone?: string } | undefined;
+      if (u) { cName = u.name ?? cName; cPhone = u.phone ?? cPhone; }
+    }
+
+    const total = (items as SaleOrderItem[]).reduce((s, i) => s + i.quantity * i.unitPrice, 0);
+
+    // Atomic: create order + items in one transaction
+    const orderId = await db.transaction(async (tx) => {
+      const orderRes = await tx.execute(sql`
+        INSERT INTO orders (store_id, user_id, seller_user_id, customer_name, customer_phone, customer_address,
+          status, total_amount, discount_amount, order_source, coupon_code, created_at, updated_at)
+        VALUES (
+          ${storeId}, ${customerUserId ?? null}, ${req.user!.id},
+          ${cName}, ${cPhone}, ${notes ?? ""},
+          'pending', ${total.toFixed(2)}, '0', 'bon', NULL, NOW(), NOW()
+        ) RETURNING id
+      `);
+      const newId = (orderRes.rows[0] as { id: number }).id;
+
+      for (const item of items as SaleOrderItem[]) {
+        const prodRes = await tx.execute(sql`SELECT cost_price FROM products WHERE id = ${item.productId} AND store_id = ${storeId} LIMIT 1`);
+        const costPrice = (prodRes.rows[0] as { cost_price?: string | null } | undefined)?.cost_price ?? "0";
+        await tx.execute(sql`
+          INSERT INTO order_items (order_id, product_id, quantity, unit_price, cost_price)
+          VALUES (${newId}, ${item.productId}, ${item.quantity}, ${item.unitPrice.toFixed(2)}, ${costPrice})
+        `);
+      }
+      return newId;
+    });
+
+    res.status(201).json({ id: orderId });
+  } catch (err) { req.log.error(err); res.status(500).json({ error: "Internal server error" }); }
+});
+
+// PUT /erp/sale-orders/:id
+router.put("/erp/sale-orders/:id", authenticate, requireStaff, requireStore, requirePermission("orders", "edit"), async (req: AuthRequest, res) => {
+  try {
+    const storeId = req.currentStoreId!;
+    const id = pid(req, "id");
+    const { customerUserId, customerName, customerPhone, items, notes } = req.body as {
+      customerUserId?: number | null;
+      customerName?: string;
+      customerPhone?: string;
+      items: SaleOrderItem[];
+      notes?: string;
+    };
+
+    const validErr = validateSaleItems(items);
+    if (validErr) { res.status(400).json({ error: validErr }); return; }
+
+    const existRes = await db.execute(sql`SELECT id, status FROM orders WHERE id = ${id} AND store_id = ${storeId} AND order_source = 'bon' LIMIT 1`);
+    const existing = existRes.rows[0] as { id: number; status: string } | undefined;
+    if (!existing) { res.status(404).json({ error: "Not found" }); return; }
+    if (existing.status === "delivered" || existing.status === "cancelled") {
+      res.status(400).json({ error: "Impossible de modifier un bon clôturé ou annulé" }); return;
+    }
+
+    const productIds = (items as SaleOrderItem[]).map(i => Number(i.productId));
+    const badId = await checkProductsInStore(productIds, storeId);
+    if (badId !== null) { res.status(400).json({ error: `Product ${badId} does not belong to this store` }); return; }
+
+    let cName = (customerName ?? "").trim() || "DIVERS COMPTOIR";
+    let cPhone = (customerPhone ?? "").trim();
+    if (customerUserId) {
+      const profRes = await db.execute(sql`SELECT name, phone FROM users WHERE id = ${customerUserId} LIMIT 1`);
+      const u = profRes.rows[0] as { name?: string; phone?: string } | undefined;
+      if (u) { cName = u.name ?? cName; cPhone = u.phone ?? cPhone; }
+    }
+
+    const total = (items as SaleOrderItem[]).reduce((s, i) => s + i.quantity * i.unitPrice, 0);
+
+    // Atomic: update order + replace items in one transaction
+    await db.transaction(async (tx) => {
+      await tx.execute(sql`
+        UPDATE orders SET
+          user_id = ${customerUserId ?? null},
+          customer_name = ${cName},
+          customer_phone = ${cPhone},
+          customer_address = ${notes ?? ""},
+          total_amount = ${total.toFixed(2)},
+          updated_at = NOW()
+        WHERE id = ${id}
+      `);
+      await tx.execute(sql`DELETE FROM order_items WHERE order_id = ${id}`);
+      for (const item of items as SaleOrderItem[]) {
+        const prodRes = await tx.execute(sql`SELECT cost_price FROM products WHERE id = ${item.productId} AND store_id = ${storeId} LIMIT 1`);
+        const costPrice = (prodRes.rows[0] as { cost_price?: string | null } | undefined)?.cost_price ?? "0";
+        await tx.execute(sql`INSERT INTO order_items (order_id, product_id, quantity, unit_price, cost_price) VALUES (${id}, ${item.productId}, ${item.quantity}, ${item.unitPrice.toFixed(2)}, ${costPrice})`);
+      }
+    });
+
+    res.json({ id, status: "updated" });
+  } catch (err) { req.log.error(err); res.status(500).json({ error: "Internal server error" }); }
+});
+
+// PUT /erp/sale-orders/:id/cloture
+router.put("/erp/sale-orders/:id/cloture", authenticate, requireStaff, requireStore, requirePermission("orders", "edit"), async (req: AuthRequest, res) => {
+  try {
+    const storeId = req.currentStoreId!;
+    const id = pid(req, "id");
+
+    const existRes = await db.execute(sql`SELECT id, status FROM orders WHERE id = ${id} AND store_id = ${storeId} AND order_source = 'bon' LIMIT 1`);
+    const existing = existRes.rows[0] as { id: number; status: string } | undefined;
+    if (!existing) { res.status(404).json({ error: "Not found" }); return; }
+    if (existing.status !== "pending" && existing.status !== "processing") {
+      res.status(400).json({ error: "Seuls les bons en cours (pending/processing) peuvent être clôturés" }); return;
+    }
+
+    const itemsRes = await db.execute(sql`SELECT product_id, quantity FROM order_items WHERE order_id = ${id}`);
+    const lineItems = itemsRes.rows as Array<{ product_id: number; quantity: number }>;
+
+    // Atomic: mark delivered + deduct stock in one transaction
+    await db.transaction(async (tx) => {
+      await tx.execute(sql`UPDATE orders SET status = 'delivered', updated_at = NOW() WHERE id = ${id}`);
+      for (const item of lineItems) {
+        await tx.execute(sql`
+          UPDATE products
+          SET stock = GREATEST(0, COALESCE(stock, 0) - ${item.quantity})
+          WHERE id = ${item.product_id} AND store_id = ${storeId}
+        `);
+      }
+    });
+
+    res.json({ id, status: "delivered" });
+  } catch (err) { req.log.error(err); res.status(500).json({ error: "Internal server error" }); }
+});
+
+// DELETE /erp/sale-orders/:id
+router.delete("/erp/sale-orders/:id", authenticate, requireStaff, requireStore, requirePermission("orders", "edit"), async (req: AuthRequest, res) => {
+  try {
+    const storeId = req.currentStoreId!;
+    const id = pid(req, "id");
+
+    const existRes = await db.execute(sql`SELECT id, status FROM orders WHERE id = ${id} AND store_id = ${storeId} AND order_source = 'bon' LIMIT 1`);
+    const existing = existRes.rows[0] as { id: number; status: string } | undefined;
+    if (!existing) { res.status(404).json({ error: "Not found" }); return; }
+    if (existing.status === "delivered") {
+      res.status(400).json({ error: "Impossible de supprimer un bon clôturé" }); return;
+    }
+
+    // Atomic delete
+    await db.transaction(async (tx) => {
+      await tx.execute(sql`DELETE FROM order_items WHERE order_id = ${id}`);
+      await tx.execute(sql`DELETE FROM orders WHERE id = ${id}`);
+    });
+
+    res.json({ deleted: true });
+  } catch (err) { req.log.error(err); res.status(500).json({ error: "Internal server error" }); }
+});
+
 export default router;

@@ -45,6 +45,8 @@ import SettingsBackup from "@/pages/SettingsBackup";
 import SettingsCustomers from "@/pages/SettingsCustomers";
 import WebStoreSettings from "@/pages/WebStoreSettings";
 import SmartPurchase from "@/pages/SmartPurchase";
+import SaleOrders from "@/pages/SaleOrders";
+import Retours from "@/pages/Retours";
 
 function is401(error: unknown): boolean {
   return (
@@ -145,6 +147,12 @@ function Router() {
       </Route>
       <Route path="/orders">
         <ProtectedRoute component={Orders} section="orders" />
+      </Route>
+      <Route path="/sale-orders">
+        <ProtectedRoute component={SaleOrders} section="orders" />
+      </Route>
+      <Route path="/retours">
+        <ProtectedRoute component={Retours} section="orders" />
       </Route>
       <Route path="/online-orders">
         <ProtectedRoute component={OnlineOrders} section="orders" />

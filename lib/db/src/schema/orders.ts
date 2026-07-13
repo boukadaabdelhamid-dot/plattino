@@ -19,6 +19,8 @@ export const ordersTable = pgTable("orders", {
   totalAmount: numeric("total_amount", { precision: 10, scale: 2 }).notNull(),
   discountAmount: numeric("discount_amount", { precision: 10, scale: 2 }).notNull().default("0"),
   couponCode: text("coupon_code"),
+  /** 'pos' = quick POS sale, 'bon' = formal bon de vente, null/'online' = storefront */
+  orderSource: text("order_source").default("pos"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });

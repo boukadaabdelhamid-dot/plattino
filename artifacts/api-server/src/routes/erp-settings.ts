@@ -140,8 +140,16 @@ router.post("/erp/settings/products/types", authenticate, requireStaff, requireP
     const parsed = typeAttributeSchema.safeParse(req.body);
     if (!parsed.success) { res.status(400).json({ error: parsed.error.issues[0]?.message ?? "Invalid body" }); return; }
     const { nameAr, nameFr, imageUrl } = parsed.data;
+    const trimmedFr = nameFr.trim();
+    const trimmedAr = nameAr.trim();
+    // Return the existing row if one with the same name (case-insensitive) already exists,
+    // preventing accidental duplicates from double-submits or concurrent requests.
+    const [existing] = await db.select().from(schema.productTypesTable)
+      .where(sql`lower(${schema.productTypesTable.nameFr}) = lower(${trimmedFr})`)
+      .limit(1);
+    if (existing) { res.status(201).json(existing); return; }
     const [item] = await db.insert(schema.productTypesTable)
-      .values({ nameAr: nameAr.trim(), nameFr: nameFr.trim(), imageUrl: imageUrl ?? null })
+      .values({ nameAr: trimmedAr, nameFr: trimmedFr, imageUrl: imageUrl ?? null })
       .returning();
     res.status(201).json(item);
   } catch (err) { req.log.error(err); res.status(500).json({ error: "Internal server error" }); }

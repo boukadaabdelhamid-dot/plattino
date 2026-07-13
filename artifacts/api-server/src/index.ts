@@ -808,6 +808,30 @@ async function runAttributeUniqueIndexMigration() {
       logger.warn({ err, table: tbl.name }, "Attribute unique index migration skipped (non-fatal)");
     }
   }
+
+  // product_types is a global table (no store_id) — products reference it by name string,
+  // not by FK id, so no FK rewrites are needed. Just dedup and add the unique index.
+  try {
+    await pool.query(`
+      DELETE FROM product_types
+      WHERE id IN (
+        SELECT id
+        FROM   (
+                 SELECT id,
+                        MIN(id) OVER (PARTITION BY lower(name_fr)) AS keep_id
+                 FROM   product_types
+               ) sub
+        WHERE  id <> keep_id
+      )
+    `);
+    await pool.query(`
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_product_types_lower_name_fr
+        ON product_types (lower(name_fr))
+    `);
+    logger.info({ table: "product_types" }, "Attribute unique index ready.");
+  } catch (err) {
+    logger.warn({ err, table: "product_types" }, "Attribute unique index migration skipped (non-fatal)");
+  }
 }
 
 async function runWebSettingsMigration() {

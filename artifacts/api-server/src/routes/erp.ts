@@ -2113,6 +2113,7 @@ router.get("/erp/products/:productId/history", authenticate, requireAdmin, requi
       retourType: schema.bonRetoursTable.retourType,
       reason: schema.bonRetoursTable.reason,
       clientName: schema.bonRetoursTable.clientName,
+      originalOrderId: schema.bonRetoursTable.originalOrderId,
       orderCustomerName: schema.ordersTable.customerName,
     })
       .from(schema.bonRetourItemsTable)
@@ -2129,6 +2130,7 @@ router.get("/erp/products/:productId/history", authenticate, requireAdmin, requi
       bonRetourId: r.bonRetourId,
       date: r.createdAt,
       customerName: r.clientName ?? r.orderCustomerName ?? null,
+      originalOrderId: r.originalOrderId ?? null,
       retourType: r.retourType ?? null,
       reason: r.reason ?? null,
       quantity: r.quantity,

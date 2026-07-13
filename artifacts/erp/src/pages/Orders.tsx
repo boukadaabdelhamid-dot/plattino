@@ -1,4 +1,5 @@
-import React, { useState, useMemo } from "react";
+import React, { useState, useMemo, useEffect } from "react";
+import { useSearchParams } from "wouter";
 import {
   useGetAdminOrders, useUpdateOrderStatus, useGetOrder, getGetAdminOrdersQueryKey,
   getGetOrderQueryKey, useGetAdminRetours, useCreateBonRetour, getGetAdminRetoursQueryKey,
@@ -42,7 +43,11 @@ const statusColor = (s: string) => {
 export default function Orders() {
   const { lang } = useLang();
   const t = (fr: string, ar: string) => lang === "ar" ? ar : fr;
-  const [tab, setTab] = useState<"vente" | "historique" | "retours">("vente");
+  const [searchParams] = useSearchParams();
+  const deepLinkOrderId = searchParams.get("orderId");
+  const [tab, setTab] = useState<"vente" | "historique" | "retours">(
+    deepLinkOrderId ? "historique" : "vente"
+  );
 
   return (
     <div className="space-y-4">
@@ -96,10 +101,22 @@ function OrdersHistory() {
   const { data: orders, isLoading } = useGetAdminOrders();
   const updateStatus = useUpdateOrderStatus();
   const [updating, setUpdating] = useState<number | null>(null);
-  const [invoiceOrderId, setInvoiceOrderId] = useState<number | null>(null);
+  const [searchParams, setSearchParams] = useSearchParams();
+  const deepLinkOrderId = searchParams.get("orderId");
+  const [invoiceOrderId, setInvoiceOrderId] = useState<number | null>(
+    deepLinkOrderId ? Number(deepLinkOrderId) : null
+  );
   const [showTva, setShowTva] = useState(false);
   const [bonRetourOrderId, setBonRetourOrderId] = useState<number | null>(null);
   const store = useCurrentStore();
+
+  // Clear the orderId search param once consumed so the URL stays clean
+  useEffect(() => {
+    if (deepLinkOrderId) {
+      setSearchParams((prev) => { prev.delete("orderId"); return prev; }, { replace: true });
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const { data: invoiceOrder } = useGetOrder(invoiceOrderId ?? 0, {
     query: { enabled: !!invoiceOrderId, queryKey: getGetOrderQueryKey(invoiceOrderId ?? 0) },
   });

@@ -902,6 +902,7 @@ export interface ProductHistoryReturn {
   bonRetourId: number;
   date?: string | null;
   customerName?: string | null;
+  originalOrderId?: number | null;
   retourType?: string | null;
   reason?: string | null;
   quantity: number;

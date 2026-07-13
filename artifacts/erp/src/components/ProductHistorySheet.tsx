@@ -1,4 +1,5 @@
 import React, { useMemo } from "react";
+import { useLocation } from "wouter";
 import {
   Sheet,
   SheetContent,
@@ -157,7 +158,7 @@ function MovementRow({ m, lang }: { m: ProductHistoryMovementEntry; lang: string
   );
 }
 
-function ReturnRow({ r, lang }: { r: ProductHistoryReturn; lang: string }) {
+function ReturnRow({ r, lang, onOrderClick }: { r: ProductHistoryReturn; lang: string; onOrderClick?: (orderId: number) => void }) {
   const t = (fr: string, ar: string) => (lang === "ar" ? ar : fr);
   const typeLabel = r.retourType === "sans_remboursement"
     ? t("Avoir", "أفوار")
@@ -171,6 +172,15 @@ function ReturnRow({ r, lang }: { r: ProductHistoryReturn; lang: string }) {
         <div className="flex flex-wrap items-center gap-1.5">
           <span className="font-medium text-sm">{t("Retour", "إرجاع")} #{r.bonRetourId}</span>
           <Chip text={typeLabel} color="bg-amber-100 text-amber-700" />
+          {r.originalOrderId != null && (
+            <button
+              type="button"
+              onClick={() => onOrderClick?.(r.originalOrderId!)}
+              className="inline-flex items-center text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-orange-100 text-orange-700 hover:bg-orange-200 transition-colors cursor-pointer"
+            >
+              {t("Commande", "طلب")} #{r.originalOrderId}
+            </button>
+          )}
         </div>
         <p className="text-xs text-muted-foreground mt-0.5">
           {r.customerName ? <span className="mr-2">{r.customerName}</span> : null}
@@ -252,6 +262,12 @@ interface Props {
 export default function ProductHistorySheet({ product, onClose }: Props) {
   const { lang } = useLang();
   const t = (fr: string, ar: string) => (lang === "ar" ? ar : fr);
+  const [, navigate] = useLocation();
+
+  const handleOrderClick = (orderId: number) => {
+    onClose();
+    navigate(`/orders?orderId=${orderId}`);
+  };
 
   const { data, isLoading, isError } = useGetProductHistory(product?.id ?? 0, {
     query: { enabled: !!product?.id },
@@ -376,7 +392,7 @@ export default function ProductHistorySheet({ product, onClose }: Props) {
                       if (row._type === "movement")
                         return <MovementRow key={(row as ProductHistoryMovementEntry).id} m={row as ProductHistoryMovementEntry} lang={lang} />;
                       if (row._type === "return")
-                        return <ReturnRow key={`ret-${(row as ProductHistoryReturn).id}`} r={row as ProductHistoryReturn} lang={lang} />;
+                        return <ReturnRow key={`ret-${(row as ProductHistoryReturn).id}`} r={row as ProductHistoryReturn} lang={lang} onOrderClick={handleOrderClick} />;
                       return <TransferRow key={(row as ProductHistoryTransferEntry).id} tr={row as ProductHistoryTransferEntry} lang={lang} />;
                     })
                 }
@@ -410,7 +426,7 @@ export default function ProductHistorySheet({ product, onClose }: Props) {
               <TabsContent value="returns" className="flex-1 overflow-y-auto px-5 mt-3 data-[state=inactive]:hidden">
                 {(data.returns ?? []).length === 0
                   ? <EmptyState label={t("Aucun retour", "لا توجد مرتجعات")} />
-                  : (data.returns ?? []).map((r) => <ReturnRow key={r.id} r={r} lang={lang} />)
+                  : (data.returns ?? []).map((r) => <ReturnRow key={r.id} r={r} lang={lang} onOrderClick={handleOrderClick} />)
                 }
               </TabsContent>
             </>

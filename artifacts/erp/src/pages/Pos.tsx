@@ -273,7 +273,7 @@ export default function Pos() {
       return;
     }
     const buyer = effectiveClient;
-    const items = lines.map((l) => ({ productId: l.productId, quantity: l.qty }));
+    const items = lines.map((l) => ({ productId: l.productId, quantity: l.qty, unitPrice: l.pu }));
     const customerName = buyer.name;
     const snapshotLines = buildInvoiceLines();
     // Down-payment collected now. Only meaningful for à-terme sales; clamp to

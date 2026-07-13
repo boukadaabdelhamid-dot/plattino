@@ -102,8 +102,14 @@ async function handleCreateOrder(req: AuthRequest, res: import("express").Respon
             eq(schema.productsTable.storeId, storeId),
           ));
         const priceMap = new Map(prods.map(p => [p.id, parseFloat(p.price)]));
-        const approxTotal = (items as { productId: number; quantity: number }[])
-          .reduce((s, i) => s + (priceMap.get(i.productId) ?? 0) * i.quantity, 0);
+        const approxTotal = (items as { productId: number; quantity: number; unitPrice?: number }[])
+          .reduce((s, i) => {
+            // Only trust a client-supplied unitPrice for authenticated POS staff.
+            const price = (isPosSale && typeof i.unitPrice === "number" && isFinite(i.unitPrice) && i.unitPrice >= 0)
+              ? i.unitPrice
+              : (priceMap.get(i.productId) ?? 0);
+            return s + price * i.quantity;
+          }, 0);
         const approxReceivable = Math.max(0, approxTotal - versement);
         // Rule: allow when projected = currentBalance + receivable ≤ creditLimit.
         // A negative current_balance means the store owes the customer (creditor
@@ -121,7 +127,7 @@ async function handleCreateOrder(req: AuthRequest, res: import("express").Respon
       return;
     }
 
-    let orderItems: { productId: number; quantity: number }[] = items || [];
+    let orderItems: { productId: number; quantity: number; unitPrice?: number }[] = items || [];
     for (const item of orderItems) {
       if (typeof item.quantity !== "number" || !Number.isFinite(item.quantity) || item.quantity <= 0) {
         res.status(400).json({ error: `Invalid quantity for product ${item.productId}: must be a positive number` });
@@ -129,11 +135,29 @@ async function handleCreateOrder(req: AuthRequest, res: import("express").Respon
       }
     }
 
-    const consolidated = new Map<number, number>();
+    const consolidated = new Map<number, { quantity: number; unitPrice?: number }>();
     for (const item of orderItems) {
-      consolidated.set(item.productId, (consolidated.get(item.productId) ?? 0) + item.quantity);
+      const existing = consolidated.get(item.productId);
+      if (existing) {
+        existing.quantity += item.quantity;
+        // If two entries for the same product carry different prices, clear the
+        // override so the backend falls back to the catalogue price (safe default).
+        if (existing.unitPrice !== undefined && item.unitPrice !== undefined && existing.unitPrice !== item.unitPrice) {
+          existing.unitPrice = undefined;
+        }
+      } else {
+        consolidated.set(item.productId, { quantity: item.quantity, unitPrice: item.unitPrice });
+      }
     }
-    orderItems = Array.from(consolidated.entries()).map(([productId, quantity]) => ({ productId, quantity }));
+    orderItems = Array.from(consolidated.entries()).map(([productId, { quantity, unitPrice }]) => ({ productId, quantity, unitPrice }));
+
+    // Only authenticated POS staff (admin / employee) are allowed to supply a
+    // custom unit price. Strip any client-supplied price from storefront /
+    // anonymous orders so catalogue pricing is always server-authoritative for
+    // those flows.
+    if (!isPosSale) {
+      orderItems = orderItems.map(({ productId, quantity }) => ({ productId, quantity }));
+    }
 
     if (req.user && orderItems.length === 0) {
       const cartItems = await db.select().from(schema.cartItemsTable)
@@ -169,8 +193,13 @@ async function handleCreateOrder(req: AuthRequest, res: import("express").Respon
             { status: 400 }
           );
         }
-        subtotal += parseFloat(product.price) * item.quantity;
-        enrichedItems.push({ ...item, unitPrice: parseFloat(product.price), product });
+        // Respect a seller-supplied unit price (e.g. POS price override).
+        // Fall back to the catalogue price only when no valid override is provided.
+        const effectivePrice = (typeof item.unitPrice === "number" && isFinite(item.unitPrice) && item.unitPrice >= 0)
+          ? item.unitPrice
+          : parseFloat(product.price);
+        subtotal += effectivePrice * item.quantity;
+        enrichedItems.push({ ...item, unitPrice: effectivePrice, product });
       }
 
       let discountAmount = 0;

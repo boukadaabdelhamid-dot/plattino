@@ -249,6 +249,16 @@ router.post("/erp/settings/products/copy-attributes-to-stores", authenticate, re
       res.status(400).json({ error: "targetStoreIds is required and must be non-empty" }); return;
     }
 
+    // Validate all target stores exist — prevents silently writing to phantom IDs
+    const knownStoreRows = await db.select({ id: schema.storesTable.id })
+      .from(schema.storesTable)
+      .where(inArray(schema.storesTable.id, targetStoreIds));
+    const knownStoreIdSet = new Set(knownStoreRows.map((r) => r.id));
+    const unknownIds = targetStoreIds.filter((id) => !knownStoreIdSet.has(id));
+    if (unknownIds.length > 0) {
+      res.status(400).json({ error: `Magasin(s) cible(s) inconnu(s) : ${unknownIds.join(", ")}` }); return;
+    }
+
     // Fetch source attribute rows (all or a specific subset)
     type AttrRow = { id: number; nameFr: string; nameAr: string; hexCode?: string | null };
     let sourceItems: AttrRow[] = [];
@@ -273,11 +283,11 @@ router.post("/erp/settings/products/copy-attributes-to-stores", authenticate, re
         .from(schema.productColorsTable).where(where);
     }
 
-    const results: { targetStoreId: number; copied: number; skipped: number; errors: number }[] = [];
+    const results: { targetStoreId: number; copied: number; skipped: number; errors: number; firstError: string | null }[] = [];
 
     for (const targetStoreId of targetStoreIds) {
       if (targetStoreId === storeId) continue;
-      let copied = 0, skipped = 0, errors = 0;
+      let copied = 0, skipped = 0, errors = 0, firstError: string | null = null;
 
       for (const item of sourceItems) {
         try {
@@ -306,10 +316,14 @@ router.post("/erp/settings/products/copy-attributes-to-stores", authenticate, re
             await db.insert(schema.productColorsTable).values({ storeId: targetStoreId, nameFr: item.nameFr, nameAr: item.nameAr, hexCode: item.hexCode ?? null });
             copied++;
           }
-        } catch { errors++; }
+        } catch (e) {
+          errors++;
+          req.log.warn({ err: e, targetStoreId, item: item.nameFr }, "copy-attributes item error");
+          if (!firstError) firstError = e instanceof Error ? e.message : "Erreur inconnue";
+        }
       }
 
-      results.push({ targetStoreId, copied, skipped, errors });
+      results.push({ targetStoreId, copied, skipped, errors, firstError });
     }
 
     res.json({ results });

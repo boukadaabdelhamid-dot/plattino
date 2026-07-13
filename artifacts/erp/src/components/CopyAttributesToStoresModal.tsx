@@ -14,6 +14,7 @@ type CopyAttrResult = {
   copied: number;
   skipped: number;
   errors: number;
+  firstError?: string | null;
 };
 
 type Props = {
@@ -76,9 +77,9 @@ export default function CopyAttributesToStoresModal({ open, onClose, type, ids, 
       const data = await res.json() as { results: CopyAttrResult[] };
       setResults(data.results);
     } catch (err) {
-      console.error(err);
+      const reason = err instanceof Error ? err.message : "Erreur réseau";
       setResults(Array.from(selectedStoreIds).map((tid) => ({
-        targetStoreId: tid, copied: 0, skipped: 0, errors: 1,
+        targetStoreId: tid, copied: 0, skipped: 0, errors: 1, firstError: reason,
       })));
     } finally {
       setLoading(false);
@@ -213,12 +214,29 @@ export default function CopyAttributesToStoresModal({ open, onClose, type, ids, 
                   </thead>
                   <tbody className="divide-y">
                     {results.map((r, i) => (
-                      <tr key={i} className="hover:bg-muted/20">
-                        <td className="px-3 py-2 text-xs font-medium">{storeName(r.targetStoreId)}</td>
-                        <td className="px-3 py-2 text-center text-xs text-emerald-600 font-semibold">{r.copied}</td>
-                        <td className="px-3 py-2 text-center text-xs text-amber-600">{r.skipped}</td>
-                        <td className="px-3 py-2 text-center text-xs text-red-600">{r.errors}</td>
-                      </tr>
+                      <React.Fragment key={i}>
+                        <tr className="hover:bg-muted/20">
+                          <td className="px-3 py-2 text-xs font-medium">{storeName(r.targetStoreId)}</td>
+                          <td className="px-3 py-2 text-center text-xs text-emerald-600 font-semibold">{r.copied}</td>
+                          <td className="px-3 py-2 text-center text-xs text-amber-600">{r.skipped}</td>
+                          <td className="px-3 py-2 text-center text-xs text-red-600 font-semibold">{r.errors}</td>
+                        </tr>
+                        {r.errors > 0 && r.firstError && (
+                          <tr className="bg-red-50">
+                            <td colSpan={4} className="px-3 py-1.5">
+                              <span className="flex items-center gap-1.5 text-xs text-red-700">
+                                <XCircle className="h-3 w-3 shrink-0" />
+                                {r.firstError}
+                                {r.errors > 1 && (
+                                  <span className="text-red-500 ml-1">
+                                    {t(`(+${r.errors - 1} autre(s))`, `(+${r.errors - 1} أخرى)`)}
+                                  </span>
+                                )}
+                              </span>
+                            </td>
+                          </tr>
+                        )}
+                      </React.Fragment>
                     ))}
                   </tbody>
                 </table>

@@ -6,7 +6,7 @@ import { usePermissions, type PermSection } from "@/hooks/use-permissions";
 import {
   Package, ShoppingCart, FileText, Wallet,
   UserCheck, Truck, Users, LayoutDashboard,
-  Activity, BarChart2, Clock, Calendar, CreditCard,
+  Activity, BarChart2, Clock, Calendar, CreditCard, ShoppingBasket,
 } from "lucide-react";
 
 type HomeModule = {
@@ -22,6 +22,7 @@ const modules: HomeModule[] = [
   { labelFr: "Articles",        labelAr: "المنتجات",      href: "/products",        icon: Package,         color: "bg-cyan-500",    section: "products" },
   { labelFr: "Ventes",          labelAr: "المبيعات",      href: "/orders",          icon: ShoppingCart,    color: "bg-emerald-500", section: "orders" },
   { labelFr: "Achats",          labelAr: "المشتريات",     href: "/purchase-orders", icon: FileText,        color: "bg-rose-500",    section: "purchases" },
+  { labelFr: "Besoin d'achats", labelAr: "ما ينقص",       href: "/smart-purchase",  icon: ShoppingBasket,  color: "bg-orange-500",  section: "purchases" },
   { labelFr: "Caisse",          labelAr: "الصندوق",       href: "/caisse",          icon: Wallet,          color: "bg-amber-500",   section: "caisse" },
   { labelFr: "Clients",         labelAr: "العملاء",       href: "/customers",       icon: UserCheck,       color: "bg-sky-500",     section: "customers" },
   { labelFr: "Fournisseurs",    labelAr: "الموردون",      href: "/suppliers",       icon: Truck,           color: "bg-violet-500",  section: "suppliers" },

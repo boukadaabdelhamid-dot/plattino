@@ -690,6 +690,18 @@ ALTER TABLE "bon_retour_fournisseur" ADD CONSTRAINT "bon_retour_fournisseur_orig
 ALTER TABLE "bon_retour_fournisseur" ADD CONSTRAINT "bon_retour_fournisseur_created_by_user_id_users_id_fk" FOREIGN KEY ("created_by_user_id") REFERENCES "public"."users"("id");--> statement-breakpoint
 ALTER TABLE "bon_retour_fournisseur_items" ADD CONSTRAINT "bon_retour_fournisseur_items_bon_retour_fournisseur_id_fk" FOREIGN KEY ("bon_retour_fournisseur_id") REFERENCES "public"."bon_retour_fournisseur"("id");--> statement-breakpoint
 ALTER TABLE "bon_retour_fournisseur_items" ADD CONSTRAINT "bon_retour_fournisseur_items_product_id_products_id_fk" FOREIGN KEY ("product_id") REFERENCES "public"."products"("id");--> statement-breakpoint
+-- ─── Smart Purchase: min_stock + purchase_snooze (idempotent) ───────────────
+ALTER TABLE "products" ADD COLUMN IF NOT EXISTS "min_stock" double precision;--> statement-breakpoint
+CREATE TABLE IF NOT EXISTS "purchase_snooze" (
+  "id" serial PRIMARY KEY NOT NULL,
+  "product_id" integer NOT NULL,
+  "store_id" integer NOT NULL,
+  "snoozed_until" timestamp NOT NULL,
+  "created_at" timestamp DEFAULT now() NOT NULL
+);--> statement-breakpoint
+CREATE UNIQUE INDEX IF NOT EXISTS "purchase_snooze_product_store_uniq" ON "purchase_snooze" ("product_id", "store_id");--> statement-breakpoint
+ALTER TABLE "purchase_snooze" ADD CONSTRAINT "purchase_snooze_product_id_fk" FOREIGN KEY ("product_id") REFERENCES "public"."products"("id") ON DELETE CASCADE;--> statement-breakpoint
+ALTER TABLE "purchase_snooze" ADD CONSTRAINT "purchase_snooze_store_id_fk" FOREIGN KEY ("store_id") REFERENCES "public"."stores"("id") ON DELETE CASCADE;--> statement-breakpoint
 `;
 
 

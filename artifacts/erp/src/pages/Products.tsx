@@ -176,6 +176,7 @@ type ProductForm = {
   catalogue1: string; catalogue2: string; catalogue3: string;
   catalogue4: string; catalogue5: string; catalogue6: string;
   isActive: boolean; isExposed: boolean;
+  minStock: string;
   images: GalleryImg[];
 };
 
@@ -190,6 +191,7 @@ const emptyForm: ProductForm = {
   catalogue1: "", catalogue2: "", catalogue3: "",
   catalogue4: "", catalogue5: "", catalogue6: "",
   isActive: true, isExposed: false,
+  minStock: "",
   images: [],
 };
 
@@ -491,6 +493,7 @@ export default function Products() {
       catalogue3: p.catalogue3 ?? "", catalogue4: p.catalogue4 ?? "",
       catalogue5: p.catalogue5 ?? "", catalogue6: p.catalogue6 ?? "",
       isActive: p.isActive ?? true, isExposed: p.isExposed ?? false,
+      minStock: p.minStock != null ? String(p.minStock) : "",
       images: gallery,
     });
     setActiveTab("general");
@@ -541,6 +544,7 @@ export default function Products() {
       catalogue6: form.catalogue6 || null,
       isActive: form.isActive,
       isExposed: form.isExposed,
+      minStock: form.minStock !== "" ? parseFloat(form.minStock) : null,
     };
     const forceRefresh = () => qc.invalidateQueries({ queryKey: getGetProductsQueryKey(), refetchType: "all" });
     const readErr = (err: unknown): string => {
@@ -1441,6 +1445,10 @@ export default function Products() {
                     <div>
                       <Label className="text-xs mb-1 block">Stock</Label>
                       <Input type="number" min="0" value={form.stock} onChange={(e) => setForm((f) => ({ ...f, stock: e.target.value }))} className="h-8 text-sm" />
+                    </div>
+                    <div>
+                      <Label className="text-xs mb-1 block">{t("Stock min.", "الحد الأدنى للمخزون")}</Label>
+                      <Input type="number" min="0" step="1" placeholder={t("Facultatif", "اختياري")} value={form.minStock} onChange={(e) => setForm((f) => ({ ...f, minStock: e.target.value }))} className="h-8 text-sm" />
                     </div>
                     <div>
                       <Label className="text-xs mb-1 block">Colisage</Label>

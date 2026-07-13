@@ -3770,4 +3770,137 @@ router.delete("/erp/staff/:id", authenticate, requireAdmin, async (req: AuthRequ
   } catch (err) { req.log.error(err); res.status(500).json({ error: "Internal server error" }); }
 });
 
+// ─── Smart Purchase ──────────────────────────────────────────────────────────
+// GET /erp/purchases/needed — low-stock products sorted by historical bénéfice
+router.get("/erp/purchases/needed", authenticate, requireStaff, requireStore, requirePermission("purchases", "view"), async (req: AuthRequest, res) => {
+  try {
+    const storeId = req.currentStoreId!;
+    const { supplierId, familyId, brandId, supplierCity, search } = req.query as Record<string, string | undefined>;
+
+    const supplierFilter  = supplierId   ? sql` AND last_sup.supplier_id = ${parseInt(supplierId, 10)}`                          : sql``;
+    const familyFilter    = familyId     ? sql` AND p.family_id = ${parseInt(familyId, 10)}`                                     : sql``;
+    const brandFilter     = brandId      ? sql` AND p.brand_id = ${parseInt(brandId, 10)}`                                       : sql``;
+    const cityFilter      = supplierCity ? sql` AND lower(s.address) LIKE ${`%${supplierCity.toLowerCase()}%`}`                  : sql``;
+    const searchFilter    = search       ? sql` AND (lower(p.name_en) LIKE ${`%${search.toLowerCase()}%`} OR lower(p.name_ar) LIKE ${`%${search.toLowerCase()}%`} OR lower(COALESCE(p.reference,'')) LIKE ${`%${search.toLowerCase()}%`})` : sql``;
+
+    const result = await db.execute(sql`
+      SELECT
+        p.id,
+        p.name_en        AS designation,
+        p.name_ar        AS designation_ar,
+        p.image_url,
+        p.stock,
+        p.min_stock,
+        p.cost_price,
+        p.price,
+        p.reference,
+        pf.name_fr       AS famille,
+        pf.name_ar       AS famille_ar,
+        pb.name_fr       AS marque,
+        s.id             AS supplier_id,
+        s.name           AS supplier_name,
+        s.address        AS supplier_city,
+        s.phone          AS supplier_phone,
+        COALESCE(ben.benefice, 0) AS benefice
+      FROM products p
+      LEFT JOIN product_families pf  ON pf.id = p.family_id
+      LEFT JOIN product_brands   pb  ON pb.id = p.brand_id
+      LEFT JOIN LATERAL (
+        SELECT po.supplier_id
+        FROM   purchase_items  pi
+        JOIN   purchase_orders po ON po.id = pi.purchase_order_id
+        WHERE  pi.product_id  = p.id
+          AND  po.store_id    = ${storeId}
+          AND  po.status      = 'received'
+        ORDER  BY COALESCE(po.received_at, po.created_at) DESC
+        LIMIT  1
+      ) last_sup ON true
+      LEFT JOIN suppliers s ON s.id = last_sup.supplier_id
+      LEFT JOIN LATERAL (
+        SELECT COALESCE(SUM(
+          CAST(oi.quantity AS numeric) *
+          (CAST(oi.unit_price AS numeric) - COALESCE(CAST(p2.cost_price AS numeric), 0))
+        ), 0) AS benefice
+        FROM   order_items oi
+        JOIN   orders      o  ON o.id  = oi.order_id
+        JOIN   products    p2 ON p2.id = oi.product_id
+        WHERE  oi.product_id = p.id
+          AND  o.store_id    = ${storeId}
+          AND  o.status NOT IN ('cancelled', 'draft')
+      ) ben ON true
+      WHERE p.store_id  = ${storeId}
+        AND p.is_active  = true
+        AND (
+          p.stock = 0
+          OR (p.min_stock IS NOT NULL AND p.stock <= p.min_stock)
+        )
+        AND NOT EXISTS (
+          SELECT 1 FROM purchase_snooze ps
+          WHERE  ps.product_id   = p.id
+            AND  ps.store_id     = ${storeId}
+            AND  ps.snoozed_until > NOW()
+        )
+        ${familyFilter}
+        ${brandFilter}
+        ${searchFilter}
+        ${supplierFilter}
+        ${cityFilter}
+      ORDER BY COALESCE(ben.benefice, 0) DESC NULLS LAST
+    `);
+    res.json(result.rows);
+  } catch (err) { req.log.error(err); res.status(500).json({ error: "Internal server error" }); }
+});
+
+// POST /erp/purchases/snooze/:productId — mark a product as "bought", hide for 24 h
+router.post("/erp/purchases/snooze/:productId", authenticate, requireStaff, requireStore, requirePermission("purchases", "edit"), async (req: AuthRequest, res) => {
+  try {
+    const storeId   = req.currentStoreId!;
+    const productId = pid(req, "productId");
+    // Store-ownership check: product must belong to current store
+    const [prod] = await db.select({ id: schema.productsTable.id })
+      .from(schema.productsTable)
+      .where(and(eq(schema.productsTable.id, productId), eq(schema.productsTable.storeId, storeId)))
+      .limit(1);
+    if (!prod) { res.status(404).json({ error: "Product not found in current store" }); return; }
+    await db.execute(sql`
+      INSERT INTO purchase_snooze (product_id, store_id, snoozed_until)
+      VALUES (${productId}, ${storeId}, NOW() + INTERVAL '24 hours')
+      ON CONFLICT (product_id, store_id)
+      DO UPDATE SET snoozed_until = NOW() + INTERVAL '24 hours'
+    `);
+    res.json({ success: true });
+  } catch (err) { req.log.error(err); res.status(500).json({ error: "Internal server error" }); }
+});
+
+// GET /erp/purchases/history/:productId — purchase history rows (received POs only)
+router.get("/erp/purchases/history/:productId", authenticate, requireStaff, requireStore, requirePermission("purchases", "view"), async (req: AuthRequest, res) => {
+  try {
+    const storeId   = req.currentStoreId!;
+    const productId = pid(req, "productId");
+    const result = await db.execute(sql`
+      SELECT
+        po.id                                        AS po_id,
+        COALESCE(po.received_at, po.created_at)      AS received_date,
+        s.name                                       AS supplier_name,
+        s.address                                    AS supplier_address,
+        s.phone                                      AS supplier_phone,
+        CAST(pi.unit_cost AS numeric)                AS unit_cost,
+        CAST(pi.quantity  AS numeric)                AS quantity,
+        p.image_url,
+        p.name_en                                    AS product_name,
+        p.name_ar                                    AS product_name_ar
+      FROM   purchase_items  pi
+      JOIN   purchase_orders po ON po.id  = pi.purchase_order_id
+      JOIN   suppliers       s  ON s.id   = po.supplier_id
+      JOIN   products        p  ON p.id   = pi.product_id
+      WHERE  pi.product_id = ${productId}
+        AND  po.store_id   = ${storeId}
+        AND  po.status     = 'received'
+      ORDER  BY COALESCE(po.received_at, po.created_at) DESC
+      LIMIT  50
+    `);
+    res.json(result.rows);
+  } catch (err) { req.log.error(err); res.status(500).json({ error: "Internal server error" }); }
+});
+
 export default router;

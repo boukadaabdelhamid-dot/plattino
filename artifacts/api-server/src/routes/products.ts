@@ -440,6 +440,7 @@ router.post("/products", authenticate, requireStaff, requireStore, requirePermis
       catalogue1, catalogue2, catalogue3, catalogue4, catalogue5, catalogue6,
       isActive, isExposed,
       familyId, brandId, colorId,
+      minStock,
       images,
     } = req.body;
     if (categoryId != null) {
@@ -496,6 +497,7 @@ router.post("/products", authenticate, requireStaff, requireStore, requirePermis
       familyId: resolvedFamilyId,
       brandId: resolvedBrandId,
       colorId: resolvedColorId,
+      minStock: minStock != null && minStock !== "" ? Number(minStock) : null,
     }).returning();
     if (Array.isArray(images) && images.length > 0) {
       await syncProductImages(product.id, images);

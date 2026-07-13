@@ -173,6 +173,7 @@ export interface Product {
   familyId?: number | null;
   brandId?: number | null;
   colorId?: number | null;
+  minStock?: number | null;
   images?: ProductImage[];
   primaryImage?: string | null;
 }

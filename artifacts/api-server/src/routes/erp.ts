@@ -514,55 +514,81 @@ router.get("/erp/dashboard/ventes-produits", authenticate, requireStaff, require
     const storeFilter = sid !== null ? sql` AND o.store_id = ${sid}` : sql``;
     const retoursStoreFilter = sid !== null ? sql` AND br.store_id = ${sid}` : sql``;
     const rows = await db.execute(sql`
-      WITH retours_par_produit AS (
-        -- Use p2.cost_price (product table) as the cost basis for returns,
-        -- since order_items.cost_price is unreliable (stored as unit_price).
-        SELECT bri.product_id,
-               SUM(
-                 CAST(bri.quantity AS numeric) * (
-                   CAST(bri.unit_price AS numeric)
-                   - COALESCE(CAST(p2.cost_price AS numeric), 0)
-                 )
-               ) AS retours_margin
+      WITH combined AS (
+        -- Sales rows (positive)
+        SELECT
+          'vente'::text AS row_type,
+          p.id,
+          COALESCE(p.name_en, p.name_ar) AS designation,
+          COALESCE(pb.name_fr, p.brand, '') AS marque,
+          COALESCE(pf.name_fr, '') AS famille,
+          p.reference,
+          p.barcode,
+          p.stock,
+          CAST(p.price AS text) AS price,
+          CAST(p.cost_price AS text) AS cost_price_product,
+          SUM(CAST(oi.quantity AS numeric)) AS qte_vendue,
+          ROUND(SUM(CAST(oi.unit_price AS numeric) * CAST(oi.quantity AS numeric)) / NULLIF(SUM(CAST(oi.quantity AS numeric)), 0), 2) AS pu,
+          ROUND(SUM(CAST(oi.unit_price AS numeric) * CAST(oi.quantity AS numeric)), 2) AS montant,
+          ROUND(
+            SUM(CAST(oi.unit_price AS numeric) * CAST(oi.quantity AS numeric))
+            - SUM(COALESCE(CAST(p.cost_price AS numeric), 0) * CAST(oi.quantity AS numeric)),
+          2) AS benefice
+        FROM order_items oi
+        JOIN orders o ON o.id = oi.order_id
+        JOIN products p ON p.id = oi.product_id
+        LEFT JOIN product_families pf ON pf.id = p.family_id
+        LEFT JOIN product_brands pb ON pb.id = p.brand_id
+        WHERE o.status NOT IN ('cancelled', 'draft')
+          AND o.created_at >= ${fromTs}
+          AND o.created_at <= ${toTs}
+          ${storeFilter}
+        GROUP BY p.id, p.name_en, p.name_ar, pb.name_fr, p.brand, pf.name_fr,
+                 p.reference, p.barcode, p.stock, p.price, p.cost_price
+
+        UNION ALL
+
+        -- Return rows (negative — each return subtracts from bénéfice as its own line)
+        SELECT
+          'retour'::text AS row_type,
+          p.id,
+          COALESCE(p.name_en, p.name_ar) AS designation,
+          COALESCE(pb.name_fr, p.brand, '') AS marque,
+          COALESCE(pf.name_fr, '') AS famille,
+          p.reference,
+          p.barcode,
+          p.stock,
+          CAST(p.price AS text) AS price,
+          CAST(p.cost_price AS text) AS cost_price_product,
+          -SUM(CAST(bri.quantity AS numeric)) AS qte_vendue,
+          ROUND(SUM(CAST(bri.unit_price AS numeric) * CAST(bri.quantity AS numeric)) / NULLIF(SUM(CAST(bri.quantity AS numeric)), 0), 2) AS pu,
+          -ROUND(SUM(CAST(bri.unit_price AS numeric) * CAST(bri.quantity AS numeric)), 2) AS montant,
+          -ROUND(
+            SUM(CAST(bri.unit_price AS numeric) * CAST(bri.quantity AS numeric))
+            - SUM(COALESCE(CAST(p.cost_price AS numeric), 0) * CAST(bri.quantity AS numeric)),
+          2) AS benefice
         FROM bon_retour_items bri
         JOIN bon_retours br ON br.id = bri.bon_retour_id
-        LEFT JOIN products p2 ON p2.id = bri.product_id
+        JOIN products p ON p.id = bri.product_id
+        LEFT JOIN product_families pf ON pf.id = p.family_id
+        LEFT JOIN product_brands pb ON pb.id = p.brand_id
         WHERE br.created_at >= ${fromTs}
           AND br.created_at <= ${toTs}
           ${retoursStoreFilter}
-        GROUP BY bri.product_id
+        GROUP BY p.id, p.name_en, p.name_ar, pb.name_fr, p.brand, pf.name_fr,
+                 p.reference, p.barcode, p.stock, p.price, p.cost_price
+      ),
+      vente_montant AS (
+        -- Rank products by their sales montant so retour rows appear below their parent vente row
+        SELECT id,
+               COALESCE(MAX(CASE WHEN row_type = 'vente' THEN CAST(montant AS numeric) END), 0) AS vm
+        FROM combined GROUP BY id
       )
-      SELECT
-        p.id,
-        COALESCE(p.name_en, p.name_ar) AS designation,
-        COALESCE(pb.name_fr, p.brand, '') AS marque,
-        COALESCE(pf.name_fr, '') AS famille,
-        p.reference,
-        p.barcode,
-        p.stock,
-        CAST(p.price AS text) AS price,
-        CAST(p.cost_price AS text) AS cost_price_product,
-        SUM(CAST(oi.quantity AS numeric)) AS qte_vendue,
-        ROUND(SUM(CAST(oi.unit_price AS numeric) * CAST(oi.quantity AS numeric)) / NULLIF(SUM(CAST(oi.quantity AS numeric)), 0), 2) AS pu,
-        ROUND(SUM(CAST(oi.unit_price AS numeric) * CAST(oi.quantity AS numeric)), 2) AS montant,
-        ROUND(
-          SUM(CAST(oi.unit_price AS numeric) * CAST(oi.quantity AS numeric))
-          - SUM(COALESCE(CAST(p.cost_price AS numeric), 0) * CAST(oi.quantity AS numeric))
-          - COALESCE(MIN(rpp.retours_margin), 0),
-        2) AS benefice
-      FROM order_items oi
-      JOIN orders o ON o.id = oi.order_id
-      JOIN products p ON p.id = oi.product_id
-      LEFT JOIN product_families pf ON pf.id = p.family_id
-      LEFT JOIN product_brands pb ON pb.id = p.brand_id
-      LEFT JOIN retours_par_produit rpp ON rpp.product_id = p.id
-      WHERE o.status NOT IN ('cancelled', 'draft')
-        AND o.created_at >= ${fromTs}
-        AND o.created_at <= ${toTs}
-        ${storeFilter}
-      GROUP BY p.id, p.name_en, p.name_ar, pb.name_fr, p.brand, pf.name_fr,
-               p.reference, p.barcode, p.stock, p.price, p.cost_price
-      ORDER BY SUM(CAST(oi.unit_price AS numeric) * oi.quantity) DESC
+      SELECT c.row_type, c.id, c.designation, c.marque, c.famille, c.reference, c.barcode,
+             c.stock, c.price, c.cost_price_product, c.qte_vendue, c.pu, c.montant, c.benefice
+      FROM combined c
+      JOIN vente_montant vm ON vm.id = c.id
+      ORDER BY vm.vm DESC, c.id, CASE c.row_type WHEN 'vente' THEN 0 ELSE 1 END
     `);
     res.json(rows.rows);
   } catch (err) { req.log.error(err); res.status(500).json({ error: "Internal server error" }); }

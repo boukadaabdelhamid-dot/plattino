@@ -202,7 +202,7 @@ type CaisseRow = { id: number; kind: string; balance: string; owner_name: string
 type CaissesData = { total: string; caisses: CaisseRow[] };
 type VenteRow = { date: string; montant: string; reduction: string; marge: string; retours: string; charges: string; benefice: string };
 type VentePlusRow = {
-  id: number; designation: string; marque: string; famille: string;
+  id: number; row_type: string; designation: string; marque: string; famille: string;
   reference: string | null; barcode: string | null; stock: number;
   price: string | null; cost_price_product: string | null;
   qte_vendue: string; pu: string; montant: string; benefice: string;
@@ -986,13 +986,28 @@ function VentePlusTab({ t, currency, storeId }: { t: TFn; currency: string; stor
 
   const sorted = useMemo(() => {
     const isStr = sort.col === "designation" || sort.col === "marque" || sort.col === "famille";
-    return [...filtered].sort((a, b) => {
+    // Sort only vente rows; retour rows are pinned below their parent vente row
+    const venteRows = filtered.filter(r => r.row_type !== "retour");
+    const retourMap = new Map(filtered.filter(r => r.row_type === "retour").map(r => [r.id, r]));
+    const sortedVente = [...venteRows].sort((a, b) => {
       const av = isStr ? String(a[sort.col] ?? "") : Number(a[sort.col] ?? 0);
       const bv = isStr ? String(b[sort.col] ?? "") : Number(b[sort.col] ?? 0);
       if (av < bv) return sort.dir === "asc" ? -1 : 1;
       if (av > bv) return sort.dir === "asc" ? 1 : -1;
       return 0;
     });
+    const result: VentePlusRow[] = [];
+    const usedRetours = new Set<number>();
+    for (const v of sortedVente) {
+      result.push(v);
+      const r = retourMap.get(v.id);
+      if (r) { result.push(r); usedRetours.add(v.id); }
+    }
+    // Orphan retour rows (returns with no sales in this period)
+    for (const [id, r] of retourMap) {
+      if (!usedRetours.has(id)) result.push(r);
+    }
+    return result;
   }, [filtered, sort]);
 
   const totalPages = Math.max(1, Math.ceil(sorted.length / pageSize));
@@ -1103,22 +1118,43 @@ function VentePlusTab({ t, currency, storeId }: { t: TFn; currency: string; stor
                   <tr><td colSpan={8} className="py-12 text-center text-muted-foreground italic text-sm">
                     {t("Aucune vente sur cette période", "لا توجد مبيعات في هذه الفترة")}
                   </td></tr>
-                ) : pageRows.map((row, i) => (
-                  <tr key={row.id ?? i} className="border-b last:border-0 hover:bg-muted/10 transition-colors">
-                    <td className="py-2 px-3 font-medium max-w-[180px] truncate" title={row.designation}>{row.designation}</td>
+                ) : pageRows.map((row, i) => {
+                  const isRetour = row.row_type === "retour";
+                  return (
+                  <tr key={`${row.id}_${row.row_type ?? i}`}
+                    className={`border-b last:border-0 transition-colors ${isRetour ? "bg-rose-50/60 hover:bg-rose-50" : "hover:bg-muted/10"}`}>
+                    <td className="py-2 px-3 font-medium max-w-[180px]" title={row.designation}>
+                      <div className="flex items-center gap-1.5 truncate">
+                        {isRetour && (
+                          <span className="shrink-0 text-[10px] font-bold uppercase tracking-wide bg-rose-100 text-rose-700 border border-rose-200 rounded px-1 py-0.5">
+                            {t("Retour", "مرتجع")}
+                          </span>
+                        )}
+                        <span className="truncate">{row.designation}</span>
+                      </div>
+                    </td>
                     <td className="py-2 px-3 text-xs text-muted-foreground truncate">{row.marque || "—"}</td>
                     <td className="py-2 px-3 text-xs text-muted-foreground truncate">{row.famille || "—"}</td>
-                    <td className="py-2 px-3 tabular-nums font-semibold text-right">{Number(row.qte_vendue).toLocaleString("fr-DZ")}</td>
+                    <td className={`py-2 px-3 tabular-nums font-semibold text-right ${isRetour ? "text-rose-700" : ""}`}>
+                      {Number(row.qte_vendue).toLocaleString("fr-DZ")}
+                    </td>
                     <td className="py-2 px-3 tabular-nums text-right">{fmtNum(row.pu)}</td>
-                    <td className="py-2 px-3 tabular-nums font-bold text-right">{fmtNum(row.montant)}</td>
-                    <td className="py-2 px-3 tabular-nums font-semibold text-right text-emerald-700">{fmtNum(row.benefice)}</td>
+                    <td className={`py-2 px-3 tabular-nums font-bold text-right ${isRetour ? "text-rose-700" : ""}`}>
+                      {fmtNum(row.montant)}
+                    </td>
+                    <td className={`py-2 px-3 tabular-nums font-semibold text-right ${isRetour ? "text-rose-700" : "text-emerald-700"}`}>
+                      {fmtNum(row.benefice)}
+                    </td>
                     <td className="py-2 px-3 text-center">
-                      <button onClick={() => setSelected(row)} className="text-teal-600 hover:text-teal-800 transition-colors" aria-label="Détails">
-                        <Eye className="h-4 w-4" />
-                      </button>
+                      {!isRetour && (
+                        <button onClick={() => setSelected(row)} className="text-teal-600 hover:text-teal-800 transition-colors" aria-label="Détails">
+                          <Eye className="h-4 w-4" />
+                        </button>
+                      )}
                     </td>
                   </tr>
-                ))}
+                  );
+                })}
                 {sorted.length > 0 && (
                   <tr className="bg-rose-50 border-t-2 border-rose-200">
                     <td colSpan={3} className="py-2 px-3 text-xs">

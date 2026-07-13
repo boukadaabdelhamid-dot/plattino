@@ -331,15 +331,20 @@ router.get("/erp/dashboard/client-receivables", authenticate, requireStaff, requ
     // already applied to the supplier-debts widget below.
     const result = await db.execute(sql`
       SELECT id, name, balance FROM (
-        SELECT DISTINCT ON (u.id)
-               u.id, u.name,
-               ROUND(CAST(cp.current_balance AS numeric), 2) AS balance
-        FROM customer_profiles cp
-        JOIN users u ON cp.user_id = u.id
-        WHERE CAST(cp.current_balance AS numeric) > 0
-        ${storeFilter}
-        ORDER BY u.id, cp.id
-      ) deduped
+        SELECT DISTINCT ON (lower(name))
+               id, name, balance
+        FROM (
+          SELECT DISTINCT ON (u.id)
+                 u.id, u.name AS name,
+                 ROUND(CAST(cp.current_balance AS numeric), 2) AS balance
+          FROM customer_profiles cp
+          JOIN users u ON cp.user_id = u.id
+          WHERE CAST(cp.current_balance AS numeric) > 0
+          ${storeFilter}
+          ORDER BY u.id, cp.id
+        ) linked_dedup
+        ORDER BY lower(name), balance DESC
+      ) name_dedup
       ORDER BY balance DESC
     `);
     res.json(result.rows);

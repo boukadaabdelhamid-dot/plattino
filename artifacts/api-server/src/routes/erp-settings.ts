@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { eq, and, inArray, sql } from "drizzle-orm";
+import { eq, and, inArray, ne, sql } from "drizzle-orm";
 import { z } from "zod";
 import { db, schema } from "../lib/db";
 import { authenticate, requireAdmin, requireStaff, requireStore, requirePermission, type AuthRequest } from "../lib/auth";
@@ -161,8 +161,17 @@ router.put("/erp/settings/products/types/:id", authenticate, requireStaff, requi
     const parsed = typeAttributeSchema.safeParse(req.body);
     if (!parsed.success) { res.status(400).json({ error: parsed.error.issues[0]?.message ?? "Invalid body" }); return; }
     const { nameAr, nameFr, imageUrl } = parsed.data;
+    const trimmedFr = nameFr.trim();
+    const conflict = await db.select({ id: schema.productTypesTable.id })
+      .from(schema.productTypesTable)
+      .where(and(sql`lower(${schema.productTypesTable.nameFr}) = lower(${trimmedFr})`, ne(schema.productTypesTable.id, id)))
+      .limit(1);
+    if (conflict.length > 0) {
+      res.status(409).json({ error: "Un type avec ce nom existe déjà" });
+      return;
+    }
     const [item] = await db.update(schema.productTypesTable)
-      .set({ nameAr: nameAr.trim(), nameFr: nameFr.trim(), imageUrl: imageUrl ?? null })
+      .set({ nameAr: nameAr.trim(), nameFr: trimmedFr, imageUrl: imageUrl ?? null })
       .where(eq(schema.productTypesTable.id, id))
       .returning();
     if (!item) { res.status(404).json({ error: "Not found" }); return; }

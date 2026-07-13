@@ -2072,7 +2072,39 @@ router.get("/erp/products/:productId/history", authenticate, requireAdmin, requi
       ))
       .orderBy(desc(schema.stockTransferEventsTable.createdAt));
 
-    // 5. Batch-resolve store names for movements + transfers.
+    // 5. Returns (bon_retour_items → bon_retours) for the product across accessible stores.
+    const returnRows = await db.select({
+      id: schema.bonRetourItemsTable.id,
+      bonRetourId: schema.bonRetourItemsTable.bonRetourId,
+      quantity: schema.bonRetourItemsTable.quantity,
+      unitPrice: schema.bonRetourItemsTable.unitPrice,
+      createdAt: schema.bonRetoursTable.createdAt,
+      retourType: schema.bonRetoursTable.retourType,
+      reason: schema.bonRetoursTable.reason,
+      clientName: schema.bonRetoursTable.clientName,
+      orderCustomerName: schema.ordersTable.customerName,
+    })
+      .from(schema.bonRetourItemsTable)
+      .innerJoin(schema.bonRetoursTable, and(
+        eq(schema.bonRetourItemsTable.bonRetourId, schema.bonRetoursTable.id),
+        inArray(schema.bonRetoursTable.storeId, accessibleStoreIds),
+      ))
+      .leftJoin(schema.ordersTable, eq(schema.bonRetoursTable.originalOrderId, schema.ordersTable.id))
+      .where(inArray(schema.bonRetourItemsTable.productId, allProductIds))
+      .orderBy(desc(schema.bonRetoursTable.createdAt));
+
+    const returns = returnRows.map(r => ({
+      id: r.id,
+      bonRetourId: r.bonRetourId,
+      date: r.createdAt,
+      customerName: r.clientName ?? r.orderCustomerName ?? null,
+      retourType: r.retourType ?? null,
+      reason: r.reason ?? null,
+      quantity: r.quantity,
+      unitPrice: r.unitPrice,
+    }));
+
+    // 6. Batch-resolve store names for movements + transfers.
     const storeIdSet = new Set<number>();
     for (const m of movements) storeIdSet.add(m.storeId);
     for (const t of transferRows) { storeIdSet.add(t.sourceStoreId); storeIdSet.add(t.destinationStoreId); }
@@ -2082,7 +2114,7 @@ router.get("/erp/products/:productId/history", authenticate, requireAdmin, requi
       : [];
     const storeMap = new Map(storeList.map(s => [s.id, s]));
 
-    // 6. Merge into a single chronological timeline (newest first).
+    // 7. Merge into a single chronological timeline (newest first).
     const timeline = [
       ...movements.map(m => ({
         kind: "movement" as const,
@@ -2116,7 +2148,7 @@ router.get("/erp/products/:productId/history", authenticate, requireAdmin, requi
       return tb - ta;
     });
 
-    res.json({ purchases, sales, timeline, currentStoreId: storeId });
+    res.json({ purchases, sales, timeline, returns, currentStoreId: storeId });
   } catch (err) { req.log.error(err); res.status(500).json({ error: "Internal server error" }); }
 });
 

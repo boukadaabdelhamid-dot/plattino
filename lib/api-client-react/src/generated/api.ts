@@ -117,6 +117,7 @@ import type {
   ProductHistorySale,
   ProductHistoryMovementEntry,
   ProductHistoryTransferEntry,
+  ProductHistoryReturn,
   PurchaseAnnexeCharge,
   CreatePurchaseAnnexeChargeRequest,
   PurchaseOrder,

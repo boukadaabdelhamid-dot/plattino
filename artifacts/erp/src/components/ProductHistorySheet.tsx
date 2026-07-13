@@ -9,7 +9,7 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   ShoppingCart, ShoppingBag, TrendingDown, TrendingUp,
-  AlertCircle, Package2, ArrowLeftRight,
+  AlertCircle, Package2, ArrowLeftRight, RotateCcw,
 } from "lucide-react";
 import { useLang } from "@/hooks/use-lang";
 import {
@@ -18,6 +18,7 @@ import {
   type ProductHistorySale,
   type ProductHistoryMovementEntry,
   type ProductHistoryTransferEntry,
+  type ProductHistoryReturn,
 } from "@workspace/api-client-react";
 import type { Product } from "@workspace/api-client-react";
 
@@ -156,6 +157,35 @@ function MovementRow({ m, lang }: { m: ProductHistoryMovementEntry; lang: string
   );
 }
 
+function ReturnRow({ r, lang }: { r: ProductHistoryReturn; lang: string }) {
+  const t = (fr: string, ar: string) => (lang === "ar" ? ar : fr);
+  const typeLabel = r.retourType === "sans_remboursement"
+    ? t("Avoir", "أفوار")
+    : t("Remboursement", "استرداد");
+  return (
+    <div className="flex items-start gap-3 py-3 border-b last:border-0">
+      <div className="mt-0.5 shrink-0 w-7 h-7 rounded-full bg-amber-100 flex items-center justify-center">
+        <RotateCcw className="h-3.5 w-3.5 text-amber-600" />
+      </div>
+      <div className="flex-1 min-w-0">
+        <div className="flex flex-wrap items-center gap-1.5">
+          <span className="font-medium text-sm">{t("Retour", "إرجاع")} #{r.bonRetourId}</span>
+          <Chip text={typeLabel} color="bg-amber-100 text-amber-700" />
+        </div>
+        <p className="text-xs text-muted-foreground mt-0.5">
+          {r.customerName ? <span className="mr-2">{r.customerName}</span> : null}
+          {r.reason ? <span className="mr-2 italic">{r.reason}</span> : null}
+          {fmtDate(r.date)}
+        </p>
+      </div>
+      <div className="text-right shrink-0">
+        <p className="text-sm font-semibold text-amber-600">+{r.quantity}</p>
+        <p className="text-xs text-muted-foreground">{fmtAmt(Number(r.unitPrice))} DA</p>
+      </div>
+    </div>
+  );
+}
+
 function TransferRow({ tr, lang }: { tr: ProductHistoryTransferEntry; lang: string }) {
   const t = (fr: string, ar: string) => (lang === "ar" ? ar : fr);
   const statusColor = STATUS_COLORS[tr.status] ?? "bg-gray-100 text-gray-600";
@@ -232,7 +262,8 @@ export default function ProductHistorySheet({ product, onClose }: Props) {
     | ({ _type: "purchase"; _date: string | null } & ProductHistoryPurchase)
     | ({ _type: "sale";     _date: string | null } & ProductHistorySale)
     | ({ _type: "movement"; _date: string | null } & ProductHistoryMovementEntry)
-    | ({ _type: "transfer"; _date: string | null } & ProductHistoryTransferEntry);
+    | ({ _type: "transfer"; _date: string | null } & ProductHistoryTransferEntry)
+    | ({ _type: "return";   _date: string | null } & ProductHistoryReturn);
 
   const all: UnifiedRow[] = useMemo(() => {
     if (!data) return [];
@@ -246,6 +277,9 @@ export default function ProductHistorySheet({ product, onClose }: Props) {
       ...data.timeline.map((e) => ({
         ...e, _type: e.kind as "movement" | "transfer", _date: e.date ?? null,
       })) as UnifiedRow[],
+      ...(data.returns ?? []).map((r) => ({
+        ...r, _type: "return" as const, _date: r.date ?? null,
+      })),
     ];
     return rows.sort((a, b) => {
       const ta = a._date ? new Date(a._date).getTime() : 0;
@@ -262,6 +296,7 @@ export default function ProductHistorySheet({ product, onClose }: Props) {
 
   const totalPurchased = data ? data.purchases.reduce((s, p) => s + p.quantity, 0) : null;
   const totalSold      = data ? data.sales.reduce((s, sl) => s + sl.quantity, 0) : null;
+  const totalReturned  = data ? (data.returns ?? []).reduce((s, r) => s + r.quantity, 0) : null;
 
   return (
     <Sheet open={!!product} onOpenChange={(open) => { if (!open) onClose(); }}>
@@ -280,6 +315,11 @@ export default function ProductHistorySheet({ product, onClose }: Props) {
               <span className="text-orange-600 font-medium">
                 {t("Vendu :", "تم بيعه:")} <strong>{totalSold}</strong>
               </span>
+              {(totalReturned ?? 0) > 0 && (
+                <span className="text-amber-600 font-medium">
+                  {t("Retourné :", "مُرجَع:")} <strong>{totalReturned}</strong>
+                </span>
+              )}
               <span className="text-sky-600 font-medium">
                 {t("Net :", "الصافي:")} <strong>{(totalPurchased ?? 0) - (totalSold ?? 0)}</strong>
               </span>
@@ -301,6 +341,9 @@ export default function ProductHistorySheet({ product, onClose }: Props) {
             </TabsTrigger>
             <TabsTrigger value="movements" className="text-xs h-7 px-3">
               {t("Mouvements", "حركات")}{data ? ` (${data.timeline.length})` : ""}
+            </TabsTrigger>
+            <TabsTrigger value="returns" className="text-xs h-7 px-3">
+              {t("Retours", "مرتجعات")}{data ? ` (${(data.returns ?? []).length})` : ""}
             </TabsTrigger>
           </TabsList>
 
@@ -332,6 +375,8 @@ export default function ProductHistorySheet({ product, onClose }: Props) {
                         return <SaleRow key={`s-${(row as ProductHistorySale).orderId}`} s={row as ProductHistorySale} lang={lang} />;
                       if (row._type === "movement")
                         return <MovementRow key={(row as ProductHistoryMovementEntry).id} m={row as ProductHistoryMovementEntry} lang={lang} />;
+                      if (row._type === "return")
+                        return <ReturnRow key={`ret-${(row as ProductHistoryReturn).id}`} r={row as ProductHistoryReturn} lang={lang} />;
                       return <TransferRow key={(row as ProductHistoryTransferEntry).id} tr={row as ProductHistoryTransferEntry} lang={lang} />;
                     })
                 }
@@ -359,6 +404,13 @@ export default function ProductHistorySheet({ product, onClose }: Props) {
                         ? <MovementRow key={e.id} m={e as ProductHistoryMovementEntry} lang={lang} />
                         : <TransferRow key={e.id} tr={e as ProductHistoryTransferEntry} lang={lang} />
                     )
+                }
+              </TabsContent>
+
+              <TabsContent value="returns" className="flex-1 overflow-y-auto px-5 mt-3 data-[state=inactive]:hidden">
+                {(data.returns ?? []).length === 0
+                  ? <EmptyState label={t("Aucun retour", "لا توجد مرتجعات")} />
+                  : (data.returns ?? []).map((r) => <ReturnRow key={r.id} r={r} lang={lang} />)
                 }
               </TabsContent>
             </>

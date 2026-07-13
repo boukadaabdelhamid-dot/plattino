@@ -897,10 +897,22 @@ export interface ProductHistoryTransferEntry {
   destStoreNameEn?: string | null;
 }
 
+export interface ProductHistoryReturn {
+  id: number;
+  bonRetourId: number;
+  date?: string | null;
+  customerName?: string | null;
+  retourType?: string | null;
+  reason?: string | null;
+  quantity: number;
+  unitPrice: string;
+}
+
 export interface ProductHistoryResponse {
   purchases: ProductHistoryPurchase[];
   sales: ProductHistorySale[];
   timeline: (ProductHistoryMovementEntry | ProductHistoryTransferEntry)[];
+  returns: ProductHistoryReturn[];
   currentStoreId: number;
 }
 

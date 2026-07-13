@@ -665,6 +665,30 @@ ALTER TABLE "supplier_operations" ADD COLUMN IF NOT EXISTS "balance_before" nume
 ALTER TABLE "supplier_operations" ADD COLUMN IF NOT EXISTS "balance_after" numeric(12, 2);--> statement-breakpoint
 ALTER TABLE "caisse_movements" ADD COLUMN IF NOT EXISTS "balance_before" numeric(12, 2);--> statement-breakpoint
 ALTER TABLE "caisse_movements" ADD COLUMN IF NOT EXISTS "balance_after" numeric(12, 2);--> statement-breakpoint
+-- ─── Supplier returns (avoirs fournisseur) ────────────────────────────────────
+CREATE TABLE IF NOT EXISTS "bon_retour_fournisseur" (
+        "id" serial PRIMARY KEY NOT NULL,
+        "store_id" integer NOT NULL,
+        "supplier_id" integer,
+        "original_purchase_order_id" integer,
+        "reason" text,
+        "notes" text,
+        "created_at" timestamp DEFAULT now() NOT NULL,
+        "created_by_user_id" integer
+);--> statement-breakpoint
+CREATE TABLE IF NOT EXISTS "bon_retour_fournisseur_items" (
+        "id" serial PRIMARY KEY NOT NULL,
+        "bon_retour_fournisseur_id" integer NOT NULL,
+        "product_id" integer NOT NULL,
+        "quantity" double precision NOT NULL,
+        "unit_cost" numeric(10, 2) NOT NULL
+);--> statement-breakpoint
+ALTER TABLE "bon_retour_fournisseur" ADD CONSTRAINT "bon_retour_fournisseur_store_id_stores_id_fk" FOREIGN KEY ("store_id") REFERENCES "public"."stores"("id");--> statement-breakpoint
+ALTER TABLE "bon_retour_fournisseur" ADD CONSTRAINT "bon_retour_fournisseur_supplier_id_suppliers_id_fk" FOREIGN KEY ("supplier_id") REFERENCES "public"."suppliers"("id");--> statement-breakpoint
+ALTER TABLE "bon_retour_fournisseur" ADD CONSTRAINT "bon_retour_fournisseur_original_purchase_order_id_purchase_orders_id_fk" FOREIGN KEY ("original_purchase_order_id") REFERENCES "public"."purchase_orders"("id");--> statement-breakpoint
+ALTER TABLE "bon_retour_fournisseur" ADD CONSTRAINT "bon_retour_fournisseur_created_by_user_id_users_id_fk" FOREIGN KEY ("created_by_user_id") REFERENCES "public"."users"("id");--> statement-breakpoint
+ALTER TABLE "bon_retour_fournisseur_items" ADD CONSTRAINT "bon_retour_fournisseur_items_bon_retour_fournisseur_id_fk" FOREIGN KEY ("bon_retour_fournisseur_id") REFERENCES "public"."bon_retour_fournisseur"("id");--> statement-breakpoint
+ALTER TABLE "bon_retour_fournisseur_items" ADD CONSTRAINT "bon_retour_fournisseur_items_product_id_products_id_fk" FOREIGN KEY ("product_id") REFERENCES "public"."products"("id");--> statement-breakpoint
 `;
 
 

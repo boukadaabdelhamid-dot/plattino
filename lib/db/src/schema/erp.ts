@@ -163,6 +163,32 @@ export const purchaseAnnexeChargeLinesTable = pgTable("purchase_annexe_charge_li
 export type PurchaseAnnexeCharge = typeof purchaseAnnexeChargesTable.$inferSelect;
 export type PurchaseAnnexeChargeLine = typeof purchaseAnnexeChargeLinesTable.$inferSelect;
 
+// ─── Supplier Returns (Avoirs fournisseur) ────────────────────────────────────
+// Tracks units sent back to a supplier (defective batches, excess stock, etc.).
+// Each header row (bon_retour_fournisseur) references the original purchase order
+// when applicable. Items link individual product lines to their returned qty/cost.
+export const bonRetourFournisseurTable = pgTable("bon_retour_fournisseur", {
+  id: serial("id").primaryKey(),
+  storeId: integer("store_id").references(() => storesTable.id).notNull(),
+  supplierId: integer("supplier_id").references(() => suppliersTable.id),
+  originalPurchaseOrderId: integer("original_purchase_order_id").references(() => purchaseOrdersTable.id),
+  reason: text("reason"),
+  notes: text("notes"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  createdByUserId: integer("created_by_user_id").references(() => usersTable.id),
+});
+
+export const bonRetourFournisseurItemsTable = pgTable("bon_retour_fournisseur_items", {
+  id: serial("id").primaryKey(),
+  bonRetourFournisseurId: integer("bon_retour_fournisseur_id").references(() => bonRetourFournisseurTable.id).notNull(),
+  productId: integer("product_id").references(() => productsTable.id).notNull(),
+  quantity: doublePrecision("quantity").notNull(),
+  unitCost: numeric("unit_cost", { precision: 10, scale: 2 }).notNull(),
+});
+
+export type BonRetourFournisseur = typeof bonRetourFournisseurTable.$inferSelect;
+export type BonRetourFournisseurItem = typeof bonRetourFournisseurItemsTable.$inferSelect;
+
 // ─── Inventory Movements ──────────────────────────────────────────────────────
 export const inventoryMovementTypeEnum = pgEnum("inventory_movement_type", ["in", "out", "adjustment"]);
 

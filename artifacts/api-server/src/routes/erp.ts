@@ -2103,7 +2103,38 @@ router.get("/erp/products/:productId/history", authenticate, requireAdmin, requi
       ))
       .orderBy(desc(schema.stockTransferEventsTable.createdAt));
 
-    // 5. Returns (bon_retour_items → bon_retours) for the product across accessible stores.
+    // 5a. Supplier returns (bon_retour_fournisseur) for the product across accessible stores.
+    const supplierReturnRows = await db.select({
+      id: schema.bonRetourFournisseurItemsTable.id,
+      bonRetourFournisseurId: schema.bonRetourFournisseurItemsTable.bonRetourFournisseurId,
+      quantity: schema.bonRetourFournisseurItemsTable.quantity,
+      unitCost: schema.bonRetourFournisseurItemsTable.unitCost,
+      createdAt: schema.bonRetourFournisseurTable.createdAt,
+      reason: schema.bonRetourFournisseurTable.reason,
+      originalPurchaseOrderId: schema.bonRetourFournisseurTable.originalPurchaseOrderId,
+      supplierName: schema.suppliersTable.name,
+    })
+      .from(schema.bonRetourFournisseurItemsTable)
+      .innerJoin(schema.bonRetourFournisseurTable, and(
+        eq(schema.bonRetourFournisseurItemsTable.bonRetourFournisseurId, schema.bonRetourFournisseurTable.id),
+        inArray(schema.bonRetourFournisseurTable.storeId, accessibleStoreIds),
+      ))
+      .leftJoin(schema.suppliersTable, eq(schema.bonRetourFournisseurTable.supplierId, schema.suppliersTable.id))
+      .where(inArray(schema.bonRetourFournisseurItemsTable.productId, allProductIds))
+      .orderBy(desc(schema.bonRetourFournisseurTable.createdAt));
+
+    const supplierReturns = supplierReturnRows.map(r => ({
+      id: r.id,
+      bonRetourFournisseurId: r.bonRetourFournisseurId,
+      date: r.createdAt,
+      supplierName: r.supplierName ?? null,
+      originalPurchaseOrderId: r.originalPurchaseOrderId ?? null,
+      reason: r.reason ?? null,
+      quantity: r.quantity,
+      unitCost: r.unitCost,
+    }));
+
+    // 5b. Client returns (bon_retour_items → bon_retours) for the product across accessible stores.
     const returnRows = await db.select({
       id: schema.bonRetourItemsTable.id,
       bonRetourId: schema.bonRetourItemsTable.bonRetourId,
@@ -2181,7 +2212,7 @@ router.get("/erp/products/:productId/history", authenticate, requireAdmin, requi
       return tb - ta;
     });
 
-    res.json({ purchases, sales, timeline, returns, currentStoreId: storeId });
+    res.json({ purchases, sales, timeline, returns, supplierReturns, currentStoreId: storeId });
   } catch (err) { req.log.error(err); res.status(500).json({ error: "Internal server error" }); }
 });
 

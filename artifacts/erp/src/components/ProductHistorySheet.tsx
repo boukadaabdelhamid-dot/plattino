@@ -20,6 +20,7 @@ import {
   type ProductHistoryMovementEntry,
   type ProductHistoryTransferEntry,
   type ProductHistoryReturn,
+  type ProductHistorySupplierReturn,
 } from "@workspace/api-client-react";
 import type { Product } from "@workspace/api-client-react";
 
@@ -158,6 +159,36 @@ function MovementRow({ m, lang }: { m: ProductHistoryMovementEntry; lang: string
   );
 }
 
+function SupplierReturnRow({ r, lang }: { r: ProductHistorySupplierReturn; lang: string }) {
+  const t = (fr: string, ar: string) => (lang === "ar" ? ar : fr);
+  return (
+    <div className="flex items-start gap-3 py-3 border-b last:border-0">
+      <div className="mt-0.5 shrink-0 w-7 h-7 rounded-full bg-rose-100 flex items-center justify-center">
+        <TrendingDown className="h-3.5 w-3.5 text-rose-600" />
+      </div>
+      <div className="flex-1 min-w-0">
+        <div className="flex flex-wrap items-center gap-1.5">
+          <span className="font-medium text-sm">
+            {t("Avoir four.", "أفوار مورد")} #{r.bonRetourFournisseurId}
+          </span>
+          {r.originalPurchaseOrderId && (
+            <Chip text={`BF #${r.originalPurchaseOrderId}`} color="bg-rose-100 text-rose-700" />
+          )}
+        </div>
+        <p className="text-xs text-muted-foreground mt-0.5">
+          {r.supplierName ? <span className="mr-2">{r.supplierName}</span> : null}
+          {r.reason ? <span className="mr-2 italic">{r.reason}</span> : null}
+          {fmtDate(r.date)}
+        </p>
+      </div>
+      <div className="text-right shrink-0">
+        <p className="text-sm font-semibold text-rose-600">-{r.quantity}</p>
+        <p className="text-xs text-muted-foreground">{fmtAmt(Number(r.unitCost))} DA</p>
+      </div>
+    </div>
+  );
+}
+
 function ReturnRow({ r, lang, onOrderClick }: { r: ProductHistoryReturn; lang: string; onOrderClick?: (orderId: number) => void }) {
   const t = (fr: string, ar: string) => (lang === "ar" ? ar : fr);
   const typeLabel = r.retourType === "sans_remboursement"
@@ -275,11 +306,12 @@ export default function ProductHistorySheet({ product, onClose }: Props) {
 
   // Unified, sorted (newest first) list of all event types
   type UnifiedRow =
-    | ({ _type: "purchase"; _date: string | null } & ProductHistoryPurchase)
-    | ({ _type: "sale";     _date: string | null } & ProductHistorySale)
-    | ({ _type: "movement"; _date: string | null } & ProductHistoryMovementEntry)
-    | ({ _type: "transfer"; _date: string | null } & ProductHistoryTransferEntry)
-    | ({ _type: "return";   _date: string | null } & ProductHistoryReturn);
+    | ({ _type: "purchase";        _date: string | null } & ProductHistoryPurchase)
+    | ({ _type: "sale";            _date: string | null } & ProductHistorySale)
+    | ({ _type: "movement";        _date: string | null } & ProductHistoryMovementEntry)
+    | ({ _type: "transfer";        _date: string | null } & ProductHistoryTransferEntry)
+    | ({ _type: "return";          _date: string | null } & ProductHistoryReturn)
+    | ({ _type: "supplierReturn";  _date: string | null } & ProductHistorySupplierReturn);
 
   const all: UnifiedRow[] = useMemo(() => {
     if (!data) return [];
@@ -296,6 +328,9 @@ export default function ProductHistorySheet({ product, onClose }: Props) {
       ...(data.returns ?? []).map((r) => ({
         ...r, _type: "return" as const, _date: r.date ?? null,
       })),
+      ...(data.supplierReturns ?? []).map((r) => ({
+        ...r, _type: "supplierReturn" as const, _date: r.date ?? null,
+      })),
     ];
     return rows.sort((a, b) => {
       const ta = a._date ? new Date(a._date).getTime() : 0;
@@ -310,9 +345,10 @@ export default function ProductHistorySheet({ product, onClose }: Props) {
         : (product.nameEn || product.nameAr))
     : "";
 
-  const totalPurchased = data ? data.purchases.reduce((s, p) => s + p.quantity, 0) : null;
-  const totalSold      = data ? data.sales.reduce((s, sl) => s + sl.quantity, 0) : null;
-  const totalReturned  = data ? (data.returns ?? []).reduce((s, r) => s + r.quantity, 0) : null;
+  const totalPurchased        = data ? data.purchases.reduce((s, p) => s + p.quantity, 0) : null;
+  const totalSold             = data ? data.sales.reduce((s, sl) => s + sl.quantity, 0) : null;
+  const totalReturned         = data ? (data.returns ?? []).reduce((s, r) => s + r.quantity, 0) : null;
+  const totalSupplierReturned = data ? (data.supplierReturns ?? []).reduce((s, r) => s + r.quantity, 0) : null;
 
   return (
     <Sheet open={!!product} onOpenChange={(open) => { if (!open) onClose(); }}>
@@ -334,6 +370,11 @@ export default function ProductHistorySheet({ product, onClose }: Props) {
               {(totalReturned ?? 0) > 0 && (
                 <span className="text-amber-600 font-medium">
                   {t("Retourné :", "مُرجَع:")} <strong>{totalReturned}</strong>
+                </span>
+              )}
+              {(totalSupplierReturned ?? 0) > 0 && (
+                <span className="text-rose-600 font-medium">
+                  {t("Avoir four. :", "أفوار مورد:")} <strong>{totalSupplierReturned}</strong>
                 </span>
               )}
               <span className="text-sky-600 font-medium">
@@ -360,6 +401,9 @@ export default function ProductHistorySheet({ product, onClose }: Props) {
             </TabsTrigger>
             <TabsTrigger value="returns" className="text-xs h-7 px-3">
               {t("Retours", "مرتجعات")}{data ? ` (${(data.returns ?? []).length})` : ""}
+            </TabsTrigger>
+            <TabsTrigger value="avoirs" className="text-xs h-7 px-3">
+              {t("Avoirs four.", "أفوار المورد")}{data ? ` (${(data.supplierReturns ?? []).length})` : ""}
             </TabsTrigger>
           </TabsList>
 
@@ -393,6 +437,8 @@ export default function ProductHistorySheet({ product, onClose }: Props) {
                         return <MovementRow key={(row as ProductHistoryMovementEntry).id} m={row as ProductHistoryMovementEntry} lang={lang} />;
                       if (row._type === "return")
                         return <ReturnRow key={`ret-${(row as ProductHistoryReturn).id}`} r={row as ProductHistoryReturn} lang={lang} onOrderClick={handleOrderClick} />;
+                      if (row._type === "supplierReturn")
+                        return <SupplierReturnRow key={`sret-${(row as ProductHistorySupplierReturn).id}`} r={row as ProductHistorySupplierReturn} lang={lang} />;
                       return <TransferRow key={(row as ProductHistoryTransferEntry).id} tr={row as ProductHistoryTransferEntry} lang={lang} />;
                     })
                 }
@@ -427,6 +473,13 @@ export default function ProductHistorySheet({ product, onClose }: Props) {
                 {(data.returns ?? []).length === 0
                   ? <EmptyState label={t("Aucun retour", "لا توجد مرتجعات")} />
                   : (data.returns ?? []).map((r) => <ReturnRow key={r.id} r={r} lang={lang} onOrderClick={handleOrderClick} />)
+                }
+              </TabsContent>
+
+              <TabsContent value="avoirs" className="flex-1 overflow-y-auto px-5 mt-3 data-[state=inactive]:hidden">
+                {(data.supplierReturns ?? []).length === 0
+                  ? <EmptyState label={t("Aucun avoir fournisseur", "لا توجد أفوار موردين")} />
+                  : (data.supplierReturns ?? []).map((r) => <SupplierReturnRow key={r.id} r={r} lang={lang} />)
                 }
               </TabsContent>
             </>

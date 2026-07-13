@@ -909,11 +909,23 @@ export interface ProductHistoryReturn {
   unitPrice: string;
 }
 
+export interface ProductHistorySupplierReturn {
+  id: number;
+  bonRetourFournisseurId: number;
+  date?: string | null;
+  supplierName?: string | null;
+  originalPurchaseOrderId?: number | null;
+  reason?: string | null;
+  quantity: number;
+  unitCost: string;
+}
+
 export interface ProductHistoryResponse {
   purchases: ProductHistoryPurchase[];
   sales: ProductHistorySale[];
   timeline: (ProductHistoryMovementEntry | ProductHistoryTransferEntry)[];
   returns: ProductHistoryReturn[];
+  supplierReturns: ProductHistorySupplierReturn[];
   currentStoreId: number;
 }
 

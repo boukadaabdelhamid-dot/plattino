@@ -6,6 +6,7 @@ import { db, schema, pool } from "./lib/db";
 import { bootstrap } from "./seed";
 import { runCaisseGlobalMigration } from "./lib/caisse-global-migration";
 import { runContactGlobalLinkMigration } from "./lib/contact-global-link-migration";
+import { runProductAttributeDedupMigration } from "./lib/product-attribute-dedup-migration";
 import { getStorageMode, getLocalStorageBase, ensureLocalStorageReady } from "./lib/objectStorage";
 
 const rawPort = process.env["PORT"];
@@ -842,6 +843,7 @@ server.listen(port, async () => {
   await runMigrations();
   await runCaisseGlobalMigration(pool);
   await runContactGlobalLinkMigration(pool);
+  await runProductAttributeDedupMigration(pool);
   await runAttributeUniqueIndexMigration();
   await runWebSettingsMigration();
   await runBootstrap();

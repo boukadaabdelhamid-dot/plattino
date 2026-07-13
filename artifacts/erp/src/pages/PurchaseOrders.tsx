@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import React, { useMemo, useState, useCallback } from "react";
 import {
   useGetPurchaseOrders, useCreatePurchaseOrder, useUpdatePurchaseOrder, useReceivePurchaseOrder,
   useDeletePurchaseOrder,
@@ -32,9 +32,36 @@ import {
 } from "lucide-react";
 import { format } from "date-fns";
 import InvoiceDialog from "@/components/InvoiceDialog";
+import PurchaseHistorySheet from "@/components/PurchaseHistorySheet";
 import { useCurrentStore } from "@/hooks/use-current-store";
 
 type TFn = (fr: string, ar: string) => string;
+
+type ColumnSettings = {
+  showMontant: boolean;
+  showQtyPrepared: boolean;
+  showQtyGratuit: boolean;
+  showProgression: boolean;
+};
+
+const DEFAULT_COL_SETTINGS: ColumnSettings = {
+  showMontant: true,
+  showQtyPrepared: true,
+  showQtyGratuit: true,
+  showProgression: true,
+};
+
+function loadColSettings(): ColumnSettings {
+  try {
+    const s = localStorage.getItem("po-column-settings");
+    if (s) return { ...DEFAULT_COL_SETTINGS, ...JSON.parse(s) };
+  } catch { /**/ }
+  return DEFAULT_COL_SETTINGS;
+}
+
+function saveColSettings(s: ColumnSettings) {
+  try { localStorage.setItem("po-column-settings", JSON.stringify(s)); } catch { /**/ }
+}
 
 type ExtendedPO = PurchaseOrder & { paymentMethod?: string };
 
@@ -94,6 +121,16 @@ export default function PurchaseOrders() {
   const [editorOpen, setEditorOpen] = useState(false);
   const [editingPO, setEditingPO] = useState<PurchaseOrder | null>(null);
   const [chargesOpen, setChargesOpen] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [columnSettings, setColumnSettings] = useState<ColumnSettings>(loadColSettings);
+
+  const toggleSetting = useCallback((key: keyof ColumnSettings) => {
+    setColumnSettings((prev) => {
+      const next = { ...prev, [key]: !prev[key] };
+      saveColSettings(next);
+      return next;
+    });
+  }, []);
 
   // Safety net: close the editor whenever the active store changes.
   // Prevents editing a PO that belongs to a different store, which would
@@ -161,6 +198,35 @@ export default function PurchaseOrders() {
     });
   }, [pos, supplierMap, refFilter, supplierFilter, statusFilter, paymentFilter, dateFrom, dateTo, lang]);
 
+  const handlePrintList = useCallback(() => {
+    const w = window.open("", "_blank", "width=900,height=600");
+    if (!w) return;
+    const rf = (id: number) => `${String(id).padStart(6, "0")}/${new Date().getFullYear()}`;
+    const fd = (d: string | null | undefined) => d ? new Date(d).toLocaleDateString("fr-DZ") : "—";
+    const total = filtered.reduce((s, p) => s + parseFloat(p.totalAmount ?? "0"), 0);
+    const rows = filtered.map((po) => {
+      const sn = supplierMap[po.supplierId]?.name ?? `#${po.supplierId}`;
+      const st = statusLabel(po.status, t);
+      const pm = po.paymentMethod === "comptant" ? t("Comptant", "نقدي") : t("À terme", "آجل");
+      return `<tr><td>${rf(po.id)}</td><td>${fd(po.createdAt)}</td><td>${sn}</td><td>${st}</td><td>${pm}</td><td style="text-align:right">${fmt(parseFloat(po.totalAmount ?? "0"))}</td></tr>`;
+    }).join("");
+    w.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>${t("Achats","المشتريات")}</title>
+      <style>body{font-family:Arial,sans-serif;font-size:12px;padding:20px}table{width:100%;border-collapse:collapse}
+      th,td{border:1px solid #ddd;padding:6px 8px}th{background:#f5f5f5;font-weight:bold}
+      h2{margin:0 0 12px}tfoot td{font-weight:bold}</style></head>
+      <body><h2>${t("Bons d'Achat", "سندات الشراء")} (${filtered.length})</h2>
+      <table><thead><tr>
+        <th>${t("Réf.","المرجع")}</th><th>${t("Date","التاريخ")}</th>
+        <th>${t("Fournisseur","المورد")}</th><th>${t("État","الحالة")}</th>
+        <th>${t("Règlement","الدفع")}</th><th>${t("Montant (DA)","المبلغ (دج)")}</th>
+      </tr></thead><tbody>${rows}</tbody>
+      <tfoot><tr><td colspan="5">${t("Total","المجموع")}</td><td style="text-align:right">${fmt(total)} DA</td></tr></tfoot>
+      </table></body></html>`);
+    w.document.close();
+    w.focus();
+    setTimeout(() => w.print(), 250);
+  }, [filtered, supplierMap, t]);
+
   function openNew() { setEditingPO(null); setEditorOpen(true); }
   function openExisting(po: PurchaseOrder) { setEditingPO(po); setEditorOpen(true); }
 
@@ -195,9 +261,43 @@ export default function PurchaseOrders() {
                 <Cloud className="h-4 w-4 mr-1" />
                 {t("Charges", "المصاريف")}
               </Button>
-              <Button size="icon" variant="ghost" className="h-8 w-8" aria-label={t("Historique", "التاريخ")}><History className="h-4 w-4" /></Button>
-              <Button size="icon" variant="ghost" className="h-8 w-8" aria-label={t("Documents", "مستندات")}><FileText className="h-4 w-4" /></Button>
-              <Button size="icon" variant="ghost" className="h-8 w-8" aria-label={t("Paramètres", "الإعدادات")}><Settings className="h-4 w-4" /></Button>
+              <Button size="icon" variant="ghost" className="h-8 w-8" aria-label={t("Historique", "التاريخ")}
+                onClick={() => setHistoryOpen(true)}>
+                <History className="h-4 w-4" />
+              </Button>
+              <Button size="icon" variant="ghost" className="h-8 w-8" aria-label={t("Documents", "مستندات")}
+                onClick={handlePrintList}>
+                <FileText className="h-4 w-4" />
+              </Button>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button size="icon" variant="ghost" className="h-8 w-8" aria-label={t("Paramètres", "الإعدادات")}>
+                    <Settings className="h-4 w-4" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="w-52">
+                  <div className="px-2 py-1.5 text-xs font-semibold text-muted-foreground border-b mb-1">
+                    {t("Colonnes du bon d'achat", "أعمدة سند الشراء")}
+                  </div>
+                  {([
+                    { key: "showMontant",     label: t("Montant",       "المبلغ")       },
+                    { key: "showQtyPrepared", label: t("Qté Préparée",  "مُحضَّرة")     },
+                    { key: "showQtyGratuit",  label: t("Qté Gratuite",  "مجانية")       },
+                    { key: "showProgression", label: t("Progression",   "التقدم")       },
+                  ] as const).map(({ key, label }) => (
+                    <DropdownMenuItem
+                      key={key}
+                      onClick={(e) => { e.preventDefault(); toggleSetting(key); }}
+                      className="cursor-pointer gap-2"
+                    >
+                      <span className="w-4 h-4 flex items-center justify-center shrink-0">
+                        {columnSettings[key] ? <Check className="h-3.5 w-3.5" /> : null}
+                      </span>
+                      {label}
+                    </DropdownMenuItem>
+                  ))}
+                </DropdownMenuContent>
+              </DropdownMenu>
             </div>
           </div>
 
@@ -345,6 +445,12 @@ export default function PurchaseOrders() {
         </CardContent>
       </Card>
 
+      <PurchaseHistorySheet
+        open={historyOpen}
+        onClose={() => setHistoryOpen(false)}
+        pos={pos}
+        supplierMap={supplierMap}
+      />
       <PurchaseEditor
         open={editorOpen}
         onOpenChange={setEditorOpen}
@@ -352,6 +458,7 @@ export default function PurchaseOrders() {
         onPrint={handlePrint}
         suppliers={suppliers ?? []}
         products={products}
+        columnSettings={columnSettings}
         onSave={(payload) => {
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           if (editingPO) {
@@ -412,7 +519,7 @@ type EditLine = {
 };
 
 function PurchaseEditor({
-  open, onOpenChange, editing, suppliers, products, onSave, onClose, onDelete, saving, onPrint,
+  open, onOpenChange, editing, suppliers, products, onSave, onClose, onDelete, saving, onPrint, columnSettings,
 }: {
   open: boolean; onOpenChange: (o: boolean) => void; editing: ExtendedPO | null;
   suppliers: Supplier[]; products: Product[];
@@ -421,6 +528,7 @@ function PurchaseEditor({
   onDelete: (po: PurchaseOrder) => void;
   saving: boolean;
   onPrint: (baseData: Omit<import("@/components/InvoiceTemplate").InvoiceData, "showTva">) => void;
+  columnSettings: ColumnSettings;
 }) {
   const { lang } = useLang();
   const t: TFn = (fr, ar) => lang === "ar" ? ar : fr;
@@ -432,7 +540,7 @@ function PurchaseEditor({
   const [productPickerOpen, setProductPickerOpen] = useState(false);
   const [lines, setLines] = useState<EditLine[]>([]);
   const [code, setCode] = useState("");
-  const [showMontant, setShowMontant] = useState(true);
+  const cs = columnSettings;
   const store = useCurrentStore();
 
   const { data: existingItems } = useGetPurchaseOrderItems(editing?.id ?? 0, {
@@ -724,30 +832,26 @@ function PurchaseEditor({
               <div className="border rounded-md overflow-hidden">
                 <div className="px-3 py-1.5 bg-slate-50 border-b flex items-center justify-between">
                   <span className="font-semibold text-sm">{t("Contenu", "المحتوى")}</span>
-                  <Button size="icon" variant="ghost" className="h-6 w-6"
-                    onClick={() => setShowMontant((v) => !v)} aria-label={t("Montant", "المبلغ")}>
-                    {showMontant ? <Eye className="h-3.5 w-3.5" /> : <EyeOff className="h-3.5 w-3.5" />}
-                  </Button>
                 </div>
                 <Table>
                   <TableHeader className="bg-slate-50/50">
                     <TableRow>
                       <TableHead className="font-semibold">{t("Désignation ↑", "التسمية ↑")}</TableHead>
                       <TableHead className="font-semibold text-center w-20">{t("Qté", "الكمية")}</TableHead>
-                      <TableHead className="font-semibold text-center w-24">{t("Qté Préparée", "مُحضَّرة")}</TableHead>
-                      <TableHead className="font-semibold text-center w-24">{t("Progression", "التقدم")}</TableHead>
-                      <TableHead className="font-semibold text-center w-24">{t("Qté Gratuite", "مجانية")}</TableHead>
+                      {cs.showQtyPrepared && <TableHead className="font-semibold text-center w-24">{t("Qté Préparée", "مُحضَّرة")}</TableHead>}
+                      {cs.showProgression && <TableHead className="font-semibold text-center w-24">{t("Progression", "التقدم")}</TableHead>}
+                      {cs.showQtyGratuit  && <TableHead className="font-semibold text-center w-24">{t("Qté Gratuite", "مجانية")}</TableHead>}
                       <TableHead className="font-semibold text-right w-24">{t("PU", "ث.و")}</TableHead>
-                      {hasCharges && showMontant && <TableHead className="font-semibold text-right w-24 text-orange-600">{t("Frais", "المصاريف")}</TableHead>}
-                      {showMontant && <TableHead className="font-semibold text-right w-28">{t("Montant", "المبلغ")}</TableHead>}
-                      {hasCharges && showMontant && <TableHead className="font-semibold text-right w-28 text-emerald-700">{t("Total eff.", "المجموع الفعلي")}</TableHead>}
+                      {hasCharges && cs.showMontant && <TableHead className="font-semibold text-right w-24 text-orange-600">{t("Frais", "المصاريف")}</TableHead>}
+                      {cs.showMontant && <TableHead className="font-semibold text-right w-28">{t("Montant", "المبلغ")}</TableHead>}
+                      {hasCharges && cs.showMontant && <TableHead className="font-semibold text-right w-28 text-emerald-700">{t("Total eff.", "المجموع الفعلي")}</TableHead>}
                       <TableHead className="w-10" />
                     </TableRow>
                   </TableHeader>
                   <TableBody>
                     {lines.length === 0 ? (
                       <TableRow>
-                        <TableCell colSpan={showMontant ? 8 : 7} className="text-center py-10 text-muted-foreground italic">
+                        <TableCell colSpan={4 + (cs.showQtyPrepared ? 1 : 0) + (cs.showProgression ? 1 : 0) + (cs.showQtyGratuit ? 1 : 0) + (cs.showMontant ? 1 : 0) + (hasCharges && cs.showMontant ? 2 : 0)} className="text-center py-10 text-muted-foreground italic">
                           {t("Aucune donnée disponible", "لا توجد بيانات")}
                         </TableCell>
                       </TableRow>
@@ -763,35 +867,41 @@ function PurchaseEditor({
                                   onChange={(e) => updateLine(idx, { qty: Math.max(1, parseInt(e.target.value) || 1) })}
                                   className="h-7 w-16 text-center text-xs mx-auto" disabled={isReceived} data-testid={`input-qty-${idx}`} />
                               </TableCell>
-                              <TableCell className="text-center">
-                                <Input type="number" min="0" value={l.qtyPrepared}
-                                  onChange={(e) => updateLine(idx, { qtyPrepared: Math.max(0, parseInt(e.target.value) || 0) })}
-                                  className="h-7 w-16 text-center text-xs mx-auto" disabled={isReceived} />
-                              </TableCell>
-                              <TableCell className="text-center text-xs">
-                                <span className={`px-2 py-0.5 rounded ${progression === 100 ? "bg-emerald-100 text-emerald-700" : progression > 0 ? "bg-amber-100 text-amber-700" : "bg-slate-100 text-slate-500"}`}>
-                                  {progression}%
-                                </span>
-                              </TableCell>
-                              <TableCell className="text-center">
-                                <Input type="number" min="0" value={l.qtyGratuit}
-                                  onChange={(e) => updateLine(idx, { qtyGratuit: Math.max(0, parseInt(e.target.value) || 0) })}
-                                  className="h-7 w-16 text-center text-xs mx-auto" disabled={isReceived} />
-                              </TableCell>
+                              {cs.showQtyPrepared && (
+                                <TableCell className="text-center">
+                                  <Input type="number" min="0" value={l.qtyPrepared}
+                                    onChange={(e) => updateLine(idx, { qtyPrepared: Math.max(0, parseInt(e.target.value) || 0) })}
+                                    className="h-7 w-16 text-center text-xs mx-auto" disabled={isReceived} />
+                                </TableCell>
+                              )}
+                              {cs.showProgression && (
+                                <TableCell className="text-center text-xs">
+                                  <span className={`px-2 py-0.5 rounded ${progression === 100 ? "bg-emerald-100 text-emerald-700" : progression > 0 ? "bg-amber-100 text-amber-700" : "bg-slate-100 text-slate-500"}`}>
+                                    {progression}%
+                                  </span>
+                                </TableCell>
+                              )}
+                              {cs.showQtyGratuit && (
+                                <TableCell className="text-center">
+                                  <Input type="number" min="0" value={l.qtyGratuit}
+                                    onChange={(e) => updateLine(idx, { qtyGratuit: Math.max(0, parseInt(e.target.value) || 0) })}
+                                    className="h-7 w-16 text-center text-xs mx-auto" disabled={isReceived} />
+                                </TableCell>
+                              )}
                               <TableCell className="text-right">
                                 <Input type="number" step="0.01" min="0" value={l.pu}
                                   onChange={(e) => updateLine(idx, { pu: parseFloat(e.target.value) || 0 })}
                                   className="h-7 w-20 text-right text-xs ml-auto" disabled={isReceived} />
                               </TableCell>
-                              {hasCharges && showMontant && (
+                              {hasCharges && cs.showMontant && (
                                 <TableCell className="text-right text-xs tabular-nums text-orange-600">
                                   {l.charges > 0 ? fmt(l.charges) : "—"}
                                 </TableCell>
                               )}
-                              {showMontant && (
+                              {cs.showMontant && (
                                 <TableCell className="text-right font-semibold tabular-nums">{fmt(l.pu * l.qty)}</TableCell>
                               )}
-                              {hasCharges && showMontant && (
+                              {hasCharges && cs.showMontant && (
                                 <TableCell className="text-right font-semibold tabular-nums text-emerald-700">{fmt(l.pu * l.qty + l.charges)}</TableCell>
                               )}
                               <TableCell>
@@ -806,19 +916,23 @@ function PurchaseEditor({
                         <TableRow className="bg-slate-50 font-bold">
                           <TableCell>{hasCharges ? t("Sous-total P.A.", "مجموع الشراء") : t("Total", "المجموع")} ({lines.length})</TableCell>
                           <TableCell className="text-center">{lines.reduce((s, l) => s + l.qty, 0)}</TableCell>
-                          <TableCell className="text-center">{lines.reduce((s, l) => s + l.qtyPrepared, 0)}</TableCell>
+                          {cs.showQtyPrepared && <TableCell className="text-center">{lines.reduce((s, l) => s + l.qtyPrepared, 0)}</TableCell>}
+                          {cs.showProgression && <TableCell />}
+                          {cs.showQtyGratuit  && <TableCell className="text-center">{lines.reduce((s, l) => s + l.qtyGratuit, 0)}</TableCell>}
                           <TableCell />
-                          <TableCell className="text-center">{lines.reduce((s, l) => s + l.qtyGratuit, 0)}</TableCell>
-                          <TableCell />
-                          {hasCharges && showMontant && <TableCell />}
-                          {showMontant && <TableCell className="text-right tabular-nums">{fmt(subtotal)}</TableCell>}
-                          {hasCharges && showMontant && <TableCell />}
+                          {hasCharges && cs.showMontant && <TableCell />}
+                          {cs.showMontant && <TableCell className="text-right tabular-nums">{fmt(subtotal)}</TableCell>}
+                          {hasCharges && cs.showMontant && <TableCell />}
                           <TableCell />
                         </TableRow>
-                        {hasCharges && showMontant && (
+                        {hasCharges && cs.showMontant && (
                           <TableRow className="bg-orange-50 font-bold border-t-2 border-orange-200">
                             <TableCell className="text-orange-700 text-xs">{t("Total charges annexes", "مجموع المصاريف الإضافية")}</TableCell>
-                            <TableCell /><TableCell /><TableCell /><TableCell /><TableCell />
+                            <TableCell />
+                            {cs.showQtyPrepared && <TableCell />}
+                            {cs.showProgression && <TableCell />}
+                            {cs.showQtyGratuit  && <TableCell />}
+                            <TableCell />
                             <TableCell className="text-right tabular-nums text-orange-700">{fmt(totalChargesAmt)}</TableCell>
                             <TableCell />
                             <TableCell className="text-right tabular-nums font-bold text-emerald-700">{fmt(subtotal + totalChargesAmt)}</TableCell>

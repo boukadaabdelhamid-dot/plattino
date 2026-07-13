@@ -941,6 +941,7 @@ function VentePlusTab({ t, currency, storeId }: { t: TFn; currency: string; stor
   const today = new Date().toISOString().slice(0, 10);
   const defaultFrom = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
 
+  const [period, setPeriod] = useState<"custom" | "jour" | "mois" | "annee">("custom");
   const [dateFrom, setDateFrom] = useState(defaultFrom);
   const [dateTo, setDateTo] = useState(today);
   const [allRows, setAllRows] = useState<VentePlusRow[]>([]);
@@ -1001,6 +1002,21 @@ function VentePlusTab({ t, currency, storeId }: { t: TFn; currency: string; stor
 
   const toggleSort = (col: VPSortCol) => setSort(p => ({ col, dir: p.col === col && p.dir === "desc" ? "asc" : "desc" }));
 
+  const applyPeriod = (p: "custom" | "jour" | "mois" | "annee") => {
+    setPeriod(p);
+    const now = new Date();
+    const todayStr = now.toISOString().slice(0, 10);
+    if (p === "jour") {
+      setDateFrom(todayStr); setDateTo(todayStr);
+    } else if (p === "mois") {
+      setDateFrom(new Date(now.getFullYear(), now.getMonth(), 1).toISOString().slice(0, 10));
+      setDateTo(todayStr);
+    } else if (p === "annee") {
+      setDateFrom(new Date(now.getFullYear(), 0, 1).toISOString().slice(0, 10));
+      setDateTo(todayStr);
+    }
+  };
+
   const marge = selected && Number(selected.montant) > 0
     ? (Number(selected.benefice) / Number(selected.montant) * 100).toFixed(1) : "0";
 
@@ -1016,17 +1032,32 @@ function VentePlusTab({ t, currency, storeId }: { t: TFn; currency: string; stor
 
   return (
     <div className="space-y-4">
-      {/* Date filters */}
-      <div className="grid grid-cols-2 gap-3">
+      {/* Period + Date filters */}
+      <div className="space-y-3">
         <div>
-          <label className="text-xs text-muted-foreground mb-1 block">{t("Début", "البداية")}</label>
-          <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)}
-            className="w-full h-10 border rounded-md px-3 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-primary/60" />
+          <label className="text-xs text-muted-foreground mb-1 block">{t("Période", "الفترة")}</label>
+          <select
+            value={period}
+            onChange={e => applyPeriod(e.target.value as "custom" | "jour" | "mois" | "annee")}
+            className="w-full h-10 border rounded-md px-3 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-primary/60"
+          >
+            <option value="custom">{t("Personnalisé", "مخصص")}</option>
+            <option value="jour">{t("Par jour", "يومياً")}</option>
+            <option value="mois">{t("Par mois", "شهرياً")}</option>
+            <option value="annee">{t("Par année", "سنوياً")}</option>
+          </select>
         </div>
-        <div>
-          <label className="text-xs text-muted-foreground mb-1 block">{t("Fin", "النهاية")}</label>
-          <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)}
-            className="w-full h-10 border rounded-md px-3 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-primary/60" />
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <label className="text-xs text-muted-foreground mb-1 block">{t("Début", "البداية")}</label>
+            <input type="date" value={dateFrom} onChange={e => { setDateFrom(e.target.value); setPeriod("custom"); }}
+              className="w-full h-10 border rounded-md px-3 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-primary/60" />
+          </div>
+          <div>
+            <label className="text-xs text-muted-foreground mb-1 block">{t("Fin", "النهاية")}</label>
+            <input type="date" value={dateTo} onChange={e => { setDateTo(e.target.value); setPeriod("custom"); }}
+              className="w-full h-10 border rounded-md px-3 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-primary/60" />
+          </div>
         </div>
       </div>
 

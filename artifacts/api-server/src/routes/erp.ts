@@ -507,7 +507,29 @@ router.get("/erp/dashboard/ventes-produits", authenticate, requireStaff, require
     const fromTs = `${fromDate}T00:00:00`;
     const toTs = `${toDate}T23:59:59`;
     const storeFilter = sid !== null ? sql` AND o.store_id = ${sid}` : sql``;
+    const retoursStoreFilter = sid !== null ? sql` AND br.store_id = ${sid}` : sql``;
     const rows = await db.execute(sql`
+      WITH retours_par_produit AS (
+        SELECT bri.product_id,
+               SUM(
+                 CAST(bri.quantity AS numeric) * (
+                   CAST(bri.unit_price AS numeric)
+                   - COALESCE(oi_orig.cost_price, CAST(p2.cost_price AS numeric), 0)
+                 )
+               ) AS retours_margin
+        FROM bon_retour_items bri
+        JOIN bon_retours br ON br.id = bri.bon_retour_id
+        LEFT JOIN (
+          SELECT order_id, product_id, MAX(CAST(cost_price AS numeric)) AS cost_price
+          FROM order_items
+          GROUP BY order_id, product_id
+        ) oi_orig ON oi_orig.order_id = br.original_order_id AND oi_orig.product_id = bri.product_id
+        LEFT JOIN products p2 ON p2.id = bri.product_id
+        WHERE br.created_at >= ${fromTs}
+          AND br.created_at <= ${toTs}
+          ${retoursStoreFilter}
+        GROUP BY bri.product_id
+      )
       SELECT
         p.id,
         COALESCE(p.name_en, p.name_ar) AS designation,
@@ -523,13 +545,15 @@ router.get("/erp/dashboard/ventes-produits", authenticate, requireStaff, require
         ROUND(SUM(CAST(oi.unit_price AS numeric) * CAST(oi.quantity AS numeric)), 2) AS montant,
         ROUND(
           SUM(CAST(oi.unit_price AS numeric) * CAST(oi.quantity AS numeric))
-          - SUM(COALESCE(CAST(oi.cost_price AS numeric), 0) * CAST(oi.quantity AS numeric)),
+          - SUM(COALESCE(CAST(oi.cost_price AS numeric), 0) * CAST(oi.quantity AS numeric))
+          - COALESCE(MIN(rpp.retours_margin), 0),
         2) AS benefice
       FROM order_items oi
       JOIN orders o ON o.id = oi.order_id
       JOIN products p ON p.id = oi.product_id
       LEFT JOIN product_families pf ON pf.id = p.family_id
       LEFT JOIN product_brands pb ON pb.id = p.brand_id
+      LEFT JOIN retours_par_produit rpp ON rpp.product_id = p.id
       WHERE o.status NOT IN ('cancelled', 'draft')
         AND o.created_at >= ${fromTs}
         AND o.created_at <= ${toTs}

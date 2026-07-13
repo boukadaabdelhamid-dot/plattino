@@ -12,10 +12,12 @@ import {
 } from "@/components/ui/drawer";
 import {
   ShoppingBasket, SlidersHorizontal, X, History, CheckCircle2,
-  Package, Search, RefreshCw, MapPin, Phone,
+  Package, Search, RefreshCw, MapPin, Phone, TrendingUp, ShoppingCart,
 } from "lucide-react";
 
 // ── Types ────────────────────────────────────────────────────────────────────
+type SortBy = "profit" | "qty_sold";
+
 type NeededRow = {
   id: number;
   designation: string;
@@ -34,6 +36,7 @@ type NeededRow = {
   supplier_city: string | null;
   supplier_phone: string | null;
   benefice: number;
+  total_qty_sold: number;
 };
 
 type HistoryRow = {
@@ -244,7 +247,8 @@ export default function SmartPurchase() {
   const store = useCurrentStore();
   const qc = useQueryClient();
 
-  // Filter state
+  // Sort + filter state
+  const [sortBy, setSortBy] = useState<SortBy>("profit");
   const [search, setSearch] = useState("");
   const [filterSupplierId, setFilterSupplierId] = useState<string>("");
   const [filterFamilyId, setFilterFamilyId] = useState<string>("");
@@ -275,8 +279,9 @@ export default function SmartPurchase() {
     if (filterFamilyId) p.familyId = filterFamilyId;
     if (filterBrandId) p.brandId = filterBrandId;
     if (filterCity) p.supplierCity = filterCity;
+    if (sortBy !== "profit") p.sortBy = sortBy;
     return p;
-  }, [search, filterSupplierId, filterFamilyId, filterBrandId, filterCity]);
+  }, [search, filterSupplierId, filterFamilyId, filterBrandId, filterCity, sortBy]);
 
   const { data: rows, isLoading, refetch } = useQuery<NeededRow[]>({
     queryKey: ["smart-purchase-needed", store?.id, queryParams],
@@ -358,6 +363,34 @@ export default function SmartPurchase() {
                 )}
               </Button>
             </div>
+          </div>
+
+          {/* Sort toggle */}
+          <div className="flex items-center gap-0 rounded-xl border bg-gray-100 p-1 self-start">
+            <button
+              type="button"
+              onClick={() => setSortBy("profit")}
+              className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold transition-all ${
+                sortBy === "profit"
+                  ? "bg-white text-emerald-700 shadow-sm"
+                  : "text-gray-500 hover:text-gray-700"
+              }`}
+            >
+              <TrendingUp className="h-3.5 w-3.5" />
+              {t("Profit", "الأعلى ربحاً")}
+            </button>
+            <button
+              type="button"
+              onClick={() => setSortBy("qty_sold")}
+              className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold transition-all ${
+                sortBy === "qty_sold"
+                  ? "bg-white text-blue-700 shadow-sm"
+                  : "text-gray-500 hover:text-gray-700"
+              }`}
+            >
+              <ShoppingCart className="h-3.5 w-3.5" />
+              {t("Qté vendue", "الأعلى كمية")}
+            </button>
           </div>
 
           {/* Search bar */}
@@ -460,7 +493,7 @@ export default function SmartPurchase() {
                   </div>
                 </div>
 
-                {/* Stats row: stock + bénéfice */}
+                {/* Stats row: stock + sort metric */}
                 <div className="grid grid-cols-2 gap-3 bg-gray-50 rounded-xl p-3">
                   <div>
                     <p className="text-[10px] text-muted-foreground uppercase tracking-wide font-medium mb-1">
@@ -469,12 +502,26 @@ export default function SmartPurchase() {
                     <StockBar stock={Number(row.stock)} minStock={row.min_stock != null ? Number(row.min_stock) : null} />
                   </div>
                   <div>
-                    <p className="text-[10px] text-muted-foreground uppercase tracking-wide font-medium mb-1">
-                      {t("Bénéfice hist.", "الربح التاريخي")}
-                    </p>
-                    <p className={`text-sm font-bold tabular-nums ${Number(row.benefice) > 0 ? "text-emerald-700" : "text-slate-400"}`}>
-                      {fmtNum(row.benefice)} <span className="text-[10px] font-normal">DA</span>
-                    </p>
+                    {sortBy === "qty_sold" ? (
+                      <>
+                        <p className="text-[10px] text-muted-foreground uppercase tracking-wide font-medium mb-1">
+                          {t("Qté vendue", "الكمية المباعة")}
+                        </p>
+                        <p className={`text-sm font-bold tabular-nums ${Number(row.total_qty_sold) > 0 ? "text-blue-700" : "text-slate-400"}`}>
+                          {Number(row.total_qty_sold).toLocaleString("fr-DZ")}
+                          <span className="text-[10px] font-normal text-muted-foreground ml-1">{t("unités", "وحدة")}</span>
+                        </p>
+                      </>
+                    ) : (
+                      <>
+                        <p className="text-[10px] text-muted-foreground uppercase tracking-wide font-medium mb-1">
+                          {t("Bénéfice hist.", "الربح التاريخي")}
+                        </p>
+                        <p className={`text-sm font-bold tabular-nums ${Number(row.benefice) > 0 ? "text-emerald-700" : "text-slate-400"}`}>
+                          {fmtNum(row.benefice)} <span className="text-[10px] font-normal">DA</span>
+                        </p>
+                      </>
+                    )}
                   </div>
                 </div>
 

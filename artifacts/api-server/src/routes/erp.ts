@@ -3771,11 +3771,13 @@ router.delete("/erp/staff/:id", authenticate, requireAdmin, async (req: AuthRequ
 });
 
 // ─── Smart Purchase ──────────────────────────────────────────────────────────
-// GET /erp/purchases/needed — low-stock products sorted by historical bénéfice
+// GET /erp/purchases/needed — low-stock products sorted by profit or qty sold
+// sortBy: "profit" (default) | "qty_sold"
 router.get("/erp/purchases/needed", authenticate, requireStaff, requireStore, requirePermission("purchases", "view"), async (req: AuthRequest, res) => {
   try {
     const storeId = req.currentStoreId!;
-    const { supplierId, familyId, brandId, supplierCity, search } = req.query as Record<string, string | undefined>;
+    const { supplierId, familyId, brandId, supplierCity, search, sortBy } = req.query as Record<string, string | undefined>;
+    const orderByQty = sortBy === "qty_sold";
 
     const supplierFilter  = supplierId   ? sql` AND last_sup.supplier_id = ${parseInt(supplierId, 10)}`                          : sql``;
     const familyFilter    = familyId     ? sql` AND p.family_id = ${parseInt(familyId, 10)}`                                     : sql``;
@@ -3801,7 +3803,8 @@ router.get("/erp/purchases/needed", authenticate, requireStaff, requireStore, re
         s.name           AS supplier_name,
         s.address        AS supplier_city,
         s.phone          AS supplier_phone,
-        COALESCE(ben.benefice, 0) AS benefice
+        COALESCE(ben.benefice, 0)    AS benefice,
+        COALESCE(ben.total_qty_sold, 0) AS total_qty_sold
       FROM products p
       LEFT JOIN product_families pf  ON pf.id = p.family_id
       LEFT JOIN product_brands   pb  ON pb.id = p.brand_id
@@ -3817,10 +3820,12 @@ router.get("/erp/purchases/needed", authenticate, requireStaff, requireStore, re
       ) last_sup ON true
       LEFT JOIN suppliers s ON s.id = last_sup.supplier_id
       LEFT JOIN LATERAL (
-        SELECT COALESCE(SUM(
-          CAST(oi.quantity AS numeric) *
-          (CAST(oi.unit_price AS numeric) - COALESCE(CAST(p2.cost_price AS numeric), 0))
-        ), 0) AS benefice
+        SELECT
+          COALESCE(SUM(
+            CAST(oi.quantity AS numeric) *
+            (CAST(oi.unit_price AS numeric) - COALESCE(CAST(p2.cost_price AS numeric), 0))
+          ), 0) AS benefice,
+          COALESCE(SUM(CAST(oi.quantity AS numeric)), 0) AS total_qty_sold
         FROM   order_items oi
         JOIN   orders      o  ON o.id  = oi.order_id
         JOIN   products    p2 ON p2.id = oi.product_id
@@ -3845,7 +3850,7 @@ router.get("/erp/purchases/needed", authenticate, requireStaff, requireStore, re
         ${searchFilter}
         ${supplierFilter}
         ${cityFilter}
-      ORDER BY COALESCE(ben.benefice, 0) DESC NULLS LAST
+      ORDER BY ${orderByQty ? sql`COALESCE(ben.total_qty_sold, 0) DESC NULLS LAST` : sql`COALESCE(ben.benefice, 0) DESC NULLS LAST`}
     `);
     res.json(result.rows);
   } catch (err) { req.log.error(err); res.status(500).json({ error: "Internal server error" }); }

@@ -1,20 +1,17 @@
 import React from "react";
-import { Text, StyleSheet } from "react-native";
+import { useRouter } from "expo-router";
 import { useGetErpStaff, getGetErpStaffQueryKey } from "@workspace/api-client-react";
 import { useProtectedRoute } from "@/hooks/use-protected-route";
 import { useLang } from "@/contexts/lang-context";
 import { ListScreen } from "@/components/ListScreen";
 import { EntityRow } from "@/components/EntityRow";
-import { colors } from "@/lib/colors";
+import { Badge } from "@/components/ui";
 
-/**
- * Read-only overview of staff and roles. Editing per-section grants is a
- * dense desktop-table workflow (web ERP's Permissions page) that we surface
- * as a follow-up rather than replicate on a small screen.
- */
+/** Staff list — tap a member to edit their section/action permissions. */
 export default function Permissions() {
   const { ready } = useProtectedRoute({ adminOnly: true });
   const { t } = useLang();
+  const router = useRouter();
 
   const { data, isLoading, refetch, isRefetching } = useGetErpStaff({
     query: { enabled: ready, queryKey: getGetErpStaffQueryKey() },
@@ -30,16 +27,18 @@ export default function Permissions() {
       refreshing={isRefetching}
       keyExtractor={(s: any) => String(s.id)}
       emptyTitle={t("Aucun membre du personnel", "لا يوجد موظفون")}
-      header={
-        <Text style={styles.hint}>
-          {t("Gestion détaillée des permissions disponible sur le web.", "إدارة الصلاحيات التفصيلية متوفرة على الويب.")}
-        </Text>
-      }
-      renderItem={(s: any) => <EntityRow title={s.name} subtitle={s.role} />}
+      renderItem={(s: any) => (
+        <EntityRow
+          title={s.name}
+          subtitle={s.email}
+          right={
+            s.role === "admin" ? (
+              <Badge label={t("Administrateur", "مدير")} tone="info" />
+            ) : undefined
+          }
+          onPress={() => router.push(`/permissions/${s.id}` as never)}
+        />
+      )}
     />
   );
 }
-
-const styles = StyleSheet.create({
-  hint: { fontSize: 12.5, color: colors.textMuted, marginHorizontal: 16, marginTop: 16, marginBottom: 4 },
-});

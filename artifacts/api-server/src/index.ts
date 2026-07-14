@@ -8,6 +8,7 @@ import { runCaisseGlobalMigration } from "./lib/caisse-global-migration";
 import { runContactGlobalLinkMigration } from "./lib/contact-global-link-migration";
 import { runProductAttributeDedupMigration } from "./lib/product-attribute-dedup-migration";
 import { runOrderSourceMigration } from "./lib/order-source-migration";
+import { runPaymentMethodMigration } from "./lib/payment-method-migration";
 import { getStorageMode, getLocalStorageBase, ensureLocalStorageReady } from "./lib/objectStorage";
 
 const rawPort = process.env["PORT"];
@@ -882,6 +883,7 @@ server.listen(port, async () => {
   await runContactGlobalLinkMigration(pool);
   await runProductAttributeDedupMigration(pool);
   await runOrderSourceMigration(pool);
+  await runPaymentMethodMigration(pool);
   await runAttributeUniqueIndexMigration();
   await runWebSettingsMigration();
   await runBootstrap();

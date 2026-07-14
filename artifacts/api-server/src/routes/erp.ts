@@ -3959,6 +3959,7 @@ router.get("/erp/sale-orders", authenticate, requireStaff, requireStore, require
         o.discount_amount,
         o.created_at,
         o.updated_at,
+        o.payment_method,
         COALESCE(SUM(
           CAST(oi.quantity AS numeric) * (CAST(oi.unit_price AS numeric) - COALESCE(CAST(oi.cost_price AS numeric), 0))
         ), 0)::numeric(14,2) AS benefice,
@@ -3988,7 +3989,7 @@ router.get("/erp/sale-orders/:id", authenticate, requireStaff, requireStore, req
     const result = await db.execute(sql`
       SELECT
         o.id, o.status, o.customer_name, o.customer_phone, o.user_id,
-        o.total_amount, o.discount_amount, o.created_at, o.updated_at,
+        o.total_amount, o.discount_amount, o.created_at, o.updated_at, o.payment_method,
         COALESCE(json_agg(json_build_object(
           'id', oi.id,
           'product_id', oi.product_id,
@@ -4014,16 +4015,19 @@ router.get("/erp/sale-orders/:id", authenticate, requireStaff, requireStore, req
 router.post("/erp/sale-orders", authenticate, requireStaff, requireStore, requirePermission("orders", "edit"), async (req: AuthRequest, res) => {
   try {
     const storeId = req.currentStoreId!;
-    const { customerUserId, customerName, customerPhone, items, notes } = req.body as {
+    const { customerUserId, customerName, customerPhone, items, notes, paymentMethod } = req.body as {
       customerUserId?: number | null;
       customerName?: string;
       customerPhone?: string;
       items: SaleOrderItem[];
       notes?: string;
+      paymentMethod?: string;
     };
 
     const validErr = validateSaleItems(items);
     if (validErr) { res.status(400).json({ error: validErr }); return; }
+
+    const pm = paymentMethod === "a_terme" ? "a_terme" : "comptant";
 
     const productIds = (items as SaleOrderItem[]).map(i => Number(i.productId));
     const badId = await checkProductsInStore(productIds, storeId);
@@ -4044,11 +4048,11 @@ router.post("/erp/sale-orders", authenticate, requireStaff, requireStore, requir
     const orderId = await db.transaction(async (tx) => {
       const orderRes = await tx.execute(sql`
         INSERT INTO orders (store_id, user_id, seller_user_id, customer_name, customer_phone, customer_address,
-          status, total_amount, discount_amount, order_source, coupon_code, created_at, updated_at)
+          status, total_amount, discount_amount, order_source, payment_method, coupon_code, created_at, updated_at)
         VALUES (
           ${storeId}, ${customerUserId ?? null}, ${req.user!.id},
           ${cName}, ${cPhone}, ${notes ?? ""},
-          'pending', ${total.toFixed(2)}, '0', 'bon', NULL, NOW(), NOW()
+          'pending', ${total.toFixed(2)}, '0', 'bon', ${pm}, NULL, NOW(), NOW()
         ) RETURNING id
       `);
       const newId = (orderRes.rows[0] as { id: number }).id;
@@ -4073,16 +4077,19 @@ router.put("/erp/sale-orders/:id", authenticate, requireStaff, requireStore, req
   try {
     const storeId = req.currentStoreId!;
     const id = pid(req, "id");
-    const { customerUserId, customerName, customerPhone, items, notes } = req.body as {
+    const { customerUserId, customerName, customerPhone, items, notes, paymentMethod } = req.body as {
       customerUserId?: number | null;
       customerName?: string;
       customerPhone?: string;
       items: SaleOrderItem[];
       notes?: string;
+      paymentMethod?: string;
     };
 
     const validErr = validateSaleItems(items);
     if (validErr) { res.status(400).json({ error: validErr }); return; }
+
+    const pm = paymentMethod === "a_terme" ? "a_terme" : "comptant";
 
     const existRes = await db.execute(sql`SELECT id, status FROM orders WHERE id = ${id} AND store_id = ${storeId} AND order_source = 'bon' LIMIT 1`);
     const existing = existRes.rows[0] as { id: number; status: string } | undefined;
@@ -4114,6 +4121,7 @@ router.put("/erp/sale-orders/:id", authenticate, requireStaff, requireStore, req
           customer_phone = ${cPhone},
           customer_address = ${notes ?? ""},
           total_amount = ${total.toFixed(2)},
+          payment_method = ${pm},
           updated_at = NOW()
         WHERE id = ${id}
       `);
@@ -4133,21 +4141,39 @@ router.put("/erp/sale-orders/:id", authenticate, requireStaff, requireStore, req
 router.put("/erp/sale-orders/:id/cloture", authenticate, requireStaff, requireStore, requirePermission("orders", "edit"), async (req: AuthRequest, res) => {
   try {
     const storeId = req.currentStoreId!;
+    const actorUserId = req.user!.id;
     const id = pid(req, "id");
 
-    const existRes = await db.execute(sql`SELECT id, status FROM orders WHERE id = ${id} AND store_id = ${storeId} AND order_source = 'bon' LIMIT 1`);
-    const existing = existRes.rows[0] as { id: number; status: string } | undefined;
+    const existRes = await db.execute(sql`
+      SELECT id, status, payment_method, total_amount, user_id, customer_name
+      FROM orders WHERE id = ${id} AND store_id = ${storeId} AND order_source = 'bon' LIMIT 1
+    `);
+    const existing = existRes.rows[0] as {
+      id: number; status: string; payment_method: string | null;
+      total_amount: string; user_id: number | null; customer_name: string;
+    } | undefined;
     if (!existing) { res.status(404).json({ error: "Not found" }); return; }
     if (existing.status !== "pending" && existing.status !== "processing") {
       res.status(400).json({ error: "Seuls les bons en cours (pending/processing) peuvent être clôturés" }); return;
     }
 
+    const totalAmount = parseFloat(existing.total_amount ?? "0");
+    const paymentMethod = existing.payment_method ?? "comptant";
+    const customerId = existing.user_id;
+    const customerName = existing.customer_name;
+    const today = new Date().toISOString().split("T")[0];
+
     const itemsRes = await db.execute(sql`SELECT product_id, quantity FROM order_items WHERE order_id = ${id}`);
     const lineItems = itemsRes.rows as Array<{ product_id: number; quantity: number }>;
 
-    // Atomic: mark delivered + deduct stock in one transaction
+    let cloturedCaisseId: number | null = null;
+
+    // Atomic: mark delivered + deduct stock + accounting + payment in one transaction
     await db.transaction(async (tx) => {
+      // 1. Mark delivered
       await tx.execute(sql`UPDATE orders SET status = 'delivered', updated_at = NOW() WHERE id = ${id}`);
+
+      // 2. Deduct stock
       for (const item of lineItems) {
         await tx.execute(sql`
           UPDATE products
@@ -4155,9 +4181,49 @@ router.put("/erp/sale-orders/:id/cloture", authenticate, requireStaff, requireSt
           WHERE id = ${item.product_id} AND store_id = ${storeId}
         `);
       }
+
+      // 3. Accounting entry (always recorded regardless of payment method)
+      if (totalAmount > 0) {
+        await tx.insert(schema.transactionsTable).values({
+          storeId,
+          type: "income",
+          category: "sales",
+          amount: totalAmount.toFixed(2),
+          description: `Bon de vente BV-${String(id).padStart(6, "0")} - ${customerName}`,
+          date: today,
+          reference: `BV-${String(id).padStart(6, "0")}`,
+        });
+      }
+
+      // 4. Payment effect
+      if (paymentMethod === "comptant" && totalAmount > 0) {
+        // Credit the clôturing staff member's caisse
+        const caisse = await ensureCaisse(storeId, actorUserId, tx);
+        cloturedCaisseId = caisse.id;
+        const { oldBalance, newBalance } = await applyCaisseDelta(tx, caisse.id, totalAmount);
+        await tx.insert(schema.caisseMovementsTable).values({
+          caisseId: caisse.id,
+          type: "credit",
+          amount: totalAmount.toFixed(2),
+          reason: "sale",
+          orderId: id,
+          actorUserId,
+          notes: `Bon BV-${String(id).padStart(6, "0")} - ${customerName}`,
+          balanceBefore: oldBalance.toFixed(2),
+          balanceAfter: newBalance.toFixed(2),
+        });
+      } else if (paymentMethod === "a_terme" && customerId && totalAmount > 0) {
+        // Record as customer receivable (positive delta = customer owes store)
+        await mutateCustomerBalance(tx, customerId, storeId, { delta: totalAmount });
+      }
     });
 
-    res.json({ id, status: "delivered" });
+    // Broadcast caisse update if cash payment
+    if (cloturedCaisseId !== null) {
+      await broadcastCaisseChanged(storeId, [cloturedCaisseId]);
+    }
+
+    res.json({ id, status: "delivered", paymentMethod });
   } catch (err) { req.log.error(err); res.status(500).json({ error: "Internal server error" }); }
 });
 

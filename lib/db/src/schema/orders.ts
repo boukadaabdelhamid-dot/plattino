@@ -21,6 +21,8 @@ export const ordersTable = pgTable("orders", {
   couponCode: text("coupon_code"),
   /** 'pos' = quick POS sale, 'bon' = formal bon de vente, null/'online' = storefront */
   orderSource: text("order_source").default("pos"),
+  /** 'comptant' = cash at clôture (credits caisse), 'a_terme' = credit sale (customer receivable) */
+  paymentMethod: text("payment_method").default("comptant"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });

@@ -34,6 +34,7 @@ type SaleOrder = {
   total_amount: string;
   discount_amount: string;
   benefice: string;
+  payment_method: string;
   created_at: string;
   updated_at: string;
 };
@@ -134,7 +135,7 @@ export default function SaleOrders() {
   const [editingOrder, setEditingOrder] = useState<SaleOrderDetail | null>(null);
   const [viewOpen, setViewOpen] = useState(false);
   const [viewingOrder, setViewingOrder] = useState<SaleOrderDetail | null>(null);
-  const [clotureDialogId, setClotureDialogId] = useState<number | null>(null);
+  const [clotureOrder, setClotureOrder] = useState<SaleOrder | null>(null);
   const [invoiceOrder, setInvoiceOrder] = useState<SaleOrderDetail | null>(null);
   const [invoiceOpen, setInvoiceOpen] = useState(false);
   const [showTva, setShowTva] = useState(false);
@@ -174,7 +175,7 @@ export default function SaleOrders() {
 
   const clotureMutation = useMutation({
     mutationFn: (id: number) => apiPut(`/erp/sale-orders/${id}/cloture`),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ["erp-sale-orders"] }); setClotureDialogId(null); },
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["erp-sale-orders"] }); setClotureOrder(null); },
     onError: (err: Error) => alert(`Erreur: ${err.message}`),
   });
 
@@ -374,7 +375,7 @@ export default function SaleOrders() {
                         )}
                         {canEdit && (
                           <DropdownMenuItem
-                            onClick={() => setClotureDialogId(order.id)}
+                            onClick={() => setClotureOrder(order)}
                             className="text-emerald-700 focus:text-emerald-700"
                           >
                             <Lock className="h-3.5 w-3.5 mr-2" /> {t("Clôturer", "إغلاق")}
@@ -438,9 +439,10 @@ export default function SaleOrders() {
 
       {/* Clôture confirm dialog */}
       <ClotureDialog
-        open={!!clotureDialogId}
-        onOpenChange={(o) => { if (!o) setClotureDialogId(null); }}
-        onConfirm={() => clotureDialogId && clotureMutation.mutate(clotureDialogId)}
+        open={!!clotureOrder}
+        onOpenChange={(o) => { if (!o) setClotureOrder(null); }}
+        order={clotureOrder}
+        onConfirm={() => clotureOrder && clotureMutation.mutate(clotureOrder.id)}
         isPending={clotureMutation.isPending}
       />
 
@@ -461,7 +463,7 @@ function SaleOrderEditor({ open, onOpenChange, editing, onSave, isSaving }: {
   open: boolean;
   onOpenChange: (o: boolean) => void;
   editing: SaleOrderDetail | null;
-  onSave: (payload: { customerUserId?: number | null; customerName?: string; items: { productId: number; quantity: number; unitPrice: number }[] }) => void;
+  onSave: (payload: { customerUserId?: number | null; customerName?: string; items: { productId: number; quantity: number; unitPrice: number }[]; paymentMethod: string }) => void;
   isSaving: boolean;
 }) {
   const { lang } = useLang();
@@ -477,6 +479,7 @@ function SaleOrderEditor({ open, onOpenChange, editing, onSave, isSaving }: {
   const [clientSearch, setClientSearch] = useState("");
   const [pickerOpen, setPickerOpen] = useState(false);
   const [codeInput, setCodeInput] = useState("");
+  const [paymentMethod, setPaymentMethod] = useState<"comptant" | "a_terme">("comptant");
   const clientPickerRef = React.useRef<HTMLDivElement>(null);
 
   const { data: _custRes } = useGetErpCustomers(
@@ -503,11 +506,13 @@ function SaleOrderEditor({ open, onOpenChange, editing, onSave, isSaving }: {
       } else {
         setSelectedCustomer(null);
       }
+      setPaymentMethod((editing?.payment_method as "comptant" | "a_terme") ?? "comptant");
     } else {
       setLines([]);
       setSelectedCustomer(null);
       setClientSearch("");
       setCodeInput("");
+      setPaymentMethod("comptant");
     }
     setClientComboOpen(false);
   }, [open, editing]);
@@ -566,6 +571,7 @@ function SaleOrderEditor({ open, onOpenChange, editing, onSave, isSaving }: {
       customerUserId: selectedCustomer && selectedCustomer.id !== 0 ? selectedCustomer.id : null,
       customerName: selectedCustomer?.name,
       items: lines.map((l) => ({ productId: l.productId, quantity: l.qty, unitPrice: l.pu })),
+      paymentMethod,
     });
   };
 
@@ -587,6 +593,42 @@ function SaleOrderEditor({ open, onOpenChange, editing, onSave, isSaving }: {
         </div>
 
         <div className="p-5 space-y-5">
+          {/* Payment method */}
+          <div className="space-y-1">
+            <Label className="text-xs text-muted-foreground">{t("Mode de paiement", "طريقة الدفع")}</Label>
+            <div className="flex gap-3">
+              {(["comptant", "a_terme"] as const).map((m) => (
+                <label
+                  key={m}
+                  className={`flex items-center gap-2 cursor-pointer rounded-md border px-3 py-2 text-sm transition-colors ${
+                    paymentMethod === m
+                      ? m === "comptant"
+                        ? "border-emerald-500 bg-emerald-50 text-emerald-700 font-medium"
+                        : "border-amber-500 bg-amber-50 text-amber-700 font-medium"
+                      : "border-input bg-background text-muted-foreground hover:bg-accent"
+                  }`}
+                >
+                  <input
+                    type="radio"
+                    name="paymentMethod"
+                    value={m}
+                    checked={paymentMethod === m}
+                    onChange={() => setPaymentMethod(m)}
+                    className="sr-only"
+                  />
+                  {m === "comptant"
+                    ? t("💵 Comptant", "💵 نقداً")
+                    : t("📋 À terme (crédit client)", "📋 بالآجل (رصيد عميل)")}
+                </label>
+              ))}
+            </div>
+            {paymentMethod === "a_terme" && !selectedCustomer && (
+              <p className="text-xs text-amber-600 mt-1">
+                {t("⚠️ Sélectionnez un client pour enregistrer en compte", "⚠️ اختر عميلاً لتسجيل الآجل في رصيده")}
+              </p>
+            )}
+          </div>
+
           {/* Customer */}
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-1">
@@ -865,14 +907,24 @@ function SaleOrderViewDialog({ open, onOpenChange, order }: {
 
 // ─── Clôture confirm dialog ───────────────────────────────────────────────────
 
-function ClotureDialog({ open, onOpenChange, onConfirm, isPending }: {
+function ClotureDialog({ open, onOpenChange, order, onConfirm, isPending }: {
   open: boolean;
   onOpenChange: (o: boolean) => void;
+  order: SaleOrder | null;
   onConfirm: () => void;
   isPending: boolean;
 }) {
   const { lang } = useLang();
   const t = (fr: string, ar: string) => lang === "ar" ? ar : fr;
+  const currency = lang === "ar" ? "دج" : "DA";
+
+  const isComptant = !order || order.payment_method !== "a_terme";
+  const amount = order ? parseFloat(order.total_amount).toFixed(2) : "0.00";
+
+  const paymentSummary = isComptant
+    ? t(`💵 ${amount} ${currency} seront crédités à votre caisse.`, `💵 سيتم إضافة ${amount} ${currency} إلى صندوقك.`)
+    : t(`📋 ${amount} ${currency} seront enregistrés en compte client (crédit).`, `📋 سيتم تسجيل ${amount} ${currency} في رصيد العميل (آجل).`);
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-sm">
@@ -882,12 +934,22 @@ function ClotureDialog({ open, onOpenChange, onConfirm, isPending }: {
             {t("Clôturer le bon", "إغلاق البون")}
           </DialogTitle>
         </DialogHeader>
-        <p className="text-sm text-muted-foreground py-2">
-          {t(
-            "Cette action va marquer le bon comme livré et déduire les quantités du stock. Cette opération est irréversible.",
-            "سيتم تعليم البون كمُسلَّم وخصم الكميات من المخزون. هذه العملية لا يمكن التراجع عنها."
-          )}
-        </p>
+        <div className="space-y-3 py-2">
+          <p className="text-sm text-muted-foreground">
+            {t(
+              "Cette action va marquer le bon comme livré et déduire les quantités du stock.",
+              "سيتم تعليم البون كمُسلَّم وخصم الكميات من المخزون."
+            )}
+          </p>
+          <div className={`rounded-md border px-3 py-2 text-sm font-medium ${
+            isComptant ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-amber-200 bg-amber-50 text-amber-700"
+          }`}>
+            {paymentSummary}
+          </div>
+          <p className="text-xs text-muted-foreground">
+            {t("Cette opération est irréversible.", "هذه العملية لا يمكن التراجع عنها.")}
+          </p>
+        </div>
         <DialogFooter className="gap-2">
           <Button variant="outline" onClick={() => onOpenChange(false)} disabled={isPending}>
             {t("Annuler", "إلغاء")}

@@ -1,0 +1,53 @@
+{
+  "expo": {
+    "name": "Midanic ERP",
+    "slug": "midanic-erp",
+    "scheme": "midanicerp",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/images/icon.png",
+    "userInterfaceStyle": "automatic",
+    "newArchEnabled": true,
+    "splash": {
+      "image": "./assets/images/splash.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#1B3057"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.midanic.erp"
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/images/adaptive-icon.png",
+        "backgroundColor": "#1B3057"
+      },
+      "package": "com.midanic.erp"
+    },
+    "web": {
+      "bundler": "metro",
+      "output": "single",
+      "favicon": "./assets/images/favicon.png"
+    },
+    "plugins": [
+      "expo-router",
+      "expo-secure-store",
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "يحتاج تطبيق ميدانيك إلى الكاميرا لمسح رموز الباركود"
+        }
+      ]
+    ],
+    "experiments": {
+      "typedRoutes": false,
+      "baseUrl": "/mobile"
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "e0e4fe0f-5c1e-403f-a50a-8b36c7653fb0"
+      }
+    }
+  }
+}

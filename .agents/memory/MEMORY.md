@@ -27,3 +27,4 @@
 - [Advisory lock must come before row locks](advisory-lock-before-row-lock.md) — a read-compute-write handler calling mutateCustomer/SupplierBalance must take its identity lock first via lockCustomerIdentity/lockSupplierIdentity, never a raw `.for("update")`, or lock order inverts and deadlocks.
 - [Caisse balance mutation patterns](caisse-balance-mutations.md) — caisses need no advisory locks (global); use lockCaissesById for any 2-caisse mutation, or opposite-direction endpoints deadlock.
 - [Balance snapshot columns](balance-snapshot-columns.md) — real balanceBefore/After on ops/movements rows; "ajustement" endpoints snapshot the UNIFIED contact balance, not the raw role balance (deliberate).
+- [Expo web workflow + baseUrl trap](expo-web-workflow-baseurl.md) — mobile app has no artifact.toml (can't create new artifacts that way); runs as plain workflow on :5000; app.json baseUrl must stay unset when served from root.

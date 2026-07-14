@@ -36,10 +36,12 @@ export default function AppLayout() {
       <Drawer.Screen name="dashboard" options={{ title: "Tableau de bord" }} />
       <Drawer.Screen name="mon-compte" options={{ title: "Mon compte" }} />
       <Drawer.Screen name="orders/index" options={{ title: "Commandes" }} />
+      <Drawer.Screen name="orders/new" options={{ title: "Nouvelle commande", drawerItemStyle: { display: "none" } }} />
       <Drawer.Screen name="orders/[id]" options={{ title: "Commande" }} />
       <Drawer.Screen name="sale-orders/index" options={{ title: "Bons de vente" }} />
       <Drawer.Screen name="online-orders/index" options={{ title: "Commandes en ligne" }} />
       <Drawer.Screen name="retours/index" options={{ title: "Retours" }} />
+      <Drawer.Screen name="retours/new" options={{ title: "Nouveau retour", drawerItemStyle: { display: "none" } }} />
       <Drawer.Screen name="customers/index" options={{ title: "Clients" }} />
       <Drawer.Screen name="customers/[id]" options={{ title: "Client" }} />
       <Drawer.Screen name="caisse/index" options={{ title: "Caisse" }} />

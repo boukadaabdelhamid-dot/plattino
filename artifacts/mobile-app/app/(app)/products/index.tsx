@@ -21,7 +21,7 @@ export default function ProductsList() {
   const { data, isLoading, refetch, isRefetching } = useGetProducts(productsParams, {
     query: { enabled: ready, queryKey: getGetProductsQueryKey(productsParams) },
   });
-  const products = ((data as any)?.data ?? data ?? []) as any[];
+  const products = ((data as any)?.products ?? []) as any[];
 
   if (!ready) return null;
 

@@ -7,6 +7,7 @@ import { useLang } from "@/contexts/lang-context";
 import { ListScreen, SearchBar } from "@/components/ListScreen";
 import { EntityRow } from "@/components/EntityRow";
 import { Badge } from "@/components/ui";
+import { Fab } from "@/components/Fab";
 import { colors } from "@/lib/colors";
 
 const STATUS_TONE: Record<string, "success" | "warning" | "danger" | "muted" | "info"> = {
@@ -17,7 +18,7 @@ const STATUS_TONE: Record<string, "success" | "warning" | "danger" | "muted" | "
 };
 
 export default function OrdersList() {
-  const { ready } = useProtectedRoute({ section: "orders" });
+  const { ready, isAdmin, can } = useProtectedRoute({ section: "orders" });
   const { t, lang } = useLang();
   const router = useRouter();
   const [search, setSearch] = useState("");
@@ -31,28 +32,32 @@ export default function OrdersList() {
   );
 
   if (!ready) return null;
+  const canCreate = isAdmin || can("orders", "create");
 
   return (
-    <ListScreen
-      data={filtered}
-      isLoading={isLoading}
-      onRefresh={refetch}
-      refreshing={isRefetching}
-      keyExtractor={(o) => String(o.id)}
-      emptyTitle={t("Aucune commande", "لا توجد طلبات")}
-      header={
-        <SearchBar value={search} onChangeText={setSearch} placeholder={t("Rechercher un client...", "بحث عن عميل...")} />
-      }
-      renderItem={(o) => (
-        <EntityRow
-          testID={`row-order-${o.id}`}
-          onPress={() => router.push(`/orders/${o.id}` as never)}
-          title={`#${o.id} · ${o.customerName}`}
-          subtitle={`${o.customerPhone} · ${Number(o.totalAmount).toLocaleString("fr-FR")} ${lang === "ar" ? "دج" : "DA"}`}
-          right={<Badge label={o.status} tone={STATUS_TONE[o.status] ?? "muted"} />}
-        />
-      )}
-    />
+    <View style={{ flex: 1 }}>
+      <ListScreen
+        data={filtered}
+        isLoading={isLoading}
+        onRefresh={refetch}
+        refreshing={isRefetching}
+        keyExtractor={(o) => String(o.id)}
+        emptyTitle={t("Aucune commande", "لا توجد طلبات")}
+        header={
+          <SearchBar value={search} onChangeText={setSearch} placeholder={t("Rechercher un client...", "بحث عن عميل...")} />
+        }
+        renderItem={(o) => (
+          <EntityRow
+            testID={`row-order-${o.id}`}
+            onPress={() => router.push(`/orders/${o.id}` as never)}
+            title={`#${o.id} · ${o.customerName}`}
+            subtitle={`${o.customerPhone} · ${Number(o.totalAmount).toLocaleString("fr-FR")} ${lang === "ar" ? "دج" : "DA"}`}
+            right={<Badge label={o.status} tone={STATUS_TONE[o.status] ?? "muted"} />}
+          />
+        )}
+      />
+      {canCreate ? <Fab onPress={() => router.push("/orders/new" as never)} testID="button-new-order" /> : null}
+    </View>
   );
 }
 

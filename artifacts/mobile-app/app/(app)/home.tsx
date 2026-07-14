@@ -17,13 +17,15 @@ type HomeModule = {
   icon: keyof typeof Feather.glyphMap;
   color: string;
   section: PermSection;
+  /** Backend route is `requireAdmin`-gated regardless of section permissions (e.g. /admin/low-stock). */
+  adminOnly?: boolean;
 };
 
 const MODULES: HomeModule[] = [
   { labelFr: "Articles", labelAr: "المنتجات", href: "/products", icon: "package", color: "#06B6D4", section: "products" },
   { labelFr: "Ventes", labelAr: "المبيعات", href: "/orders", icon: "shopping-cart", color: "#10B981", section: "orders" },
   { labelFr: "Achats", labelAr: "المشتريات", href: "/purchase-orders", icon: "file-text", color: "#F43F5E", section: "purchases" },
-  { labelFr: "Besoin d'achats", labelAr: "ما ينقص", href: "/smart-purchase", icon: "shopping-bag", color: "#F97316", section: "purchases" },
+  { labelFr: "Besoin d'achats", labelAr: "ما ينقص", href: "/smart-purchase", icon: "shopping-bag", color: "#F97316", section: "purchases", adminOnly: true },
   { labelFr: "Caisse", labelAr: "الصندوق", href: "/caisse", icon: "credit-card", color: "#F59E0B", section: "caisse" },
   { labelFr: "Clients", labelAr: "العملاء", href: "/customers", icon: "user-check", color: "#0EA5E9", section: "customers" },
   { labelFr: "Fournisseurs", labelAr: "الموردون", href: "/suppliers", icon: "truck", color: "#8B5CF6", section: "suppliers" },
@@ -45,7 +47,7 @@ export default function Home() {
 
   if (!ready || (!isAdmin && !isLoaded)) return <LoadingView />;
 
-  const visible = isAdmin ? MODULES : MODULES.filter((m) => can(m.section, "view"));
+  const visible = isAdmin ? MODULES : MODULES.filter((m) => !m.adminOnly && can(m.section, "view"));
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>

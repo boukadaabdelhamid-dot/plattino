@@ -7,6 +7,8 @@ import { useLang } from "@/contexts/lang-context";
 import { ListScreen } from "@/components/ListScreen";
 import { EntityRow } from "@/components/EntityRow";
 import { Badge, Button } from "@/components/ui";
+import { Fab } from "@/components/Fab";
+import { View as RNView } from "react-native";
 import { colors } from "@/lib/colors";
 
 const STATUS_TONE: Record<string, "success" | "warning" | "danger" | "muted" | "info"> = {
@@ -20,7 +22,7 @@ const STATUS_TONE: Record<string, "success" | "warning" | "danger" | "muted" | "
 };
 
 export default function TransfersList() {
-  const { ready } = useProtectedRoute({ section: "inventory" });
+  const { ready, isAdmin, can } = useProtectedRoute({ section: "inventory" });
   const { t, lang } = useLang();
   const router = useRouter();
   const [direction, setDirection] = useState<"all" | "in" | "out">("all");
@@ -31,37 +33,41 @@ export default function TransfersList() {
   });
 
   if (!ready) return null;
+  const canCreate = isAdmin || can("inventory", "create");
 
   return (
-    <ListScreen
-      data={data ?? []}
-      isLoading={isLoading}
-      onRefresh={refetch}
-      refreshing={isRefetching}
-      keyExtractor={(tr: any) => String(tr.id)}
-      emptyTitle={t("Aucun transfert", "لا توجد تحويلات")}
-      header={
-        <View style={styles.filterRow}>
-          {(["all", "in", "out"] as const).map((d) => (
-            <Button
-              key={d}
-              label={d === "all" ? t("Tous", "الكل") : d === "in" ? t("Entrants", "واردة") : t("Sortants", "صادرة")}
-              variant={direction === d ? "primary" : "secondary"}
-              onPress={() => setDirection(d)}
-              style={styles.filterBtn}
-            />
-          ))}
-        </View>
-      }
-      renderItem={(tr: any) => (
-        <EntityRow
-          onPress={() => router.push(`/transfers/${tr.id}` as never)}
-          title={`#${tr.id} · ${(lang === "ar" ? tr.sourceStore?.nameAr : tr.sourceStore?.nameEn) ?? "?"} → ${(lang === "ar" ? tr.destinationStore?.nameAr : tr.destinationStore?.nameEn) ?? "?"}`}
-          subtitle={`${tr.itemCount ?? 0} ${t("articles", "منتجات")} · ${tr.totalQuantity ?? 0} ${t("unités", "وحدة")}`}
-          right={<Badge label={tr.status} tone={STATUS_TONE[tr.status] ?? "muted"} />}
-        />
-      )}
-    />
+    <RNView style={{ flex: 1 }}>
+      <ListScreen
+        data={data ?? []}
+        isLoading={isLoading}
+        onRefresh={refetch}
+        refreshing={isRefetching}
+        keyExtractor={(tr: any) => String(tr.id)}
+        emptyTitle={t("Aucun transfert", "لا توجد تحويلات")}
+        header={
+          <View style={styles.filterRow}>
+            {(["all", "in", "out"] as const).map((d) => (
+              <Button
+                key={d}
+                label={d === "all" ? t("Tous", "الكل") : d === "in" ? t("Entrants", "واردة") : t("Sortants", "صادرة")}
+                variant={direction === d ? "primary" : "secondary"}
+                onPress={() => setDirection(d)}
+                style={styles.filterBtn}
+              />
+            ))}
+          </View>
+        }
+        renderItem={(tr: any) => (
+          <EntityRow
+            onPress={() => router.push(`/transfers/${tr.id}` as never)}
+            title={`#${tr.id} · ${(lang === "ar" ? tr.sourceStore?.nameAr : tr.sourceStore?.nameEn) ?? "?"} → ${(lang === "ar" ? tr.destinationStore?.nameAr : tr.destinationStore?.nameEn) ?? "?"}`}
+            subtitle={`${tr.itemCount ?? 0} ${t("articles", "منتجات")} · ${tr.totalQuantity ?? 0} ${t("unités", "وحدة")}`}
+            right={<Badge label={tr.status} tone={STATUS_TONE[tr.status] ?? "muted"} />}
+          />
+        )}
+      />
+      {canCreate ? <Fab onPress={() => router.push("/transfers/new" as never)} testID="button-new-transfer" /> : null}
+    </RNView>
   );
 }
 

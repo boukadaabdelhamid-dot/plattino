@@ -1,22 +1,48 @@
 import React from "react";
 import { View, Text, StyleSheet } from "react-native";
 import { useLocalSearchParams } from "expo-router";
-import { useGetErpTransfer, getGetErpTransferQueryKey } from "@workspace/api-client-react";
+import { useQueryClient } from "@tanstack/react-query";
+import {
+  useGetErpTransfer,
+  getGetErpTransferQueryKey,
+  getGetErpTransfersQueryKey,
+  useApproveErpTransfer,
+  useRejectErpTransfer,
+  usePrepareErpTransfer,
+  useShipErpTransfer,
+  useReceiveErpTransfer,
+  useCancelErpTransfer,
+} from "@workspace/api-client-react";
 import { useProtectedRoute } from "@/hooks/use-protected-route";
+import { useStoreContext } from "@/contexts/store-context";
 import { useLang } from "@/contexts/lang-context";
+import { useApiFeedback } from "@/hooks/use-api-feedback";
+import { useConfirm } from "@/contexts/confirm-context";
 import { Screen } from "@/components/Screen";
-import { Card, LoadingView, SectionTitle, Badge, Divider, ErrorState } from "@/components/ui";
+import { Card, Button, LoadingView, SectionTitle, Badge, Divider, ErrorState } from "@/components/ui";
+import { getTransferActions, type TransferAction } from "@/hooks/use-transfer-status-actions";
 import { colors } from "@/lib/colors";
 
 export default function TransferDetail() {
   const { id } = useLocalSearchParams<{ id: string }>();
-  const { ready } = useProtectedRoute({ section: "inventory" });
+  const { ready, isAdmin } = useProtectedRoute({ section: "inventory" });
+  const { currentStoreId } = useStoreContext();
   const { t, lang } = useLang();
+  const feedback = useApiFeedback();
+  const { confirm } = useConfirm();
+  const queryClient = useQueryClient();
   const transferId = Number(id);
 
   const { data: transfer, isLoading, isError } = useGetErpTransfer(transferId, {
     query: { enabled: ready && !!transferId, queryKey: getGetErpTransferQueryKey(transferId) },
   });
+
+  const approve = useApproveErpTransfer();
+  const reject = useRejectErpTransfer();
+  const prepare = usePrepareErpTransfer();
+  const ship = useShipErpTransfer();
+  const receive = useReceiveErpTransfer();
+  const cancel = useCancelErpTransfer();
 
   if (!ready) return null;
   if (isLoading) return <LoadingView />;
@@ -24,6 +50,36 @@ export default function TransferDetail() {
 
   const tr = transfer as any;
   const items = tr.items ?? [];
+
+  const isSource = tr.sourceStoreId === currentStoreId;
+  const isDestination = tr.destinationStoreId === currentStoreId;
+  const actions = getTransferActions(tr.status, { isSource, isDestination, isAdmin });
+
+  const mutations: Record<TransferAction, { mutate: (vars: any, opts?: any) => void; isPending: boolean }> = {
+    approve, reject, prepare, ship, receive, cancel,
+  };
+
+  async function handleAction(action: TransferAction, destructive?: boolean, label?: string) {
+    if (destructive) {
+      const ok = await confirm({
+        title: label ?? t("Confirmer", "تأكيد"),
+        message: t("Cette action est irréversible.", "هذا الإجراء لا يمكن التراجع عنه."),
+        destructive: true,
+      });
+      if (!ok) return;
+    }
+    mutations[action].mutate(
+      { id: transferId, data: {} },
+      {
+        onSuccess: () => {
+          feedback.success("Transfert mis à jour", "تم تحديث التحويل");
+          queryClient.invalidateQueries({ queryKey: getGetErpTransferQueryKey(transferId) });
+          queryClient.invalidateQueries({ queryKey: getGetErpTransfersQueryKey() });
+        },
+        onError: (e: unknown) => feedback.error(e),
+      },
+    );
+  }
 
   return (
     <Screen>
@@ -59,6 +115,24 @@ export default function TransferDetail() {
           ))
         )}
       </Card>
+
+      {actions.length > 0 ? (
+        <Card>
+          <SectionTitle>{t("Actions", "الإجراءات")}</SectionTitle>
+          <View style={{ gap: 10 }}>
+            {actions.map((a) => (
+              <Button
+                key={a.action}
+                label={t(a.label, a.labelAr)}
+                variant={a.destructive ? "danger" : "primary"}
+                loading={mutations[a.action].isPending}
+                onPress={() => handleAction(a.action, a.destructive, t(a.label, a.labelAr))}
+                testID={`button-transfer-${a.action}`}
+              />
+            ))}
+          </View>
+        </Card>
+      ) : null}
     </Screen>
   );
 }

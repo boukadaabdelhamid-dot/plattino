@@ -1,22 +1,30 @@
 import React from "react";
 import { View, Text, StyleSheet } from "react-native";
-import { useLocalSearchParams } from "expo-router";
+import { useLocalSearchParams, useRouter } from "expo-router";
+import { useQueryClient } from "@tanstack/react-query";
 import {
   useGetPurchaseOrderItems,
   useGetPurchaseOrders,
+  useReceivePurchaseOrder,
   getGetPurchaseOrdersQueryKey,
   getGetPurchaseOrderItemsQueryKey,
 } from "@workspace/api-client-react";
 import { useProtectedRoute } from "@/hooks/use-protected-route";
 import { useLang } from "@/contexts/lang-context";
+import { useApiFeedback } from "@/hooks/use-api-feedback";
+import { useConfirm } from "@/contexts/confirm-context";
 import { Screen } from "@/components/Screen";
-import { Card, LoadingView, SectionTitle, Badge, Divider, ErrorState } from "@/components/ui";
+import { Card, Button, LoadingView, SectionTitle, Badge, Divider, ErrorState } from "@/components/ui";
 import { colors } from "@/lib/colors";
 
 export default function PurchaseOrderDetail() {
   const { id } = useLocalSearchParams<{ id: string }>();
-  const { ready } = useProtectedRoute({ section: "purchases" });
+  const { ready, isAdmin, can } = useProtectedRoute({ section: "purchases" });
   const { t, lang } = useLang();
+  const router = useRouter();
+  const feedback = useApiFeedback();
+  const { confirm } = useConfirm();
+  const queryClient = useQueryClient();
   const currency = lang === "ar" ? "دج" : "DA";
   const poId = Number(id);
 
@@ -28,10 +36,33 @@ export default function PurchaseOrderDetail() {
   const { data: items } = useGetPurchaseOrderItems(poId, {
     query: { enabled: ready && !!poId, queryKey: getGetPurchaseOrderItemsQueryKey(poId) },
   });
+  const receivePO = useReceivePurchaseOrder();
 
   if (!ready) return null;
   if (isLoading) return <LoadingView />;
   if (!po) return <ErrorState title={t("Bon d'achat introuvable", "أمر الشراء غير موجود")} />;
+
+  const canEdit = isAdmin || can("purchases", "edit");
+  const canReceive = po.status === "pending" && canEdit;
+
+  async function handleReceive() {
+    const ok = await confirm({
+      title: t("Confirmer la réception ?", "تأكيد الاستلام؟"),
+      message: t("Le stock sera mis à jour et la dette fournisseur créée si applicable.", "سيتم تحديث المخزون وإنشاء دين المورد إن وجد."),
+    });
+    if (!ok) return;
+    receivePO.mutate(
+      { id: poId },
+      {
+        onSuccess: () => {
+          feedback.success("Bon d'achat reçu", "تم استلام أمر الشراء");
+          queryClient.invalidateQueries({ queryKey: getGetPurchaseOrdersQueryKey(poListParams) });
+          queryClient.invalidateQueries({ queryKey: getGetPurchaseOrderItemsQueryKey(poId) });
+        },
+        onError: (e) => feedback.error(e),
+      },
+    );
+  }
 
   return (
     <Screen>
@@ -69,6 +100,23 @@ export default function PurchaseOrderDetail() {
           <Text style={styles.totalValue}>{Number(po.totalAmount ?? 0).toLocaleString("fr-FR")} {currency}</Text>
         </View>
       </Card>
+
+      {po.status === "pending" && canEdit ? (
+        <Button
+          label={t("Modifier", "تعديل")}
+          variant="secondary"
+          onPress={() => router.push(`/purchase-orders/${poId}/edit` as never)}
+          testID="button-edit-purchase-order"
+        />
+      ) : null}
+      {canReceive ? (
+        <Button
+          label={t("Marquer comme reçu", "وضع علامة تم الاستلام")}
+          onPress={handleReceive}
+          loading={receivePO.isPending}
+          testID="button-receive-purchase-order"
+        />
+      ) : null}
     </Screen>
   );
 }

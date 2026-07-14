@@ -1,6 +1,6 @@
 import React from "react";
 import { View, Text, StyleSheet } from "react-native";
-import { useLocalSearchParams } from "expo-router";
+import { useLocalSearchParams, useRouter } from "expo-router";
 import {
   useGetSupplierOperations,
   useGetSuppliers,
@@ -10,12 +10,13 @@ import {
 import { useProtectedRoute } from "@/hooks/use-protected-route";
 import { useLang } from "@/contexts/lang-context";
 import { Screen } from "@/components/Screen";
-import { Card, LoadingView, SectionTitle, Divider, ErrorState } from "@/components/ui";
+import { Card, Button, LoadingView, SectionTitle, Divider, ErrorState } from "@/components/ui";
 import { colors } from "@/lib/colors";
 
 export default function SupplierDetail() {
   const { id } = useLocalSearchParams<{ id: string }>();
-  const { ready } = useProtectedRoute({ section: "suppliers" });
+  const router = useRouter();
+  const { ready, isAdmin, can } = useProtectedRoute({ section: "suppliers" });
   const { t, lang } = useLang();
   const currency = lang === "ar" ? "دج" : "DA";
   const supplierId = Number(id);
@@ -34,6 +35,8 @@ export default function SupplierDetail() {
   if (isLoading) return <LoadingView />;
   if (!supplier) return <ErrorState title={t("Fournisseur introuvable", "المورد غير موجود")} />;
 
+  const canEdit = isAdmin || can("suppliers", "edit");
+
   return (
     <Screen>
       <Card>
@@ -42,6 +45,15 @@ export default function SupplierDetail() {
         <Row label={t("Email", "البريد الإلكتروني")} value={supplier.email ?? "—"} />
         <Row label={t("Adresse", "العنوان")} value={supplier.address ?? "—"} />
       </Card>
+
+      {canEdit ? (
+        <Button
+          label={t("Modifier le fournisseur", "تعديل المورد")}
+          variant="secondary"
+          onPress={() => router.push(`/suppliers/${supplierId}/edit` as never)}
+          testID="button-edit-supplier"
+        />
+      ) : null}
 
       <Card>
         <SectionTitle>{t("Solde dû", "الرصيد المستحق")}</SectionTitle>

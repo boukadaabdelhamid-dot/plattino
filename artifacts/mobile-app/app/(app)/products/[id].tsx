@@ -1,6 +1,6 @@
 import React from "react";
 import { View, Text, StyleSheet, Image } from "react-native";
-import { useLocalSearchParams } from "expo-router";
+import { useLocalSearchParams, useRouter } from "expo-router";
 import {
   useGetProduct,
   useGetProductHistory,
@@ -10,12 +10,13 @@ import {
 import { useProtectedRoute } from "@/hooks/use-protected-route";
 import { useLang } from "@/contexts/lang-context";
 import { Screen } from "@/components/Screen";
-import { Card, LoadingView, SectionTitle, Badge, Divider, ErrorState } from "@/components/ui";
+import { Card, Button, LoadingView, SectionTitle, Badge, Divider, ErrorState } from "@/components/ui";
 import { colors } from "@/lib/colors";
 
 export default function ProductDetail() {
   const { id } = useLocalSearchParams<{ id: string }>();
-  const { ready } = useProtectedRoute({ section: "products" });
+  const router = useRouter();
+  const { ready, isAdmin, can } = useProtectedRoute({ section: "products" });
   const { t, lang } = useLang();
   const currency = lang === "ar" ? "دج" : "DA";
   const productId = Number(id);
@@ -32,6 +33,7 @@ export default function ProductDetail() {
   if (isError || !product) return <ErrorState title={t("Produit introuvable", "المنتج غير موجود")} />;
 
   const p = product as any;
+  const canEdit = isAdmin || can("products", "edit");
 
   return (
     <Screen>
@@ -41,6 +43,15 @@ export default function ProductDetail() {
         <Text style={styles.ref}>{p.reference ?? p.barcode ?? ""}</Text>
         <Badge label={`${t("Stock", "المخزون")}: ${p.stock}`} tone={p.stock <= 0 ? "danger" : "success"} />
       </Card>
+
+      {canEdit ? (
+        <Button
+          label={t("Modifier le produit", "تعديل المنتج")}
+          variant="secondary"
+          onPress={() => router.push(`/products/${productId}/edit` as never)}
+          testID="button-edit-product"
+        />
+      ) : null}
 
       <Card>
         <SectionTitle>{t("Prix", "الأسعار")}</SectionTitle>

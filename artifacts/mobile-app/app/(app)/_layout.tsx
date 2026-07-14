@@ -47,14 +47,21 @@ export default function AppLayout() {
       <Drawer.Screen name="caisse/index" options={{ title: "Caisse" }} />
       <Drawer.Screen name="caisse/reports" options={{ title: "Rapports caisse" }} />
       <Drawer.Screen name="products/index" options={{ title: "Produits" }} />
+      <Drawer.Screen name="products/new" options={{ title: "Nouveau produit", drawerItemStyle: { display: "none" } }} />
       <Drawer.Screen name="products/[id]" options={{ title: "Produit" }} />
+      <Drawer.Screen name="products/[id]/edit" options={{ title: "Modifier le produit", drawerItemStyle: { display: "none" } }} />
       <Drawer.Screen name="inventory/index" options={{ title: "Inventaire" }} />
       <Drawer.Screen name="transfers/index" options={{ title: "Transferts" }} />
+      <Drawer.Screen name="transfers/new" options={{ title: "Nouveau transfert", drawerItemStyle: { display: "none" } }} />
       <Drawer.Screen name="transfers/[id]" options={{ title: "Transfert" }} />
       <Drawer.Screen name="suppliers/index" options={{ title: "Fournisseurs" }} />
+      <Drawer.Screen name="suppliers/new" options={{ title: "Nouveau fournisseur", drawerItemStyle: { display: "none" } }} />
       <Drawer.Screen name="suppliers/[id]" options={{ title: "Fournisseur" }} />
+      <Drawer.Screen name="suppliers/[id]/edit" options={{ title: "Modifier le fournisseur", drawerItemStyle: { display: "none" } }} />
       <Drawer.Screen name="purchase-orders/index" options={{ title: "Bons d'achat" }} />
+      <Drawer.Screen name="purchase-orders/new" options={{ title: "Nouveau bon d'achat", drawerItemStyle: { display: "none" } }} />
       <Drawer.Screen name="purchase-orders/[id]" options={{ title: "Bon d'achat" }} />
+      <Drawer.Screen name="purchase-orders/[id]/edit" options={{ title: "Modifier le bon d'achat", drawerItemStyle: { display: "none" } }} />
       <Drawer.Screen name="smart-purchase/index" options={{ title: "Achat intelligent" }} />
       <Drawer.Screen name="employees/index" options={{ title: "Employés" }} />
       <Drawer.Screen name="attendance/index" options={{ title: "Présence" }} />

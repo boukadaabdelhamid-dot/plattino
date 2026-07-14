@@ -30,3 +30,4 @@
 - [Expo web workflow + baseUrl trap](expo-web-workflow-baseurl.md) — mobile app has no artifact.toml (can't create new artifacts that way); runs as plain workflow on :5000; app.json baseUrl must stay unset when served from root.
 - [Expo Go phone testing via tunnel](expo-go-phone-tunnel.md) — bundled `@expo/ngrok` tunnel is broken here; use a dedicated workflow running cloudflared quick-tunnel + EXPO_PACKAGER_PROXY_URL instead.
 - [API list-response envelope shapes vary](api-list-response-shapes.md) — `useGetProducts` returns `{products:[...]}` not `{data:[...]}` unlike most others; check schema field name per endpoint, never blanket `?? data ?? []`.
+- [Generated hook URL mismatch](generated-hook-url-mismatch.md) — a hook's name can resemble a different richer route than it calls; verify the literal URL via getGetXUrl() before typing its response.

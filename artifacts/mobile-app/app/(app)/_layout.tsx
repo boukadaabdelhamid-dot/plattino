@@ -45,6 +45,9 @@ export default function AppLayout() {
       <Drawer.Screen name="customers/index" options={{ title: "Clients" }} />
       <Drawer.Screen name="customers/[id]" options={{ title: "Client" }} />
       <Drawer.Screen name="caisse/index" options={{ title: "Caisse" }} />
+      <Drawer.Screen name="caisse/[id]" options={{ title: "Caisse", drawerItemStyle: { display: "none" } }} />
+      <Drawer.Screen name="caisse/transfers" options={{ title: "Transferts caisse", drawerItemStyle: { display: "none" } }} />
+      <Drawer.Screen name="caisse/transfer-new" options={{ title: "Nouveau virement", drawerItemStyle: { display: "none" } }} />
       <Drawer.Screen name="caisse/reports" options={{ title: "Rapports caisse" }} />
       <Drawer.Screen name="products/index" options={{ title: "Produits" }} />
       <Drawer.Screen name="products/new" options={{ title: "Nouveau produit", drawerItemStyle: { display: "none" } }} />
@@ -64,9 +67,14 @@ export default function AppLayout() {
       <Drawer.Screen name="purchase-orders/[id]/edit" options={{ title: "Modifier le bon d'achat", drawerItemStyle: { display: "none" } }} />
       <Drawer.Screen name="smart-purchase/index" options={{ title: "Achat intelligent" }} />
       <Drawer.Screen name="employees/index" options={{ title: "Employés" }} />
+      <Drawer.Screen name="employees/new" options={{ title: "Nouvel employé", drawerItemStyle: { display: "none" } }} />
+      <Drawer.Screen name="employees/[id]/edit" options={{ title: "Modifier l'employé", drawerItemStyle: { display: "none" } }} />
       <Drawer.Screen name="attendance/index" options={{ title: "Présence" }} />
+      <Drawer.Screen name="attendance/new" options={{ title: "Pointage", drawerItemStyle: { display: "none" } }} />
       <Drawer.Screen name="leaves/index" options={{ title: "Congés" }} />
+      <Drawer.Screen name="leaves/new" options={{ title: "Nouvelle demande de congé", drawerItemStyle: { display: "none" } }} />
       <Drawer.Screen name="accounting/index" options={{ title: "Comptabilité" }} />
+      <Drawer.Screen name="accounting/transaction-new" options={{ title: "Nouvelle transaction", drawerItemStyle: { display: "none" } }} />
       <Drawer.Screen name="reports/index" options={{ title: "Rapports" }} />
       <Drawer.Screen name="realtime/index" options={{ title: "Temps réel" }} />
       <Drawer.Screen name="stores/index" options={{ title: "Magasins" }} />

@@ -31,3 +31,6 @@
 - [Expo Go phone testing via tunnel](expo-go-phone-tunnel.md) — bundled `@expo/ngrok` tunnel is broken here; use a dedicated workflow running cloudflared quick-tunnel + EXPO_PACKAGER_PROXY_URL instead.
 - [API list-response envelope shapes vary](api-list-response-shapes.md) — `useGetProducts` returns `{products:[...]}` not `{data:[...]}` unlike most others; check schema field name per endpoint, never blanket `?? data ?? []`.
 - [Generated hook URL mismatch](generated-hook-url-mismatch.md) — a hook's name can resemble a different richer route than it calls; verify the literal URL via getGetXUrl() before typing its response.
+- [Caisse ownership-gated actions](caisse-ownership-gated-actions.md) — GET /erp/caisses hides main caisse from non-admins; session/transfer actions need ownership+permission; deposit/withdraw are admin-only, staff↔main directional.
+- [New staff zero permissions](new-staff-zero-permissions.md) — freshly created employees have no module permissions by default; grant them before treating a blank screen/403 as an app bug.
+- [HR module backend constraints](hr-module-backend-constraints.md) — attendance is create-only (no PUT, check-in/out = 2 rows); employee status/leave-type real values differ from web ERP UI options.

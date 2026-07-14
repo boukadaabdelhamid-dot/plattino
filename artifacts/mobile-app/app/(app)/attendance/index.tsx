@@ -1,4 +1,6 @@
 import React from "react";
+import { View, StyleSheet } from "react-native";
+import { useRouter } from "expo-router";
 import {
   useGetAttendance,
   useGetEmployees,
@@ -9,7 +11,7 @@ import { useProtectedRoute } from "@/hooks/use-protected-route";
 import { useLang } from "@/contexts/lang-context";
 import { ListScreen } from "@/components/ListScreen";
 import { EntityRow } from "@/components/EntityRow";
-import { Badge } from "@/components/ui";
+import { Badge, Button } from "@/components/ui";
 
 const STATUS_TONE: Record<string, "success" | "warning" | "danger" | "muted"> = {
   present: "success",
@@ -18,8 +20,9 @@ const STATUS_TONE: Record<string, "success" | "warning" | "danger" | "muted"> = 
 };
 
 export default function AttendanceList() {
-  const { ready } = useProtectedRoute({ section: "attendance" });
+  const { ready, isAdmin, can } = useProtectedRoute({ section: "attendance" });
   const { t } = useLang();
+  const router = useRouter();
 
   const { data: employees } = useGetEmployees({ query: { enabled: ready, queryKey: getGetEmployeesQueryKey() } });
   const { data, isLoading, refetch, isRefetching } = useGetAttendance(undefined, {
@@ -28,6 +31,7 @@ export default function AttendanceList() {
 
   if (!ready) return null;
   const employeeName = (id: number) => (employees ?? []).find((e: any) => e.id === id)?.name ?? `#${id}`;
+  const canCreate = isAdmin || can("attendance", "create");
 
   return (
     <ListScreen
@@ -37,6 +41,25 @@ export default function AttendanceList() {
       refreshing={isRefetching}
       keyExtractor={(a: any) => String(a.id)}
       emptyTitle={t("Aucune présence enregistrée", "لا يوجد سجل حضور")}
+      header={
+        canCreate ? (
+          <View style={styles.actionsRow}>
+            <Button
+              label={t("Pointer une entrée", "تسجيل دخول")}
+              onPress={() => router.push("/attendance/new?mode=in" as never)}
+              style={{ flex: 1 }}
+              testID="button-check-in"
+            />
+            <Button
+              label={t("Pointer une sortie", "تسجيل خروج")}
+              variant="secondary"
+              onPress={() => router.push("/attendance/new?mode=out" as never)}
+              style={{ flex: 1 }}
+              testID="button-check-out"
+            />
+          </View>
+        ) : undefined
+      }
       renderItem={(a: any) => (
         <EntityRow
           title={employeeName(a.employeeId)}
@@ -47,3 +70,7 @@ export default function AttendanceList() {
     />
   );
 }
+
+const styles = StyleSheet.create({
+  actionsRow: { flexDirection: "row", gap: 8, padding: 16, paddingBottom: 4 },
+});

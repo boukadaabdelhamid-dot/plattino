@@ -7,6 +7,7 @@ import { Feather } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { colors } from "@/lib/colors";
 import { useLang } from "@/contexts/lang-context";
+import { useLanguageSwitch } from "@/hooks/use-language-switch";
 import { useMe } from "@/hooks/use-me";
 import { usePermissions } from "@/contexts/permissions-context";
 import { useAuth } from "@/contexts/auth-context";
@@ -16,7 +17,8 @@ export default function DrawerContent(props: DrawerContentComponentProps) {
   const router = useRouter();
   const pathname = usePathname();
   const insets = useSafeAreaInsets();
-  const { lang, t, setLang } = useLang();
+  const { lang, t } = useLang();
+  const { toggleLanguage } = useLanguageSwitch();
   const { user, isAdmin } = useMe();
   const { can } = usePermissions();
   const { logout } = useAuth();
@@ -65,7 +67,7 @@ export default function DrawerContent(props: DrawerContentComponentProps) {
       ))}
 
       <View style={styles.footer}>
-        <Pressable style={styles.langSwitch} onPress={() => setLang(lang === "ar" ? "fr" : "ar")}>
+        <Pressable style={styles.langSwitch} onPress={toggleLanguage}>
           <Feather name="globe" size={16} color={colors.textMuted} />
           <Text style={styles.itemLabel}>{lang === "ar" ? "Français" : "العربية"}</Text>
         </Pressable>

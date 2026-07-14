@@ -5,6 +5,7 @@ import { useLogin, useSelectStore } from "@workspace/api-client-react";
 import { useAuth } from "@/contexts/auth-context";
 import { useStoreContext } from "@/contexts/store-context";
 import { useLang } from "@/contexts/lang-context";
+import { useLanguageSwitch } from "@/hooks/use-language-switch";
 import { colors } from "@/lib/colors";
 import { Button, FormField } from "@/components/ui";
 
@@ -12,7 +13,8 @@ export default function Login() {
   const router = useRouter();
   const { setToken } = useAuth();
   const { setStores, clear } = useStoreContext();
-  const { t, lang, setLang } = useLang();
+  const { t, lang } = useLang();
+  const { toggleLanguage } = useLanguageSwitch();
   const loginMutation = useLogin();
   const selectStore = useSelectStore();
 
@@ -115,7 +117,7 @@ export default function Login() {
 
         <Button
           label={lang === "ar" ? "Français" : "العربية"}
-          onPress={() => setLang(lang === "ar" ? "fr" : "ar")}
+          onPress={toggleLanguage}
           variant="ghost"
           style={{ marginTop: 16 }}
         />

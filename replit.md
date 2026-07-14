@@ -136,6 +136,19 @@ Usage: `background-color: hsl(var(--primary));`
 
 Employees have `name` (not `nameEn`/`nameAr`). Products have `nameEn`/`nameAr`.
 
+## Mobile App — Shared Write-Action UI Kit
+
+`artifacts/mobile-app` has shared building blocks for write-action forms (create/edit/approve/reject screens). Use these instead of hand-rolling new modals/pickers/toasts:
+
+- `components/SheetModal.tsx` — bottom-sheet modal for hosting a form (`visible`, `onClose`, `title`, `children`, optional `footer`).
+- `components/Picker.tsx` (`PickerField`) — searchable single-select picker (product/supplier/employee/customer/store) that opens a `SheetModal` with a search box.
+- `components/DateField.tsx` (`DateField`, `DateRangeField`) — native date/date-range input, backed by `@react-native-community/datetimepicker` (Expo Go compatible, already installed).
+- `components/ConfirmDialog.tsx` + `contexts/confirm-context.tsx` (`useConfirm()`) — imperative confirm dialog for approve/reject/cancel/delete actions: `const ok = await confirm({ title, titleAr, destructive })`.
+- `contexts/toast-context.tsx` (`useToast()`, pre-existing) + `hooks/use-api-feedback.ts` (`useApiFeedback()`) — call `.success(frTitle, arTitle)` / `.error(err)` in a mutation's `onSuccess`/`onError` for consistent feedback toasts. `lib/error.ts` (`getErrorMessage`) extracts a server-provided message from `ApiError`.
+- All new components accept/read `useLang().isRTL` and mirror `flexDirection`/text alignment manually — React Native Web does not auto-mirror layout from `I18nManager`, so any new write-action UI must apply the same `isRTL && styles.xRTL` pattern rather than relying on native RTL alone.
+- Language switching (`hooks/use-language-switch.ts`) persists the choice, flips `I18nManager.forceRTL`, then prompts the user via `useConfirm()` to reload (native RTL layout only applies after a JS reload). Reused by `login.tsx`, `DrawerContent.tsx`, and `settings/languages.tsx` — do not add ad-hoc language toggles elsewhere.
+- All generated API mutation hooks needed for mobile write actions already exist in `lib/api-client-react/src/generated/api.ts` — no backend/API changes should be needed for mobile write-parity work.
+
 ## Running on Replit
 
 - Three artifact workflows run the app: `artifacts/api-server` (Express API, port 8080), `artifacts/erp` (Vite dev, port 18996), `artifacts/web-store` (Vite dev, port 23733). Start/restart via their managed workflows — do not create plain `.replit` workflows for them.

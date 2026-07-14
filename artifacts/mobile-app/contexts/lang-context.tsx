@@ -6,8 +6,19 @@ export type ErpLang = "fr" | "ar";
 
 type LangContextType = {
   lang: ErpLang;
+  /**
+   * Switch the interface language. Native layout direction (RTL) is a
+   * process-level flag (`I18nManager`) that only takes effect after a JS
+   * reload, so this persists the choice and applies `forceRTL` immediately,
+   * but the mirrored layout only shows up once the app reloads — callers
+   * that want to prompt the user for that reload should use
+   * `setLangAndReload` instead (see `app/(app)/settings/languages.tsx`).
+   */
   setLang: (lang: ErpLang) => void;
   isRTL: boolean;
+  /** True once forceRTL has been applied for `lang` but the app has not
+   * reloaded yet, so the native layout doesn't match `isRTL` on screen. */
+  pendingRestart: boolean;
   /** Translate helper: t(frText, arText) */
   t: (fr: string, ar: string) => string;
   ready: boolean;
@@ -24,7 +35,11 @@ export function LangProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     (async () => {
       const saved = await AsyncStorage.getItem(STORAGE_KEY);
-      if (saved === "ar" || saved === "fr") setLangState(saved);
+      const resolved = saved === "ar" || saved === "fr" ? saved : "fr";
+      setLangState(resolved);
+      // Bring the native RTL flag in sync with the persisted language on
+      // launch (this is a no-op if a previous reload already applied it).
+      applyForceRTL(resolved);
       setReady(true);
     })();
   }, []);
@@ -32,15 +47,14 @@ export function LangProvider({ children }: { children: React.ReactNode }) {
   const setLang = (next: ErpLang) => {
     setLangState(next);
     AsyncStorage.setItem(STORAGE_KEY, next);
-    // Note: full RTL layout mirroring requires I18nManager.forceRTL + app
-    // reload on native. We flip text alignment/content direction through the
-    // `isRTL` flag instead so language can change without restarting.
+    applyForceRTL(next);
   };
 
   const value: LangContextType = {
     lang,
     setLang,
     isRTL: lang === "ar",
+    pendingRestart: (lang === "ar") !== I18nManager.isRTL,
     t: (fr, ar) => (lang === "ar" ? ar : fr),
     ready,
   };
@@ -54,6 +68,16 @@ export function useLang(): LangContextType {
   return ctx;
 }
 
-// Referenced so bundlers keep I18nManager import intentional if we later
-// enable forced RTL layout for the ar experience.
-void I18nManager;
+/**
+ * Flip the native RTL layout flag to match `lang`. `I18nManager.forceRTL`
+ * only affects layout after the JS bundle reloads — the caller is
+ * responsible for triggering that reload (see `settings/languages.tsx`,
+ * which prompts the user and calls `DevSettings.reload()`).
+ */
+function applyForceRTL(lang: ErpLang) {
+  const shouldBeRTL = lang === "ar";
+  if (I18nManager.isRTL !== shouldBeRTL) {
+    I18nManager.allowRTL(shouldBeRTL);
+    I18nManager.forceRTL(shouldBeRTL);
+  }
+}

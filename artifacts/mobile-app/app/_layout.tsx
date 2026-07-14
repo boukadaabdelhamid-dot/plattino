@@ -12,6 +12,7 @@ import { AuthProvider, registerForceLogout } from "@/contexts/auth-context";
 import { StoreProvider } from "@/contexts/store-context";
 import { PermissionsProvider } from "@/contexts/permissions-context";
 import { ToastProvider } from "@/contexts/toast-context";
+import { ConfirmProvider } from "@/contexts/confirm-context";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { RealtimeGate } from "@/components/RealtimeGate";
 
@@ -36,15 +37,17 @@ export default function RootLayout() {
                 <StoreProvider>
                   <PermissionsProvider>
                     <ToastProvider>
-                      <ForceLogoutWiring />
-                      <RealtimeGate />
-                      <StatusBar style="dark" />
-                      <Stack screenOptions={{ headerShown: false }}>
-                        <Stack.Screen name="index" />
-                        <Stack.Screen name="login" />
-                        <Stack.Screen name="select-store" />
-                        <Stack.Screen name="(app)" />
-                      </Stack>
+                      <ConfirmProvider>
+                        <ForceLogoutWiring />
+                        <RealtimeGate />
+                        <StatusBar style="dark" />
+                        <Stack screenOptions={{ headerShown: false }}>
+                          <Stack.Screen name="index" />
+                          <Stack.Screen name="login" />
+                          <Stack.Screen name="select-store" />
+                          <Stack.Screen name="(app)" />
+                        </Stack>
+                      </ConfirmProvider>
                     </ToastProvider>
                   </PermissionsProvider>
                 </StoreProvider>

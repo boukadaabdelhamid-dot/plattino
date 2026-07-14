@@ -37,7 +37,8 @@
         {
           "cameraPermission": "يحتاج تطبيق ميدانيك إلى الكاميرا لمسح رموز الباركود"
         }
-      ]
+      ],
+      "@react-native-community/datetimepicker"
     ],
     "experiments": {
       "typedRoutes": false

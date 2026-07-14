@@ -135,3 +135,11 @@ Usage: `background-color: hsl(var(--primary));`
 ## Employee Fields
 
 Employees have `name` (not `nameEn`/`nameAr`). Products have `nameEn`/`nameAr`.
+
+## Running on Replit
+
+- Three artifact workflows run the app: `artifacts/api-server` (Express API, port 8080), `artifacts/erp` (Vite dev, port 18996), `artifacts/web-store` (Vite dev, port 23733). Start/restart via their managed workflows — do not create plain `.replit` workflows for them.
+- DB schema is pushed with `pnpm --filter db run push` (Drizzle push, dev-only — Railway prod uses the same push at deploy time).
+- On first boot the API server auto-bootstraps: Magasin Principal store, admin account (`admin@midanic.com` / `admin1234`), Caisse Principale, and lookup tables. No demo products/employees/orders are seeded — add those manually via the ERP.
+- `JWT_SECRET` and `DATABASE_URL` are already configured in this environment.
+- This import does not include the `mobile-store` (Expo) artifact referenced elsewhere in this doc — only api-server, erp, and web-store are present.

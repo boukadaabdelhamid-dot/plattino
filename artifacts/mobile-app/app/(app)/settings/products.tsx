@@ -93,7 +93,8 @@ function TaxonomySection({
 
   async function handleDelete(item: TaxonomyItem) {
     const ok = await confirm({
-      title: t("Supprimer cet élément ?", "حذف هذا العنصر؟"),
+      title: "Supprimer cet élément ?",
+      titleAr: "حذف هذا العنصر؟",
       destructive: true,
     });
     if (ok) onDelete(item.id);
@@ -183,17 +184,6 @@ export default function ProductSettings() {
 
   if (!ready) return null;
 
-  function withFeedback<T>(mutation: { mutate: (v: T, opts: any) => void }, queryKey: readonly unknown[], successFr: string, successAr: string) {
-    return (v: T) =>
-      mutation.mutate(v, {
-        onSuccess: () => {
-          feedback.success(successFr, successAr);
-          queryClient.invalidateQueries({ queryKey });
-        },
-        onError: (e: unknown) => feedback.error(e),
-      });
-  }
-
   return (
     <Screen>
       <TaxonomySection
@@ -202,7 +192,18 @@ export default function ProductSettings() {
         canWrite={canWrite}
         saving={createBrand.isPending || updateBrand.isPending}
         deletingId={deletingId}
-        onCreate={withFeedback((data) => createBrand.mutate({ data }), getGetErpSettingsProductsBrandsQueryKey(), "Marque ajoutée", "تمت إضافة الماركة") as any}
+        onCreate={(data) =>
+          createBrand.mutate(
+            { data },
+            {
+              onSuccess: () => {
+                feedback.success("Marque ajoutée", "تمت إضافة الماركة");
+                queryClient.invalidateQueries({ queryKey: getGetErpSettingsProductsBrandsQueryKey() });
+              },
+              onError: (e) => feedback.error(e),
+            },
+          )
+        }
         onUpdate={(id, data) =>
           updateBrand.mutate(
             { id, data },

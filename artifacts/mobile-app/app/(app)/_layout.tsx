@@ -78,8 +78,13 @@ export default function AppLayout() {
       <Drawer.Screen name="reports/index" options={{ title: "Rapports" }} />
       <Drawer.Screen name="realtime/index" options={{ title: "Temps réel" }} />
       <Drawer.Screen name="stores/index" options={{ title: "Magasins" }} />
+      <Drawer.Screen name="stores/new" options={{ title: "Nouveau magasin", drawerItemStyle: { display: "none" } }} />
+      <Drawer.Screen name="stores/[id]/edit" options={{ title: "Modifier le magasin", drawerItemStyle: { display: "none" } }} />
       <Drawer.Screen name="staff/index" options={{ title: "Personnel" }} />
+      <Drawer.Screen name="staff/new" options={{ title: "Nouveau membre", drawerItemStyle: { display: "none" } }} />
+      <Drawer.Screen name="staff/[id]" options={{ title: "Membre du personnel", drawerItemStyle: { display: "none" } }} />
       <Drawer.Screen name="permissions/index" options={{ title: "Permissions" }} />
+      <Drawer.Screen name="permissions/[id]" options={{ title: "Modifier les permissions", drawerItemStyle: { display: "none" } }} />
       <Drawer.Screen name="settings/index" options={{ title: "Paramètres" }} />
       <Drawer.Screen name="settings/products" options={{ title: "Paramètres produits" }} />
       <Drawer.Screen name="settings/profile" options={{ title: "Profil" }} />

@@ -34,3 +34,4 @@
 - [Caisse ownership-gated actions](caisse-ownership-gated-actions.md) — GET /erp/caisses hides main caisse from non-admins; session/transfer actions need ownership+permission; deposit/withdraw are admin-only, staff↔main directional.
 - [New staff zero permissions](new-staff-zero-permissions.md) — freshly created employees have no module permissions by default; grant them before treating a blank screen/403 as an app bug.
 - [HR module backend constraints](hr-module-backend-constraints.md) — attendance is create-only (no PUT, check-in/out = 2 rows); employee status/leave-type real values differ from web ERP UI options.
+- [Mobile raw-fetch admin endpoints](mobile-raw-fetch-admin-endpoints.md) — /erp/permissions/:userId and /auth/me(+/password) have no generated hook; mirror the web ERP's raw-fetch pattern instead of assuming a gap.

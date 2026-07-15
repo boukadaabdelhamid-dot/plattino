@@ -101,8 +101,10 @@ export default function StaffDetail() {
 
   async function handleDelete() {
     const ok = await confirm({
-      title: t("Supprimer ce membre ?", "حذف هذا العضو؟"),
-      message: t("Cette action est irréversible.", "هذا الإجراء لا يمكن التراجع عنه."),
+      title: "Supprimer ce membre ?",
+      titleAr: "حذف هذا العضو؟",
+      message: "Cette action est irréversible.",
+      messageAr: "هذا الإجراء لا يمكن التراجع عنه.",
       destructive: true,
     });
     if (!ok) return;

@@ -89,11 +89,10 @@ export default function EditStore() {
 
   async function handleDelete() {
     const ok = await confirm({
-      title: t("Supprimer ce magasin ?", "حذف هذا المتجر؟"),
-      message: t(
-        "Impossible si le magasin contient encore des données (produits, commandes, employés...).",
-        "غير ممكن إذا كان المتجر لا يزال يحتوي على بيانات (منتجات، طلبات، موظفون...).",
-      ),
+      title: "Supprimer ce magasin ?",
+      titleAr: "حذف هذا المتجر؟",
+      message: "Impossible si le magasin contient encore des données (produits, commandes, employés...).",
+      messageAr: "غير ممكن إذا كان المتجر لا يزال يحتوي على بيانات (منتجات، طلبات، موظفون...).",
       destructive: true,
     });
     if (!ok) return;

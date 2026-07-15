@@ -571,6 +571,8 @@ ALTER TABLE "stores" ADD COLUMN IF NOT EXISTS "default_comptoir_customer_id" int
 ALTER TABLE "suppliers" ADD COLUMN IF NOT EXISTS "current_balance" numeric(12, 2) DEFAULT '0' NOT NULL;--> statement-breakpoint
 ALTER TABLE "purchase_orders" ADD COLUMN IF NOT EXISTS "payment_method" text DEFAULT 'a_terme' NOT NULL;--> statement-breakpoint
 ALTER TABLE "order_items" ADD COLUMN IF NOT EXISTS "cost_price" numeric(10, 2);--> statement-breakpoint
+ALTER TABLE "orders" ADD COLUMN IF NOT EXISTS "order_source" text DEFAULT 'pos';--> statement-breakpoint
+ALTER TABLE "orders" ADD COLUMN IF NOT EXISTS "payment_method" text DEFAULT 'comptant';--> statement-breakpoint
 ALTER TABLE "products" ADD COLUMN IF NOT EXISTS "family_id" integer;--> statement-breakpoint
 ALTER TABLE "products" ADD COLUMN IF NOT EXISTS "brand_id" integer;--> statement-breakpoint
 ALTER TABLE "products" ADD COLUMN IF NOT EXISTS "color_id" integer;--> statement-breakpoint

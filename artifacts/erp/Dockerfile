@@ -1,8 +1,8 @@
 FROM node:20-alpine AS build
 ARG VITE_API_URL
 ENV VITE_API_URL=$VITE_API_URL
+ARG RAILWAY_GIT_COMMIT_SHA
 RUN apk add --no-cache git
-ADD https://api.github.com/repos/boukadaabdelhamid-dot/plattino/commits/main /dev/null
 RUN git clone --depth 1 https://github.com/boukadaabdelhamid-dot/plattino.git /repo
 WORKDIR /repo
 RUN corepack enable && corepack prepare pnpm@10.26.1 --activate

@@ -518,7 +518,7 @@ export default function Products() {
       descriptionEn: form.descriptionEn || undefined,
       descriptionAr: form.descriptionAr || undefined,
       price: form.price,
-      stock: parseInt(form.stock) || 0,
+      stock: parseFloat(form.stock.replace(",", ".")) || 0,
       categoryId: form.categoryId ? parseInt(form.categoryId) : undefined,
       imageUrl: (form.images.find((g) => g.isPrimary)?.url ?? form.images[0]?.url ?? form.imageUrl) || undefined,
       images: form.images.map((g, i) => ({ url: g.url, sortOrder: i, isPrimary: g.isPrimary })),

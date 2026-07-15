@@ -804,23 +804,23 @@ router.post("/erp/products/copy-to-stores", authenticate, requireStaff, requireS
           .from(schema.categoriesTable).where(eq(schema.categoriesTable.id, src.categoryId)).limit(1);
         srcCategoryNameAr = c?.nameAr ?? null;
       }
-      let srcFamilyNameAr: string | null = null;
+      let srcFamily: { nameFr: string; nameAr: string } | null = null;
       if (src.familyId) {
-        const [f] = await db.select({ nameAr: schema.productFamiliesTable.nameAr })
+        const [f] = await db.select({ nameFr: schema.productFamiliesTable.nameFr, nameAr: schema.productFamiliesTable.nameAr })
           .from(schema.productFamiliesTable).where(eq(schema.productFamiliesTable.id, src.familyId)).limit(1);
-        srcFamilyNameAr = f?.nameAr ?? null;
+        srcFamily = f ?? null;
       }
-      let srcBrandNameAr: string | null = null;
+      let srcBrand: { nameFr: string; nameAr: string } | null = null;
       if (src.brandId) {
-        const [b] = await db.select({ nameAr: schema.productBrandsTable.nameAr })
+        const [b] = await db.select({ nameFr: schema.productBrandsTable.nameFr, nameAr: schema.productBrandsTable.nameAr })
           .from(schema.productBrandsTable).where(eq(schema.productBrandsTable.id, src.brandId)).limit(1);
-        srcBrandNameAr = b?.nameAr ?? null;
+        srcBrand = b ?? null;
       }
-      let srcColorNameAr: string | null = null;
+      let srcColor: { nameFr: string; nameAr: string; hexCode: string | null } | null = null;
       if (src.colorId) {
-        const [c] = await db.select({ nameAr: schema.productColorsTable.nameAr })
+        const [c] = await db.select({ nameFr: schema.productColorsTable.nameFr, nameAr: schema.productColorsTable.nameAr, hexCode: schema.productColorsTable.hexCode })
           .from(schema.productColorsTable).where(eq(schema.productColorsTable.id, src.colorId)).limit(1);
-        srcColorNameAr = c?.nameAr ?? null;
+        srcColor = c ?? null;
       }
 
       for (const targetStoreId of tidArr) {
@@ -840,7 +840,7 @@ router.post("/erp/products/copy-to-stores", authenticate, requireStaff, requireS
             }
           }
 
-          // Match attributes in target store by nameAr (null if not found)
+          // Match attributes in target store by nameFr (case-insensitive); create if absent
           let targetCategoryId: number | null = null;
           if (srcCategoryNameAr) {
             const [c] = await db.select({ id: schema.categoriesTable.id })
@@ -850,28 +850,49 @@ router.post("/erp/products/copy-to-stores", authenticate, requireStaff, requireS
             targetCategoryId = c?.id ?? null;
           }
           let targetFamilyId: number | null = null;
-          if (srcFamilyNameAr) {
+          if (srcFamily) {
             const [f] = await db.select({ id: schema.productFamiliesTable.id })
               .from(schema.productFamiliesTable)
-              .where(and(eq(schema.productFamiliesTable.storeId, targetStoreId), eq(schema.productFamiliesTable.nameAr, srcFamilyNameAr)))
+              .where(and(eq(schema.productFamiliesTable.storeId, targetStoreId), ilike(schema.productFamiliesTable.nameFr, srcFamily.nameFr)))
               .limit(1);
-            targetFamilyId = f?.id ?? null;
+            if (f) {
+              targetFamilyId = f.id;
+            } else {
+              const [created] = await db.insert(schema.productFamiliesTable)
+                .values({ storeId: targetStoreId, nameFr: srcFamily.nameFr, nameAr: srcFamily.nameAr })
+                .returning({ id: schema.productFamiliesTable.id });
+              targetFamilyId = created?.id ?? null;
+            }
           }
           let targetBrandId: number | null = null;
-          if (srcBrandNameAr) {
+          if (srcBrand) {
             const [b] = await db.select({ id: schema.productBrandsTable.id })
               .from(schema.productBrandsTable)
-              .where(and(eq(schema.productBrandsTable.storeId, targetStoreId), eq(schema.productBrandsTable.nameAr, srcBrandNameAr)))
+              .where(and(eq(schema.productBrandsTable.storeId, targetStoreId), ilike(schema.productBrandsTable.nameFr, srcBrand.nameFr)))
               .limit(1);
-            targetBrandId = b?.id ?? null;
+            if (b) {
+              targetBrandId = b.id;
+            } else {
+              const [created] = await db.insert(schema.productBrandsTable)
+                .values({ storeId: targetStoreId, nameFr: srcBrand.nameFr, nameAr: srcBrand.nameAr })
+                .returning({ id: schema.productBrandsTable.id });
+              targetBrandId = created?.id ?? null;
+            }
           }
           let targetColorId: number | null = null;
-          if (srcColorNameAr) {
+          if (srcColor) {
             const [c] = await db.select({ id: schema.productColorsTable.id })
               .from(schema.productColorsTable)
-              .where(and(eq(schema.productColorsTable.storeId, targetStoreId), eq(schema.productColorsTable.nameAr, srcColorNameAr)))
+              .where(and(eq(schema.productColorsTable.storeId, targetStoreId), ilike(schema.productColorsTable.nameFr, srcColor.nameFr)))
               .limit(1);
-            targetColorId = c?.id ?? null;
+            if (c) {
+              targetColorId = c.id;
+            } else {
+              const [created] = await db.insert(schema.productColorsTable)
+                .values({ storeId: targetStoreId, nameFr: srcColor.nameFr, nameAr: srcColor.nameAr, hexCode: srcColor.hexCode })
+                .returning({ id: schema.productColorsTable.id });
+              targetColorId = created?.id ?? null;
+            }
           }
 
           const [newProduct] = await db.insert(schema.productsTable).values({

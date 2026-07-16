@@ -330,8 +330,10 @@ export default function SaleOrders() {
               const isPos = order.order_source === "pos";
               const isDelivered = order.status === "delivered";
               const isCancelled = order.status === "cancelled";
-              // POS orders are already finalised — only "Voir" and "Imprimer" make sense
+              const isPending = order.status === "pending" || order.status === "processing";
+              // edit/delete only for bons (not POS); clôture available for any source while pending
               const canEdit = !isPos && !isDelivered && !isCancelled;
+              const canCloture = isPending && !isCancelled;
               const benefice = parseFloat(order.benefice ?? "0");
               const prefix = isPos ? "VR" : "BV";
               return (
@@ -387,7 +389,7 @@ export default function SaleOrders() {
                             <Pencil className="h-3.5 w-3.5 mr-2" /> {t("Modifier", "تعديل")}
                           </DropdownMenuItem>
                         )}
-                        {canEdit && (
+                        {canCloture && (
                           <DropdownMenuItem
                             onClick={() => setClotureOrder(order)}
                             className="text-emerald-700 focus:text-emerald-700"

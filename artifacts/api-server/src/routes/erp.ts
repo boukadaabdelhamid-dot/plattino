@@ -4146,12 +4146,13 @@ router.put("/erp/sale-orders/:id/cloture", authenticate, requireStaff, requireSt
     const id = pid(req, "id");
 
     const existRes = await db.execute(sql`
-      SELECT id, status, payment_method, total_amount, user_id, customer_name
-      FROM orders WHERE id = ${id} AND store_id = ${storeId} AND order_source = 'bon' LIMIT 1
+      SELECT id, status, payment_method, total_amount, user_id, customer_name, order_source
+      FROM orders WHERE id = ${id} AND store_id = ${storeId} AND order_source IN ('bon', 'pos') LIMIT 1
     `);
     const existing = existRes.rows[0] as {
       id: number; status: string; payment_method: string | null;
       total_amount: string; user_id: number | null; customer_name: string;
+      order_source: string;
     } | undefined;
     if (!existing) { res.status(404).json({ error: "Not found" }); return; }
     if (existing.status !== "pending" && existing.status !== "processing") {
@@ -4163,6 +4164,10 @@ router.put("/erp/sale-orders/:id/cloture", authenticate, requireStaff, requireSt
     const customerId = existing.user_id;
     const customerName = existing.customer_name;
     const today = new Date().toISOString().split("T")[0];
+    const isPos = existing.order_source === "pos";
+    const prefix = isPos ? "VR" : "BV";
+    const refCode = `${prefix}-${String(id).padStart(6, "0")}`;
+    const sourceLabel = isPos ? "Vente rapide" : "Bon de vente";
 
     const itemsRes = await db.execute(sql`SELECT product_id, quantity FROM order_items WHERE order_id = ${id}`);
     const lineItems = itemsRes.rows as Array<{ product_id: number; quantity: number }>;
@@ -4190,9 +4195,9 @@ router.put("/erp/sale-orders/:id/cloture", authenticate, requireStaff, requireSt
           type: "income",
           category: "sales",
           amount: totalAmount.toFixed(2),
-          description: `Bon de vente BV-${String(id).padStart(6, "0")} - ${customerName}`,
+          description: `${sourceLabel} ${refCode} - ${customerName}`,
           date: today,
-          reference: `BV-${String(id).padStart(6, "0")}`,
+          reference: refCode,
         });
       }
 
@@ -4209,7 +4214,7 @@ router.put("/erp/sale-orders/:id/cloture", authenticate, requireStaff, requireSt
           reason: "sale",
           orderId: id,
           actorUserId,
-          notes: `Bon BV-${String(id).padStart(6, "0")} - ${customerName}`,
+          notes: `${sourceLabel} ${refCode} - ${customerName}`,
           balanceBefore: oldBalance.toFixed(2),
           balanceAfter: newBalance.toFixed(2),
         });

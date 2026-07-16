@@ -3931,9 +3931,9 @@ function validateSaleItems(items: unknown): string | null {
 // Verify all product IDs belong to the given store; return first invalid id or null.
 async function checkProductsInStore(productIds: number[], storeId: number): Promise<number | null> {
   if (productIds.length === 0) return null;
-  const rows = await db.execute(sql`SELECT id FROM products WHERE id = ANY(${productIds}) AND store_id = ${storeId}`);
+  const rows = await db.execute(sql`SELECT id FROM products WHERE id = ANY(${sql.raw(`'{${productIds.join(",")}}'::int[]`)}) AND store_id = ${storeId}`);
   const found = new Set((rows.rows as Array<{ id: number }>).map(r => r.id));
-  return productIds.find(id => !found.has(id) ) ?? null;
+  return productIds.find(id => !found.has(id)) ?? null;
 }
 
 // GET /erp/sale-orders

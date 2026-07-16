@@ -14,7 +14,7 @@ import {
 import { useProtectedRoute } from "@/hooks/use-protected-route";
 import { useLang } from "@/contexts/lang-context";
 import { Card, SectionTitle, Badge, Button, LoadingView } from "@/components/ui";
-import { DateField, DateRangeField } from "@/components/DateField";
+import { DateField } from "@/components/DateField";
 import { Fab } from "@/components/Fab";
 import { colors } from "@/lib/colors";
 import { Feather } from "@expo/vector-icons";
@@ -33,9 +33,9 @@ const CATEGORY_LABEL: Record<string, [string, string]> = {
   other:     ["Autre",     "أخرى"],
 };
 
-const PAGE_SIZES = [10, 20, 50, 0]; // 0 = Tous
+const PAGE_SIZES = [10, 25, 50, 0]; // 0 = Tous
 
-type DateMode = "none" | "day" | "month" | "year" | "range";
+type GroupBy = "none" | "jour" | "mois" | "annee";
 
 // ─── Chip helper ─────────────────────────────────────────────────────────────
 
@@ -81,15 +81,12 @@ export default function Accounting() {
     useGetTransactions({ query: { enabled: ready, queryKey: getGetTransactionsQueryKey() } });
 
   // ── Filter state ─────────────────────────────────────────────────────────
-  const [search,          setSearch]         = useState("");
-  const [filterType,      setFilterType]     = useState<"all" | "income" | "expense">("all");
-  const [filterCategory,  setFilterCategory] = useState("all");
-  const [dateMode,        setDateMode]       = useState<DateMode>("none");
-  const [dateDay,         setDateDay]        = useState<Date | null>(null);
-  const [dateMonth,       setDateMonth]      = useState<Date | null>(null);
-  const [dateYear,        setDateYear]       = useState<Date | null>(null);
-  const [dateFrom,        setDateFrom]       = useState<Date | null>(null);
-  const [dateTo,          setDateTo]         = useState<Date | null>(null);
+  const [search,         setSearch]        = useState("");
+  const [filterType,     setFilterType]    = useState<"all" | "income" | "expense">("all");
+  const [filterCategory, setFilterCategory] = useState("all");
+  const [groupBy,        setGroupBy]       = useState<GroupBy>("none");
+  const [dateFrom,       setDateFrom]      = useState<Date | null>(null);
+  const [dateTo,         setDateTo]        = useState<Date | null>(null);
 
   // ── Pagination state ─────────────────────────────────────────────────────
   const [page,     setPage]     = useState(1);
@@ -111,29 +108,39 @@ export default function Accounting() {
       if (filterType !== "all" && tx.type !== filterType) return false;
       if (filterCategory !== "all" && tx.category !== filterCategory) return false;
       if (q && !tx.description?.toLowerCase().includes(q) && !(tx.reference ?? "").toLowerCase().includes(q)) return false;
-      if (dateMode !== "none") {
+      if (groupBy !== "none" && (dateFrom || dateTo)) {
         const d = new Date(tx.date);
-        if (dateMode === "day" && dateDay) {
-          if (d.toISOString().slice(0, 10) !== dateDay.toISOString().slice(0, 10)) return false;
-        } else if (dateMode === "month" && dateMonth) {
-          if (d.getMonth() !== dateMonth.getMonth() || d.getFullYear() !== dateMonth.getFullYear()) return false;
-        } else if (dateMode === "year" && dateYear) {
-          if (d.getFullYear() !== dateYear.getFullYear()) return false;
-        } else if (dateMode === "range") {
-          if (dateFrom && d < new Date(dateFrom.toISOString().slice(0, 10))) return false;
+        if (groupBy === "jour") {
+          if (dateFrom) {
+            const from = new Date(dateFrom.toISOString().slice(0, 10));
+            if (d < from) return false;
+          }
           if (dateTo) {
             const end = new Date(dateTo.toISOString().slice(0, 10));
             end.setHours(23, 59, 59, 999);
             if (d > end) return false;
           }
+        } else if (groupBy === "mois") {
+          if (dateFrom) {
+            if (d.getFullYear() < dateFrom.getFullYear() ||
+              (d.getFullYear() === dateFrom.getFullYear() && d.getMonth() < dateFrom.getMonth())) return false;
+          }
+          if (dateTo) {
+            if (d.getFullYear() > dateTo.getFullYear() ||
+              (d.getFullYear() === dateTo.getFullYear() && d.getMonth() > dateTo.getMonth())) return false;
+          }
+        } else if (groupBy === "annee") {
+          if (dateFrom && d.getFullYear() < dateFrom.getFullYear()) return false;
+          if (dateTo   && d.getFullYear() > dateTo.getFullYear())   return false;
         }
       }
       return true;
     });
-  }, [sorted, filterType, filterCategory, search, dateMode, dateDay, dateMonth, dateYear, dateFrom, dateTo]);
+  }, [sorted, filterType, filterCategory, search, groupBy, dateFrom, dateTo]);
 
   // ── Derived: KPI (recalculate on filtered when active) ──────────────────
-  const isFiltered = filterType !== "all" || filterCategory !== "all" || dateMode !== "none" || search.trim() !== "";
+  const isFiltered = filterType !== "all" || filterCategory !== "all" ||
+    (groupBy !== "none" && (dateFrom !== null || dateTo !== null)) || search.trim() !== "";
 
   const kpiIncome   = isFiltered ? filteredTx.filter(tx => tx.type === "income").reduce((s, tx) => s + Number(tx.amount), 0) : Number(summary?.totalIncome ?? 0);
   const kpiExpenses = isFiltered ? filteredTx.filter(tx => tx.type === "expense").reduce((s, tx) => s + Number(tx.amount), 0) : Number(summary?.totalExpenses ?? 0);
@@ -146,19 +153,33 @@ export default function Accounting() {
   // ── Helpers ──────────────────────────────────────────────────────────────
   function resetFilters() {
     setSearch(""); setFilterType("all"); setFilterCategory("all");
-    setDateMode("none"); setDateDay(null); setDateMonth(null);
-    setDateYear(null); setDateFrom(null); setDateTo(null);
+    setGroupBy("none"); setDateFrom(null); setDateTo(null);
     setPage(1);
   }
 
   function changeType(v: "all" | "income" | "expense") { setFilterType(v); resetPage(); }
   function changeCat(v: string)  { setFilterCategory(v); resetPage(); }
-  function changeDateMode(v: DateMode) { setDateMode(v); resetPage(); }
+  function changeGroupBy(v: GroupBy) { setGroupBy(v); setDateFrom(null); setDateTo(null); resetPage(); }
   function changeSearch(v: string) { setSearch(v); resetPage(); }
 
   if (!ready) return null;
 
   const canCreate = can("accounting", "create");
+
+  // ── Page numbers builder ──────────────────────────────────────────────────
+  function buildPages(current: number, total: number): (number | "...")[] {
+    const pages: (number | "...")[] = [];
+    if (total <= 7) {
+      for (let i = 1; i <= total; i++) pages.push(i);
+    } else {
+      pages.push(1);
+      if (current > 3) pages.push("...");
+      for (let i = Math.max(2, current - 1); i <= Math.min(total - 1, current + 1); i++) pages.push(i);
+      if (current < total - 2) pages.push("...");
+      pages.push(total);
+    }
+    return pages;
+  }
 
   // ── Render helpers ────────────────────────────────────────────────────────
   const pageSizeLabel = (ps: number) => ps === 0 ? t("Tous", "الكل") : String(ps);
@@ -220,53 +241,32 @@ export default function Accounting() {
           })}
         </ScrollView>
 
-        {/* Date mode chips */}
+        {/* Période chips (style Ventes) */}
         <Text style={styles.filterLabel}>{t("Période", "الفترة")}</Text>
         <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.chipRow}>
-          <Chip label={t("Aucune", "لا شيء")} active={dateMode === "none"}  onPress={() => changeDateMode("none")} />
-          <Chip label={t("Jour",   "يوم")}     active={dateMode === "day"}   onPress={() => changeDateMode("day")} />
-          <Chip label={t("Mois",   "شهر")}     active={dateMode === "month"} onPress={() => changeDateMode("month")} />
-          <Chip label={t("Année",  "سنة")}     active={dateMode === "year"}  onPress={() => changeDateMode("year")} />
-          <Chip label={t("Plage",  "نطاق")}    active={dateMode === "range"} onPress={() => changeDateMode("range")} />
+          <Chip label={t("Aucune",   "لا شيء")} active={groupBy === "none"}  onPress={() => changeGroupBy("none")} />
+          <Chip label={t("Par jour", "يومياً")} active={groupBy === "jour"}  onPress={() => changeGroupBy("jour")} />
+          <Chip label={t("Par mois", "شهرياً")} active={groupBy === "mois"}  onPress={() => changeGroupBy("mois")} />
+          <Chip label={t("Par année","سنوياً")} active={groupBy === "annee"} onPress={() => changeGroupBy("annee")} />
         </ScrollView>
 
-        {/* Date inputs */}
-        {dateMode === "day" && (
-          <View style={styles.dateWrap}>
-            <DateField
-              label={t("Date exacte", "التاريخ المحدد")}
-              value={dateDay}
-              onChange={(d) => { setDateDay(d); resetPage(); }}
-            />
-          </View>
-        )}
-        {dateMode === "month" && (
-          <View style={styles.dateWrap}>
-            <DateField
-              label={t("Choisir un mois", "اختر الشهر")}
-              value={dateMonth}
-              onChange={(d) => { setDateMonth(d); resetPage(); }}
-            />
-          </View>
-        )}
-        {dateMode === "year" && (
-          <View style={styles.dateWrap}>
-            <DateField
-              label={t("Choisir une année", "اختر السنة")}
-              value={dateYear}
-              onChange={(d) => { setDateYear(d); resetPage(); }}
-            />
-          </View>
-        )}
-        {dateMode === "range" && (
-          <View style={styles.dateWrap}>
-            <DateRangeField
-              label={t("Plage de dates", "نطاق التاريخ")}
-              startDate={dateFrom}
-              endDate={dateTo}
-              onChangeStart={(d) => { setDateFrom(d); resetPage(); }}
-              onChangeEnd={(d) => { setDateTo(d); resetPage(); }}
-            />
+        {/* Début / Fin date pickers — shown whenever a Période is selected */}
+        {groupBy !== "none" && (
+          <View style={styles.dateRow}>
+            <View style={{ flex: 1 }}>
+              <DateField
+                label={t("Début", "البداية")}
+                value={dateFrom}
+                onChange={(d) => { setDateFrom(d); resetPage(); }}
+              />
+            </View>
+            <View style={{ flex: 1 }}>
+              <DateField
+                label={t("Fin", "النهاية")}
+                value={dateTo}
+                onChange={(d) => { setDateTo(d); resetPage(); }}
+              />
+            </View>
           </View>
         )}
 
@@ -284,7 +284,7 @@ export default function Accounting() {
         <Text style={styles.listTitle}>
           {t("Transactions", "المعاملات")} ({filteredTx.length}{isFiltered ? ` / ${sorted.length}` : ""})
         </Text>
-        {/* Page size selector */}
+        {/* Page size selector chips */}
         <View style={styles.pageSizeRow}>
           {PAGE_SIZES.map((ps) => (
             <Pressable
@@ -297,53 +297,64 @@ export default function Accounting() {
           ))}
         </View>
       </View>
+    </View>
+  );
 
-      {/* ── Pagination navigation (top) ───────────────────────── */}
-      {pageSize !== 0 && totalPages > 1 && (
-        <View style={styles.pagination}>
+  // ── Footer: count + numbered page navigation ──────────────────────────────
+  const listFooter = pageSize !== 0 && totalPages > 0 ? (
+    <View style={{ marginTop: 8, marginBottom: 24 }}>
+      {/* Affichage N–N sur N */}
+      {filteredTx.length > 0 && (
+        <Text style={styles.pageCount}>
+          {t(
+            `Affichage ${(page - 1) * pageSize + 1}–${Math.min(page * pageSize, filteredTx.length)} sur ${filteredTx.length} transaction(s)`,
+            `عرض ${(page - 1) * pageSize + 1}–${Math.min(page * pageSize, filteredTx.length)} من ${filteredTx.length}`
+          )}
+        </Text>
+      )}
+      {/* Numbered navigation */}
+      {totalPages > 1 && (
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.pageNav}>
+          {/* Préc. */}
           <Pressable
             onPress={() => setPage((p) => Math.max(1, p - 1))}
             disabled={page <= 1}
             style={[styles.pageBtn, page <= 1 && styles.pageBtnDisabled]}
           >
-            <Feather name="chevron-left" size={16} color={page <= 1 ? colors.border : colors.primary} />
+            <Feather name="chevron-left" size={14} color={page <= 1 ? colors.border : colors.primary} />
+            <Text style={{ fontSize: 12, color: page <= 1 ? colors.border : colors.primary, marginLeft: 2 }}>
+              {t("Préc.", "السابق")}
+            </Text>
           </Pressable>
-          <Text style={styles.pageIndicator}>{t(`Page ${page} / ${totalPages}`, `${page} / ${totalPages}`)}</Text>
+
+          {/* Page number buttons */}
+          {buildPages(page, totalPages).map((pg, i) =>
+            pg === "..." ? (
+              <Text key={`e${i}`} style={styles.ellipsis}>…</Text>
+            ) : (
+              <Pressable
+                key={pg}
+                onPress={() => setPage(pg as number)}
+                style={[styles.pageNumBtn, page === pg && styles.pageNumBtnActive]}
+              >
+                <Text style={[styles.pageNumLabel, page === pg && styles.pageNumLabelActive]}>{pg}</Text>
+              </Pressable>
+            )
+          )}
+
+          {/* Suiv. */}
           <Pressable
             onPress={() => setPage((p) => Math.min(totalPages, p + 1))}
             disabled={page >= totalPages}
             style={[styles.pageBtn, page >= totalPages && styles.pageBtnDisabled]}
           >
-            <Feather name="chevron-right" size={16} color={page >= totalPages ? colors.border : colors.primary} />
+            <Text style={{ fontSize: 12, color: page >= totalPages ? colors.border : colors.primary, marginRight: 2 }}>
+              {t("Suiv.", "التالي")}
+            </Text>
+            <Feather name="chevron-right" size={14} color={page >= totalPages ? colors.border : colors.primary} />
           </Pressable>
-        </View>
+        </ScrollView>
       )}
-    </View>
-  );
-
-  const listFooter = pageSize !== 0 && totalPages > 1 ? (
-    <View style={[styles.pagination, { marginTop: 8, marginBottom: 24 }]}>
-      <Pressable
-        onPress={() => setPage((p) => Math.max(1, p - 1))}
-        disabled={page <= 1}
-        style={[styles.pageBtn, page <= 1 && styles.pageBtnDisabled]}
-      >
-        <Feather name="chevron-left" size={16} color={page <= 1 ? colors.border : colors.primary} />
-        <Text style={{ fontSize: 13, color: page <= 1 ? colors.border : colors.primary, marginLeft: 4 }}>
-          {t("Préc.", "السابق")}
-        </Text>
-      </Pressable>
-      <Text style={styles.pageIndicator}>{t(`Page ${page} / ${totalPages}`, `${page} / ${totalPages}`)}</Text>
-      <Pressable
-        onPress={() => setPage((p) => Math.min(totalPages, p + 1))}
-        disabled={page >= totalPages}
-        style={[styles.pageBtn, page >= totalPages && styles.pageBtnDisabled]}
-      >
-        <Text style={{ fontSize: 13, color: page >= totalPages ? colors.border : colors.primary, marginRight: 4 }}>
-          {t("Suiv.", "التالي")}
-        </Text>
-        <Feather name="chevron-right" size={16} color={page >= totalPages ? colors.border : colors.primary} />
-      </Pressable>
     </View>
   ) : <View style={{ height: 24 }} />;
 
@@ -414,7 +425,7 @@ const styles = StyleSheet.create({
   },
   searchInput:    { flex: 1, paddingVertical: 9, fontSize: 13.5, color: colors.text },
 
-  dateWrap:       { marginTop: 8 },
+  dateRow:        { flexDirection: "row", gap: 8, marginTop: 8 },
 
   resetBtn:       { flexDirection: "row", alignItems: "center", gap: 6, marginTop: 10, alignSelf: "flex-start" },
   resetLabel:     { fontSize: 13, color: colors.primary, fontWeight: "500" },
@@ -427,10 +438,16 @@ const styles = StyleSheet.create({
   psLabel:        { fontSize: 11, color: colors.textMuted, fontWeight: "500" },
   psLabelActive:  { color: "#fff" },
 
-  pagination:     { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 16, marginVertical: 6 },
+  // Footer pagination
+  pageCount:      { textAlign: "center", fontSize: 12, color: colors.textMuted, marginBottom: 6 },
+  pageNav:        { flexDirection: "row", alignItems: "center", paddingHorizontal: 16, gap: 4 },
   pageBtn:        { flexDirection: "row", alignItems: "center", paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8, borderWidth: 1, borderColor: colors.border },
   pageBtnDisabled:{ borderColor: colors.border, backgroundColor: colors.background },
-  pageIndicator:  { fontSize: 13, color: colors.textMuted, fontWeight: "500" },
+  pageNumBtn:     { width: 30, height: 30, borderRadius: 6, borderWidth: 1, borderColor: colors.border, alignItems: "center", justifyContent: "center" },
+  pageNumBtnActive: { backgroundColor: "#1B3057", borderColor: "#1B3057" },
+  pageNumLabel:   { fontSize: 12, color: colors.textMuted, fontWeight: "500" },
+  pageNumLabelActive: { color: "#fff" },
+  ellipsis:       { fontSize: 12, color: colors.textMuted, paddingHorizontal: 4, lineHeight: 30 },
 
   card:           { marginHorizontal: 16, marginBottom: 8, gap: 6 },
   rowBetween:     { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8 },

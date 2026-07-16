@@ -16,18 +16,13 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Badge } from "@/components/ui/badge";
-import { Plus, TrendingUp, TrendingDown, DollarSign, X, ChevronLeft, ChevronRight, Filter } from "lucide-react";
+import { Plus, TrendingUp, TrendingDown, DollarSign, X } from "lucide-react";
 import { format } from "date-fns";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 type TxForm = { type: string; category: string; amount: string; description: string; date: string };
 const emptyForm: TxForm = { type: "income", category: "", amount: "", description: "", date: new Date().toISOString().slice(0, 10) };
-
-type DateMode = "none" | "day" | "month" | "year" | "range";
-
-const PAGE_SIZES = [10, 20, 50, 0]; // 0 = Tous
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
@@ -50,10 +45,7 @@ export default function Accounting() {
   const [search,         setSearch]        = useState("");
   const [filterType,     setFilterType]    = useState("all");
   const [filterCategory, setFilterCat]     = useState("all");
-  const [dateMode,       setDateMode]      = useState<DateMode>("none");
-  const [dateDay,        setDateDay]       = useState("");
-  const [dateMonth,      setDateMonth]     = useState("");
-  const [dateYear,       setDateYear]      = useState("");
+  const [groupBy,        setGroupBy]       = useState<"jour" | "mois" | "annee">("jour");
   const [dateFrom,       setDateFrom]      = useState("");
   const [dateTo,         setDateTo]        = useState("");
 
@@ -88,40 +80,40 @@ export default function Accounting() {
       if (filterType !== "all" && tx.type !== filterType) return false;
       if (filterCategory !== "all" && tx.category !== filterCategory) return false;
       if (q && !tx.description?.toLowerCase().includes(q) && !(tx.reference ?? "").toLowerCase().includes(q)) return false;
-      if (dateMode !== "none") {
-        const d = new Date(tx.date);
-        if (dateMode === "day" && dateDay) {
-          if (tx.date?.slice(0, 10) !== dateDay) return false;
-        } else if (dateMode === "month" && dateMonth) {
-          // dateMonth format: YYYY-MM
-          if (!tx.date?.startsWith(dateMonth)) return false;
-        } else if (dateMode === "year" && dateYear) {
-          if (!tx.date?.startsWith(dateYear)) return false;
-        } else if (dateMode === "range") {
-          if (dateFrom && tx.date < dateFrom) return false;
-          if (dateTo   && tx.date > dateTo + "T23:59:59") return false;
+      if (dateFrom || dateTo) {
+        if (groupBy === "jour") {
+          const txDate = tx.date?.slice(0, 10) ?? "";
+          if (dateFrom && txDate < dateFrom) return false;
+          if (dateTo   && txDate > dateTo)   return false;
+        } else if (groupBy === "mois") {
+          const txMon = tx.date?.slice(0, 7) ?? "";
+          if (dateFrom && txMon < dateFrom) return false;
+          if (dateTo   && txMon > dateTo)   return false;
+        } else {
+          const txYr = tx.date?.slice(0, 4) ?? "";
+          if (dateFrom && txYr < dateFrom) return false;
+          if (dateTo   && txYr > dateTo)   return false;
         }
       }
       return true;
     });
-  }, [sorted, filterType, filterCategory, search, dateMode, dateDay, dateMonth, dateYear, dateFrom, dateTo]);
+  }, [sorted, filterType, filterCategory, search, groupBy, dateFrom, dateTo]);
 
   // ── Derived: filtered KPI ────────────────────────────────────────────────
-  const isFiltered = filterType !== "all" || filterCategory !== "all" || dateMode !== "none" || search.trim() !== "";
+  const isFiltered = filterType !== "all" || filterCategory !== "all" || dateFrom !== "" || dateTo !== "" || search.trim() !== "";
 
   const kpiIncome   = isFiltered ? filteredTx.filter((tx: Transaction) => tx.type === "income").reduce((s: number, tx: Transaction) => s + Number(tx.amount), 0) : Number(summary?.totalIncome ?? 0);
   const kpiExpenses = isFiltered ? filteredTx.filter((tx: Transaction) => tx.type === "expense").reduce((s: number, tx: Transaction) => s + Number(tx.amount), 0) : Number(summary?.totalExpenses ?? 0);
   const kpiBalance  = isFiltered ? kpiIncome - kpiExpenses : Number(summary?.netBalance ?? 0);
 
   // ── Derived: pagination ──────────────────────────────────────────────────
-  const totalPages = pageSize === 0 ? 1 : Math.max(1, Math.ceil(filteredTx.length / pageSize));
-  const pagedTx    = pageSize === 0 ? filteredTx : filteredTx.slice((page - 1) * pageSize, page * pageSize);
+  const totalPages = Math.max(1, Math.ceil(filteredTx.length / pageSize));
+  const pagedTx    = filteredTx.slice((page - 1) * pageSize, page * pageSize);
 
   // ── Helpers ──────────────────────────────────────────────────────────────
   function resetFilters() {
     setSearch(""); setFilterType("all"); setFilterCat("all");
-    setDateMode("none"); setDateDay(""); setDateMonth(""); setDateYear(""); setDateFrom(""); setDateTo("");
-    setPage(1);
+    setDateFrom(""); setDateTo(""); setPage(1);
   }
   function resetPage() { setPage(1); }
   function handleFilterChange<T>(setter: (v: T) => void) {
@@ -142,6 +134,21 @@ export default function Accounting() {
     { labelFr: isFiltered ? "Dépenses (filtrées)" : "Dépenses totales", labelAr: isFiltered ? "المصاريف (مصفى)" : "إجمالي المصروفات", value: kpiExpenses, icon: TrendingDown, color: "text-red-500" },
     { labelFr: isFiltered ? "Solde (filtré)" : "Solde net comptable",  labelAr: isFiltered ? "الرصيد (مصفى)"   : "رصيد الحساب الصافي", value: kpiBalance,  icon: DollarSign,   color: kpiBalance >= 0 ? "text-primary" : "text-destructive" },
   ];
+
+  // ── Page numbers helper (like Products.tsx) ──────────────────────────────
+  function buildPages(current: number, total: number): (number | "...")[] {
+    const pages: (number | "...")[] = [];
+    if (total <= 7) {
+      for (let i = 1; i <= total; i++) pages.push(i);
+    } else {
+      pages.push(1);
+      if (current > 3) pages.push("...");
+      for (let i = Math.max(2, current - 1); i <= Math.min(total - 1, current + 1); i++) pages.push(i);
+      if (current < total - 2) pages.push("...");
+      pages.push(total);
+    }
+    return pages;
+  }
 
   return (
     <div className="space-y-4">
@@ -222,52 +229,44 @@ export default function Accounting() {
               </Select>
             </div>
 
-            {/* Date mode */}
-            <div className="w-36">
+            {/* Période dropdown (style Dashboard Ventes) */}
+            <div>
               <Label className="text-xs mb-1 block">{t("Période", "الفترة")}</Label>
-              <Select value={dateMode} onValueChange={handleFilterChange(setDateMode as (v: string) => void)}>
-                <SelectTrigger className="h-8 text-sm"><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="none">{t("Aucune", "لا شيء")}</SelectItem>
-                  <SelectItem value="day">{t("Jour", "يوم")}</SelectItem>
-                  <SelectItem value="month">{t("Mois", "شهر")}</SelectItem>
-                  <SelectItem value="year">{t("Année", "سنة")}</SelectItem>
-                  <SelectItem value="range">{t("Plage", "نطاق")}</SelectItem>
-                </SelectContent>
-              </Select>
+              <select
+                value={groupBy}
+                onChange={(e) => {
+                  setGroupBy(e.target.value as "jour" | "mois" | "annee");
+                  setDateFrom(""); setDateTo(""); resetPage();
+                }}
+                className="h-8 border rounded-md px-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-primary/60 w-32"
+              >
+                <option value="jour">{t("Par jour", "يومياً")}</option>
+                <option value="mois">{t("Par mois", "شهرياً")}</option>
+                <option value="annee">{t("Par année", "سنوياً")}</option>
+              </select>
             </div>
 
-            {/* Date inputs (conditional) */}
-            {dateMode === "day" && (
-              <div>
-                <Label className="text-xs mb-1 block">{t("Date", "التاريخ")}</Label>
-                <Input type="date" value={dateDay} onChange={(e) => { setDateDay(e.target.value); resetPage(); }} className="h-8 text-sm w-36" />
-              </div>
-            )}
-            {dateMode === "month" && (
-              <div>
-                <Label className="text-xs mb-1 block">{t("Mois (AAAA-MM)", "الشهر (SSSS-MM)")}</Label>
-                <Input type="month" value={dateMonth} onChange={(e) => { setDateMonth(e.target.value); resetPage(); }} className="h-8 text-sm w-36" />
-              </div>
-            )}
-            {dateMode === "year" && (
-              <div>
-                <Label className="text-xs mb-1 block">{t("Année", "السنة")}</Label>
-                <Input type="number" min={2000} max={2099} value={dateYear} onChange={(e) => { setDateYear(e.target.value); resetPage(); }} placeholder="2025" className="h-8 text-sm w-24" />
-              </div>
-            )}
-            {dateMode === "range" && (
-              <>
-                <div>
-                  <Label className="text-xs mb-1 block">{t("Du", "من")}</Label>
-                  <Input type="date" value={dateFrom} onChange={(e) => { setDateFrom(e.target.value); resetPage(); }} className="h-8 text-sm w-36" />
-                </div>
-                <div>
-                  <Label className="text-xs mb-1 block">{t("Au", "إلى")}</Label>
-                  <Input type="date" value={dateTo} onChange={(e) => { setDateTo(e.target.value); resetPage(); }} className="h-8 text-sm w-36" />
-                </div>
-              </>
-            )}
+            {/* Début / Fin — always visible, type varies with Période */}
+            <div>
+              <Label className="text-xs mb-1 block">{t("Début", "البداية")}</Label>
+              <Input
+                type={groupBy === "mois" ? "month" : groupBy === "annee" ? "number" : "date"}
+                value={dateFrom}
+                onChange={(e) => { setDateFrom(e.target.value); resetPage(); }}
+                className="h-8 text-sm w-36"
+                {...(groupBy === "annee" ? { min: 2000, max: 2099, placeholder: "2024" } : {})}
+              />
+            </div>
+            <div>
+              <Label className="text-xs mb-1 block">{t("Fin", "النهاية")}</Label>
+              <Input
+                type={groupBy === "mois" ? "month" : groupBy === "annee" ? "number" : "date"}
+                value={dateTo}
+                onChange={(e) => { setDateTo(e.target.value); resetPage(); }}
+                className="h-8 text-sm w-36"
+                {...(groupBy === "annee" ? { min: 2000, max: 2099, placeholder: "2025" } : {})}
+              />
+            </div>
 
             {/* Reset */}
             {hasFilters && (
@@ -282,24 +281,9 @@ export default function Accounting() {
       {/* ── Transactions table ───────────────────────────────────────── */}
       <Card className="border shadow-sm">
         <CardHeader className="pb-2">
-          <div className="flex items-center justify-between">
-            <CardTitle className="text-base">
-              {t("Transactions", "المعاملات")} ({filteredTx.length}{isFiltered ? ` / ${sorted.length}` : ""})
-            </CardTitle>
-            {/* Page size selector */}
-            <div className="flex items-center gap-1">
-              <span className="text-xs text-muted-foreground mr-1">{t("Par page :", "لكل صفحة:")}</span>
-              {PAGE_SIZES.map((ps) => (
-                <button
-                  key={ps}
-                  onClick={() => { setPageSize(ps); setPage(1); }}
-                  className={`text-xs px-2 py-0.5 rounded border transition-colors ${pageSize === ps ? "bg-primary text-white border-primary" : "border-border text-muted-foreground hover:border-primary"}`}
-                >
-                  {ps === 0 ? t("Tous", "الكل") : ps}
-                </button>
-              ))}
-            </div>
-          </div>
+          <CardTitle className="text-base">
+            {t("Transactions", "المعاملات")} ({filteredTx.length}{isFiltered ? ` / ${sorted.length}` : ""})
+          </CardTitle>
         </CardHeader>
         <CardContent className="p-0">
           {isLoading ? (
@@ -346,51 +330,58 @@ export default function Accounting() {
                 </Table>
               </div>
 
-              {/* ── Pagination controls ──────────────────────────────── */}
-              {pageSize !== 0 && totalPages > 1 && (
-                <div className="flex items-center justify-between px-4 py-3 border-t">
-                  <span className="text-xs text-muted-foreground">
-                    {t(`Page ${page} sur ${totalPages} — ${filteredTx.length} résultats`, `الصفحة ${page} من ${totalPages} — ${filteredTx.length} نتيجة`)}
-                  </span>
+              {/* ── Pagination bar (style Articles / Products) ───────── */}
+              <div className="flex items-center justify-between gap-4 flex-wrap px-4 py-3 border-t">
+                <span className="text-sm text-muted-foreground">
+                  {filteredTx.length === 0
+                    ? t("Aucune transaction trouvée", "لا توجد معاملات")
+                    : `${t("Affichage", "عرض")} ${(page - 1) * pageSize + 1}–${Math.min(page * pageSize, filteredTx.length)} ${t("sur", "من")} ${filteredTx.length} ${t("transaction(s)", "معاملة")}`}
+                </span>
+                <div className="flex items-center gap-3 flex-wrap">
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-xs text-muted-foreground">{t("Lignes :", "الصفوف:")}</span>
+                    <Select value={String(pageSize)} onValueChange={(v) => { setPageSize(Number(v)); setPage(1); }}>
+                      <SelectTrigger className="h-8 w-20 text-xs"><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        {[10, 25, 50, 100, 200].map((n) => (
+                          <SelectItem key={n} value={String(n)}>{n}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
                   <div className="flex items-center gap-1">
-                    <Button variant="outline" size="sm" className="h-7 px-2" onClick={() => setPage(1)} disabled={page <= 1}>
-                      <ChevronLeft className="h-3.5 w-3.5" /><ChevronLeft className="h-3.5 w-3.5 -ml-2" />
+                    <Button
+                      variant="outline" size="sm" className="h-8 px-2 text-xs"
+                      onClick={() => setPage((p) => Math.max(1, p - 1))}
+                      disabled={page === 1}
+                    >
+                      ← Préc.
                     </Button>
-                    <Button variant="outline" size="sm" className="h-7 px-2" onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page <= 1}>
-                      <ChevronLeft className="h-3.5 w-3.5" />
-                    </Button>
-                    {/* Page numbers (show ±2 around current) */}
-                    {Array.from({ length: totalPages }, (_, i) => i + 1)
-                      .filter((p) => p === 1 || p === totalPages || Math.abs(p - page) <= 1)
-                      .reduce<(number | "…")[]>((acc, p, i, arr) => {
-                        if (i > 0 && p - (arr[i - 1] as number) > 1) acc.push("…");
-                        acc.push(p);
-                        return acc;
-                      }, [])
-                      .map((p, i) =>
-                        p === "…" ? (
-                          <span key={`e${i}`} className="text-xs text-muted-foreground px-1">…</span>
-                        ) : (
-                          <Button
-                            key={p}
-                            variant={page === p ? "default" : "outline"}
-                            size="sm"
-                            className="h-7 w-7 p-0 text-xs"
-                            onClick={() => setPage(p as number)}
-                          >
-                            {p}
-                          </Button>
-                        )
-                      )}
-                    <Button variant="outline" size="sm" className="h-7 px-2" onClick={() => setPage((p) => Math.min(totalPages, p + 1))} disabled={page >= totalPages}>
-                      <ChevronRight className="h-3.5 w-3.5" />
-                    </Button>
-                    <Button variant="outline" size="sm" className="h-7 px-2" onClick={() => setPage(totalPages)} disabled={page >= totalPages}>
-                      <ChevronRight className="h-3.5 w-3.5" /><ChevronRight className="h-3.5 w-3.5 -ml-2" />
+                    {buildPages(page, totalPages).map((pg, i) =>
+                      pg === "..." ? (
+                        <span key={`e${i}`} className="px-1 text-muted-foreground text-xs select-none">…</span>
+                      ) : (
+                        <Button
+                          key={pg}
+                          variant={pg === page ? "default" : "outline"}
+                          size="sm"
+                          className={`h-8 w-8 p-0 text-xs ${pg === page ? "bg-[#1B3057] hover:bg-[#1B3057]/90" : ""}`}
+                          onClick={() => setPage(pg as number)}
+                        >
+                          {pg}
+                        </Button>
+                      )
+                    )}
+                    <Button
+                      variant="outline" size="sm" className="h-8 px-2 text-xs"
+                      onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                      disabled={page === totalPages}
+                    >
+                      Suiv. →
                     </Button>
                   </div>
                 </div>
-              )}
+              </div>
             </>
           )}
         </CardContent>

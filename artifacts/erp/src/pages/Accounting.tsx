@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useMemo } from "react";
 import {
   useGetTransactions, useCreateTransaction, useGetAccountingSummary,
   getGetTransactionsQueryKey,
@@ -16,22 +16,119 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Plus, TrendingUp, TrendingDown, DollarSign } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
+import { Plus, TrendingUp, TrendingDown, DollarSign, X, ChevronLeft, ChevronRight, Filter } from "lucide-react";
 import { format } from "date-fns";
+
+// ─── Types ────────────────────────────────────────────────────────────────────
 
 type TxForm = { type: string; category: string; amount: string; description: string; date: string };
 const emptyForm: TxForm = { type: "income", category: "", amount: "", description: "", date: new Date().toISOString().slice(0, 10) };
+
+type DateMode = "none" | "day" | "month" | "year" | "range";
+
+const PAGE_SIZES = [10, 20, 50, 0]; // 0 = Tous
+
+// ─── Component ────────────────────────────────────────────────────────────────
 
 export default function Accounting() {
   const qc = useQueryClient();
   const { lang } = useLang();
   const t = (fr: string, ar: string) => lang === "ar" ? ar : fr;
   const currency = lang === "ar" ? "دج" : "DA";
+
+  // ── Remote data ──────────────────────────────────────────────────────────
   const { data: transactions, isLoading } = useGetTransactions();
   const { data: summary } = useGetAccountingSummary();
   const createTx = useCreateTransaction();
+
+  // ── Create form ──────────────────────────────────────────────────────────
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState<TxForm>(emptyForm);
+
+  // ── Filter state ─────────────────────────────────────────────────────────
+  const [search,         setSearch]        = useState("");
+  const [filterType,     setFilterType]    = useState("all");
+  const [filterCategory, setFilterCat]     = useState("all");
+  const [dateMode,       setDateMode]      = useState<DateMode>("none");
+  const [dateDay,        setDateDay]       = useState("");
+  const [dateMonth,      setDateMonth]     = useState("");
+  const [dateYear,       setDateYear]      = useState("");
+  const [dateFrom,       setDateFrom]      = useState("");
+  const [dateTo,         setDateTo]        = useState("");
+
+  // ── Pagination state ─────────────────────────────────────────────────────
+  const [page,     setPage]     = useState(1);
+  const [pageSize, setPageSize] = useState(10);
+
+  // ── Labels ───────────────────────────────────────────────────────────────
+  const txTypeLabels: Record<string, string> = {
+    income:  t("Revenu", "دخل"),
+    expense: t("Dépense", "مصروف"),
+  };
+  const categoryLabels: Record<string, string> = {
+    sales:     t("Ventes",    "مبيعات"),
+    purchase:  t("Achats",    "مشتريات"),
+    salary:    t("Salaires",  "رواتب"),
+    rent:      t("Loyer",     "إيجار"),
+    utilities: t("Services",  "خدمات"),
+    marketing: t("Marketing", "تسويق"),
+    other:     t("Autre",     "أخرى"),
+  };
+
+  // ── Derived: sorted & filtered transactions ──────────────────────────────
+  const sorted = useMemo(
+    () => [...(transactions ?? [])].sort((a: Transaction, b: Transaction) => (a.date < b.date ? 1 : -1)),
+    [transactions],
+  );
+
+  const filteredTx = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    return sorted.filter((tx: Transaction) => {
+      if (filterType !== "all" && tx.type !== filterType) return false;
+      if (filterCategory !== "all" && tx.category !== filterCategory) return false;
+      if (q && !tx.description?.toLowerCase().includes(q) && !(tx.reference ?? "").toLowerCase().includes(q)) return false;
+      if (dateMode !== "none") {
+        const d = new Date(tx.date);
+        if (dateMode === "day" && dateDay) {
+          if (tx.date?.slice(0, 10) !== dateDay) return false;
+        } else if (dateMode === "month" && dateMonth) {
+          // dateMonth format: YYYY-MM
+          if (!tx.date?.startsWith(dateMonth)) return false;
+        } else if (dateMode === "year" && dateYear) {
+          if (!tx.date?.startsWith(dateYear)) return false;
+        } else if (dateMode === "range") {
+          if (dateFrom && tx.date < dateFrom) return false;
+          if (dateTo   && tx.date > dateTo + "T23:59:59") return false;
+        }
+      }
+      return true;
+    });
+  }, [sorted, filterType, filterCategory, search, dateMode, dateDay, dateMonth, dateYear, dateFrom, dateTo]);
+
+  // ── Derived: filtered KPI ────────────────────────────────────────────────
+  const isFiltered = filterType !== "all" || filterCategory !== "all" || dateMode !== "none" || search.trim() !== "";
+
+  const kpiIncome   = isFiltered ? filteredTx.filter((tx: Transaction) => tx.type === "income").reduce((s: number, tx: Transaction) => s + Number(tx.amount), 0) : Number(summary?.totalIncome ?? 0);
+  const kpiExpenses = isFiltered ? filteredTx.filter((tx: Transaction) => tx.type === "expense").reduce((s: number, tx: Transaction) => s + Number(tx.amount), 0) : Number(summary?.totalExpenses ?? 0);
+  const kpiBalance  = isFiltered ? kpiIncome - kpiExpenses : Number(summary?.netBalance ?? 0);
+
+  // ── Derived: pagination ──────────────────────────────────────────────────
+  const totalPages = pageSize === 0 ? 1 : Math.max(1, Math.ceil(filteredTx.length / pageSize));
+  const pagedTx    = pageSize === 0 ? filteredTx : filteredTx.slice((page - 1) * pageSize, page * pageSize);
+
+  // ── Helpers ──────────────────────────────────────────────────────────────
+  function resetFilters() {
+    setSearch(""); setFilterType("all"); setFilterCat("all");
+    setDateMode("none"); setDateDay(""); setDateMonth(""); setDateYear(""); setDateFrom(""); setDateTo("");
+    setPage(1);
+  }
+  function resetPage() { setPage(1); }
+  function handleFilterChange<T>(setter: (v: T) => void) {
+    return (v: T) => { setter(v); resetPage(); };
+  }
+
+  const hasFilters = isFiltered;
 
   const handleSave = () => {
     createTx.mutate(
@@ -40,29 +137,15 @@ export default function Accounting() {
     );
   };
 
-  const txTypeLabels: Record<string, string> = {
-    income: t("Revenu", "دخل"),
-    expense: t("Dépense", "مصروف"),
-  };
-
-  const categoryLabels: Record<string, string> = {
-    sales: t("Ventes", "مبيعات"),
-    purchase: t("Achats", "مشتريات"),
-    salary: t("Salaires", "رواتب"),
-    rent: t("Loyer", "إيجار"),
-    utilities: t("Services", "خدمات"),
-    marketing: t("Marketing", "تسويق"),
-    other: t("Autre", "أخرى"),
-  };
-
   const kpiCards = [
-    { labelFr: "Revenus totaux", labelAr: "إجمالي الدخل", value: summary?.totalIncome, icon: TrendingUp, color: "text-emerald-600" },
-    { labelFr: "Dépenses totales", labelAr: "إجمالي المصروفات", value: summary?.totalExpenses, icon: TrendingDown, color: "text-red-500" },
-    { labelFr: "Solde net comptable", labelAr: "رصيد الحساب الصافي", value: summary?.netBalance, icon: DollarSign, color: (summary?.netBalance ?? 0) >= 0 ? "text-primary" : "text-destructive" },
+    { labelFr: isFiltered ? "Revenus (filtrés)" : "Revenus totaux",   labelAr: isFiltered ? "الدخل (مصفى)"    : "إجمالي الدخل",       value: kpiIncome,   icon: TrendingUp,   color: "text-emerald-600" },
+    { labelFr: isFiltered ? "Dépenses (filtrées)" : "Dépenses totales", labelAr: isFiltered ? "المصاريف (مصفى)" : "إجمالي المصروفات", value: kpiExpenses, icon: TrendingDown, color: "text-red-500" },
+    { labelFr: isFiltered ? "Solde (filtré)" : "Solde net comptable",  labelAr: isFiltered ? "الرصيد (مصفى)"   : "رصيد الحساب الصافي", value: kpiBalance,  icon: DollarSign,   color: kpiBalance >= 0 ? "text-primary" : "text-destructive" },
   ];
 
   return (
     <div className="space-y-4">
+      {/* ── Header ──────────────────────────────────────────────────── */}
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold">{t("Comptabilité", "المحاسبة")}</h1>
@@ -73,71 +156,247 @@ export default function Accounting() {
         </Button>
       </div>
 
-      {summary && (
-        <div className="grid grid-cols-3 gap-4">
-          {kpiCards.map(({ labelFr, labelAr, value, icon: Icon, color }) => (
-            <Card key={labelFr} className="border shadow-sm">
-              <CardContent className="p-5">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-xs text-muted-foreground mb-1">{t(labelFr, labelAr)}</p>
-                    <p className={`text-xl font-bold ${color}`}>{(value ?? 0).toLocaleString()} {currency}</p>
-                  </div>
-                  <Icon className={`h-6 w-6 ${color} opacity-70`} />
+      {/* ── KPI cards ───────────────────────────────────────────────── */}
+      <div className="grid grid-cols-3 gap-4">
+        {kpiCards.map(({ labelFr, labelAr, value, icon: Icon, color }) => (
+          <Card key={labelFr} className="border shadow-sm">
+            <CardContent className="p-5">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-xs text-muted-foreground mb-1">{t(labelFr, labelAr)}</p>
+                  <p className={`text-xl font-bold ${color}`}>{(value ?? 0).toLocaleString()} {currency}</p>
                 </div>
-              </CardContent>
-            </Card>
-          ))}
-        </div>
-      )}
+                <Icon className={`h-6 w-6 ${color} opacity-70`} />
+              </div>
+            </CardContent>
+          </Card>
+        ))}
+      </div>
 
+      {/* ── Filters ─────────────────────────────────────────────────── */}
+      <Card className="border shadow-sm">
+        <CardContent className="pt-4 pb-3">
+          <div className="flex flex-wrap gap-2 items-end">
+            {/* Search */}
+            <div className="flex-1 min-w-[180px]">
+              <Label className="text-xs mb-1 block">{t("Recherche", "بحث")}</Label>
+              <div className="relative">
+                <Input
+                  value={search}
+                  onChange={(e) => handleFilterChange(setSearch)(e.target.value)}
+                  placeholder={t("Description, référence…", "الوصف، المرجع…")}
+                  className="h-8 text-sm pr-7"
+                />
+                {search && (
+                  <button onClick={() => handleFilterChange(setSearch)("")} className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground">
+                    <X className="h-3.5 w-3.5" />
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {/* Type */}
+            <div className="w-36">
+              <Label className="text-xs mb-1 block">{t("Type", "النوع")}</Label>
+              <Select value={filterType} onValueChange={handleFilterChange(setFilterType)}>
+                <SelectTrigger className="h-8 text-sm"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">{t("Tous", "الكل")}</SelectItem>
+                  <SelectItem value="income">{t("Revenus", "دخل")}</SelectItem>
+                  <SelectItem value="expense">{t("Dépenses", "مصروف")}</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            {/* Category */}
+            <div className="w-40">
+              <Label className="text-xs mb-1 block">{t("Catégorie", "الفئة")}</Label>
+              <Select value={filterCategory} onValueChange={handleFilterChange(setFilterCat)}>
+                <SelectTrigger className="h-8 text-sm"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">{t("Toutes", "الكل")}</SelectItem>
+                  {Object.entries(categoryLabels).map(([k, v]) => (
+                    <SelectItem key={k} value={k}>{v}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            {/* Date mode */}
+            <div className="w-36">
+              <Label className="text-xs mb-1 block">{t("Période", "الفترة")}</Label>
+              <Select value={dateMode} onValueChange={handleFilterChange(setDateMode as (v: string) => void)}>
+                <SelectTrigger className="h-8 text-sm"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">{t("Aucune", "لا شيء")}</SelectItem>
+                  <SelectItem value="day">{t("Jour", "يوم")}</SelectItem>
+                  <SelectItem value="month">{t("Mois", "شهر")}</SelectItem>
+                  <SelectItem value="year">{t("Année", "سنة")}</SelectItem>
+                  <SelectItem value="range">{t("Plage", "نطاق")}</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            {/* Date inputs (conditional) */}
+            {dateMode === "day" && (
+              <div>
+                <Label className="text-xs mb-1 block">{t("Date", "التاريخ")}</Label>
+                <Input type="date" value={dateDay} onChange={(e) => { setDateDay(e.target.value); resetPage(); }} className="h-8 text-sm w-36" />
+              </div>
+            )}
+            {dateMode === "month" && (
+              <div>
+                <Label className="text-xs mb-1 block">{t("Mois (AAAA-MM)", "الشهر (SSSS-MM)")}</Label>
+                <Input type="month" value={dateMonth} onChange={(e) => { setDateMonth(e.target.value); resetPage(); }} className="h-8 text-sm w-36" />
+              </div>
+            )}
+            {dateMode === "year" && (
+              <div>
+                <Label className="text-xs mb-1 block">{t("Année", "السنة")}</Label>
+                <Input type="number" min={2000} max={2099} value={dateYear} onChange={(e) => { setDateYear(e.target.value); resetPage(); }} placeholder="2025" className="h-8 text-sm w-24" />
+              </div>
+            )}
+            {dateMode === "range" && (
+              <>
+                <div>
+                  <Label className="text-xs mb-1 block">{t("Du", "من")}</Label>
+                  <Input type="date" value={dateFrom} onChange={(e) => { setDateFrom(e.target.value); resetPage(); }} className="h-8 text-sm w-36" />
+                </div>
+                <div>
+                  <Label className="text-xs mb-1 block">{t("Au", "إلى")}</Label>
+                  <Input type="date" value={dateTo} onChange={(e) => { setDateTo(e.target.value); resetPage(); }} className="h-8 text-sm w-36" />
+                </div>
+              </>
+            )}
+
+            {/* Reset */}
+            {hasFilters && (
+              <Button variant="ghost" size="sm" onClick={resetFilters} className="h-8 text-xs gap-1 self-end">
+                <X className="h-3.5 w-3.5" /> {t("Réinitialiser", "إعادة تعيين")}
+              </Button>
+            )}
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* ── Transactions table ───────────────────────────────────────── */}
       <Card className="border shadow-sm">
         <CardHeader className="pb-2">
-          <CardTitle className="text-base">{t("Transactions", "المعاملات")} ({transactions?.length ?? 0})</CardTitle>
+          <div className="flex items-center justify-between">
+            <CardTitle className="text-base">
+              {t("Transactions", "المعاملات")} ({filteredTx.length}{isFiltered ? ` / ${sorted.length}` : ""})
+            </CardTitle>
+            {/* Page size selector */}
+            <div className="flex items-center gap-1">
+              <span className="text-xs text-muted-foreground mr-1">{t("Par page :", "لكل صفحة:")}</span>
+              {PAGE_SIZES.map((ps) => (
+                <button
+                  key={ps}
+                  onClick={() => { setPageSize(ps); setPage(1); }}
+                  className={`text-xs px-2 py-0.5 rounded border transition-colors ${pageSize === ps ? "bg-primary text-white border-primary" : "border-border text-muted-foreground hover:border-primary"}`}
+                >
+                  {ps === 0 ? t("Tous", "الكل") : ps}
+                </button>
+              ))}
+            </div>
+          </div>
         </CardHeader>
         <CardContent className="p-0">
           {isLoading ? (
             <div className="p-4 space-y-3">{[...Array(5)].map((_, i) => <Skeleton key={i} className="h-12" />)}</div>
           ) : (
-            <div className="overflow-x-auto">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>{t("Date", "التاريخ")}</TableHead>
-                    <TableHead>{t("Type", "النوع")}</TableHead>
-                    <TableHead>{t("Catégorie", "الفئة")}</TableHead>
-                    <TableHead>{t("Description", "الوصف")}</TableHead>
-                    <TableHead>{t("Montant", "المبلغ")}</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {(transactions ?? []).map((tx: Transaction) => (
-                    <TableRow key={tx.id} data-testid={`row-tx-${tx.id}`}>
-                      <TableCell className="text-sm text-muted-foreground">
-                        {tx.date ? format(new Date(tx.date), "dd/MM/yyyy") : "—"}
-                      </TableCell>
-                      <TableCell>
-                        <span className={`text-xs px-2 py-0.5 rounded font-medium ${tx.type === "income" ? "bg-emerald-100 text-emerald-700" : "bg-red-100 text-red-700"}`}>
-                          {txTypeLabels[tx.type] ?? tx.type}
-                        </span>
-                      </TableCell>
-                      <TableCell className="text-sm">{categoryLabels[tx.category ?? ""] ?? tx.category}</TableCell>
-                      <TableCell className="text-sm text-muted-foreground max-w-xs truncate">{tx.description}</TableCell>
-                      <TableCell className={`font-semibold ${tx.type === "income" ? "text-emerald-600" : "text-red-600"}`}>
-                        {tx.type === "income" ? "+" : "-"} {tx.amount} {currency}
-                      </TableCell>
+            <>
+              <div className="overflow-x-auto">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>{t("Date", "التاريخ")}</TableHead>
+                      <TableHead>{t("Type", "النوع")}</TableHead>
+                      <TableHead>{t("Catégorie", "الفئة")}</TableHead>
+                      <TableHead>{t("Description", "الوصف")}</TableHead>
+                      <TableHead className="text-right">{t("Montant", "المبلغ")}</TableHead>
                     </TableRow>
-                  ))}
-                  {(!transactions || transactions.length === 0) && (
-                    <TableRow><TableCell colSpan={5} className="text-center py-8 text-muted-foreground">{t("Aucune transaction enregistrée", "لا توجد معاملات مسجلة")}</TableCell></TableRow>
-                  )}
-                </TableBody>
-              </Table>
-            </div>
+                  </TableHeader>
+                  <TableBody>
+                    {pagedTx.map((tx: Transaction) => (
+                      <TableRow key={tx.id} data-testid={`row-tx-${tx.id}`}>
+                        <TableCell className="text-sm text-muted-foreground whitespace-nowrap">
+                          {tx.date ? format(new Date(tx.date), "dd/MM/yyyy") : "—"}
+                        </TableCell>
+                        <TableCell>
+                          <span className={`text-xs px-2 py-0.5 rounded font-medium ${tx.type === "income" ? "bg-emerald-100 text-emerald-700" : "bg-red-100 text-red-700"}`}>
+                            {txTypeLabels[tx.type] ?? tx.type}
+                          </span>
+                        </TableCell>
+                        <TableCell className="text-sm">{categoryLabels[tx.category ?? ""] ?? tx.category}</TableCell>
+                        <TableCell className="text-sm text-muted-foreground max-w-xs truncate">{tx.description}</TableCell>
+                        <TableCell className={`font-semibold text-right ${tx.type === "income" ? "text-emerald-600" : "text-red-600"}`}>
+                          {tx.type === "income" ? "+" : "-"} {Number(tx.amount).toLocaleString()} {currency}
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                    {pagedTx.length === 0 && (
+                      <TableRow>
+                        <TableCell colSpan={5} className="text-center py-8 text-muted-foreground">
+                          {isFiltered ? t("Aucun résultat pour ces filtres", "لا توجد نتائج لهذه الفلاتر") : t("Aucune transaction enregistrée", "لا توجد معاملات مسجلة")}
+                        </TableCell>
+                      </TableRow>
+                    )}
+                  </TableBody>
+                </Table>
+              </div>
+
+              {/* ── Pagination controls ──────────────────────────────── */}
+              {pageSize !== 0 && totalPages > 1 && (
+                <div className="flex items-center justify-between px-4 py-3 border-t">
+                  <span className="text-xs text-muted-foreground">
+                    {t(`Page ${page} sur ${totalPages} — ${filteredTx.length} résultats`, `الصفحة ${page} من ${totalPages} — ${filteredTx.length} نتيجة`)}
+                  </span>
+                  <div className="flex items-center gap-1">
+                    <Button variant="outline" size="sm" className="h-7 px-2" onClick={() => setPage(1)} disabled={page <= 1}>
+                      <ChevronLeft className="h-3.5 w-3.5" /><ChevronLeft className="h-3.5 w-3.5 -ml-2" />
+                    </Button>
+                    <Button variant="outline" size="sm" className="h-7 px-2" onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page <= 1}>
+                      <ChevronLeft className="h-3.5 w-3.5" />
+                    </Button>
+                    {/* Page numbers (show ±2 around current) */}
+                    {Array.from({ length: totalPages }, (_, i) => i + 1)
+                      .filter((p) => p === 1 || p === totalPages || Math.abs(p - page) <= 1)
+                      .reduce<(number | "…")[]>((acc, p, i, arr) => {
+                        if (i > 0 && p - (arr[i - 1] as number) > 1) acc.push("…");
+                        acc.push(p);
+                        return acc;
+                      }, [])
+                      .map((p, i) =>
+                        p === "…" ? (
+                          <span key={`e${i}`} className="text-xs text-muted-foreground px-1">…</span>
+                        ) : (
+                          <Button
+                            key={p}
+                            variant={page === p ? "default" : "outline"}
+                            size="sm"
+                            className="h-7 w-7 p-0 text-xs"
+                            onClick={() => setPage(p as number)}
+                          >
+                            {p}
+                          </Button>
+                        )
+                      )}
+                    <Button variant="outline" size="sm" className="h-7 px-2" onClick={() => setPage((p) => Math.min(totalPages, p + 1))} disabled={page >= totalPages}>
+                      <ChevronRight className="h-3.5 w-3.5" />
+                    </Button>
+                    <Button variant="outline" size="sm" className="h-7 px-2" onClick={() => setPage(totalPages)} disabled={page >= totalPages}>
+                      <ChevronRight className="h-3.5 w-3.5" /><ChevronRight className="h-3.5 w-3.5 -ml-2" />
+                    </Button>
+                  </div>
+                </div>
+              )}
+            </>
           )}
         </CardContent>
       </Card>
 
+      {/* ── Create dialog ────────────────────────────────────────────── */}
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent className="max-w-md">
           <DialogHeader><DialogTitle>{t("Ajouter une transaction", "إضافة معاملة")}</DialogTitle></DialogHeader>
@@ -155,10 +414,10 @@ export default function Accounting() {
             <div>
               <Label className="text-xs mb-1 block">{t("Catégorie", "الفئة")}</Label>
               <Select value={form.category} onValueChange={(v) => setForm((f) => ({ ...f, category: v }))}>
-                <SelectTrigger className="h-8 text-sm"><SelectValue placeholder={t("Sélectionner...", "اختر...")} /></SelectTrigger>
+                <SelectTrigger className="h-8 text-sm"><SelectValue placeholder={t("Sélectionner…", "اختر…")} /></SelectTrigger>
                 <SelectContent>
-                  {["sales", "purchase", "salary", "rent", "utilities", "marketing", "other"].map((c) => (
-                    <SelectItem key={c} value={c}>{categoryLabels[c] ?? c}</SelectItem>
+                  {Object.entries(categoryLabels).map(([k, v]) => (
+                    <SelectItem key={k} value={k}>{v}</SelectItem>
                   ))}
                 </SelectContent>
               </Select>
@@ -173,7 +432,7 @@ export default function Accounting() {
             </div>
             <div className="col-span-2">
               <Label className="text-xs mb-1 block">{t("Description", "الوصف")}</Label>
-              <Input value={form.description} onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))} className="h-8 text-sm" placeholder={t("Description succincte...", "وصف مختصر...")} />
+              <Input value={form.description} onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))} className="h-8 text-sm" placeholder={t("Description succincte…", "وصف مختصر…")} />
             </div>
           </div>
           <DialogFooter>

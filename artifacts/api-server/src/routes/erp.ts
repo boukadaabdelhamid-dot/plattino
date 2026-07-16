@@ -3952,6 +3952,7 @@ router.get("/erp/sale-orders", authenticate, requireStaff, requireStore, require
       SELECT
         o.id,
         o.status,
+        o.order_source,
         o.customer_name,
         o.customer_phone,
         o.user_id,
@@ -3967,7 +3968,7 @@ router.get("/erp/sale-orders", authenticate, requireStaff, requireStore, require
       FROM orders o
       LEFT JOIN order_items oi ON oi.order_id = o.id
       WHERE o.store_id = ${storeId}
-        AND o.order_source = 'bon'
+        AND o.order_source IN ('bon', 'pos')
         ${sql.raw(searchClause)}
         ${sql.raw(statusClause)}
       GROUP BY o.id
@@ -4003,7 +4004,7 @@ router.get("/erp/sale-orders/:id", authenticate, requireStaff, requireStore, req
       FROM orders o
       LEFT JOIN order_items oi ON oi.order_id = o.id
       LEFT JOIN products p ON p.id = oi.product_id
-      WHERE o.id = ${id} AND o.store_id = ${storeId} AND o.order_source = 'bon'
+      WHERE o.id = ${id} AND o.store_id = ${storeId} AND o.order_source IN ('bon', 'pos')
       GROUP BY o.id
     `);
     if (!result.rows[0]) { res.status(404).json({ error: "Not found" }); return; }

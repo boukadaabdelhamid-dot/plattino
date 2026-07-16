@@ -28,6 +28,7 @@ type SaleOrderStatus = "pending" | "processing" | "shipped" | "delivered" | "can
 type SaleOrder = {
   id: number;
   status: SaleOrderStatus;
+  order_source: "bon" | "pos";
   customer_name: string;
   customer_phone: string;
   user_id: number | null;
@@ -305,7 +306,8 @@ export default function SaleOrders() {
         <Table>
           <TableHeader className="bg-muted/40">
             <TableRow>
-              <TableHead className="text-xs">{t("N° Bon", "رقم")}</TableHead>
+              <TableHead className="text-xs">{t("N°", "رقم")}</TableHead>
+              <TableHead className="text-xs">{t("Type", "النوع")}</TableHead>
               <TableHead className="text-xs">{t("Client", "العميل")}</TableHead>
               <TableHead className="text-xs">{t("Date", "التاريخ")}</TableHead>
               <TableHead className="text-xs text-right">{t("Montant", "المبلغ")}</TableHead>
@@ -318,21 +320,33 @@ export default function SaleOrders() {
             {isLoading && (
               [...Array(5)].map((_, i) => (
                 <TableRow key={i}>
-                  {[...Array(7)].map((_, j) => (
+                  {[...Array(8)].map((_, j) => (
                     <TableCell key={j}><Skeleton className="h-5 w-full" /></TableCell>
                   ))}
                 </TableRow>
               ))
             )}
             {!isLoading && orders.map((order) => {
+              const isPos = order.order_source === "pos";
               const isDelivered = order.status === "delivered";
               const isCancelled = order.status === "cancelled";
-              const canEdit = !isDelivered && !isCancelled;
+              // POS orders are already finalised — only "Voir" and "Imprimer" make sense
+              const canEdit = !isPos && !isDelivered && !isCancelled;
               const benefice = parseFloat(order.benefice ?? "0");
+              const prefix = isPos ? "VR" : "BV";
               return (
                 <TableRow key={order.id} className="hover:bg-muted/30">
                   <TableCell className="font-medium text-[#1B3057] text-sm">
-                    BV-{String(order.id).padStart(5, "0")}
+                    {prefix}-{String(order.id).padStart(5, "0")}
+                  </TableCell>
+                  <TableCell>
+                    <span className={`inline-flex items-center text-xs font-medium px-2 py-0.5 rounded-full border ${
+                      isPos
+                        ? "bg-blue-50 text-blue-700 border-blue-200"
+                        : "bg-slate-50 text-slate-600 border-slate-200"
+                    }`}>
+                      {isPos ? t("Vente rapide", "بيع سريع") : t("Bon de vente", "بون بيع")}
+                    </span>
                   </TableCell>
                   <TableCell className="text-sm">
                     <div className="font-medium">{order.customer_name}</div>
@@ -387,7 +401,7 @@ export default function SaleOrders() {
                         {canEdit && (
                           <DropdownMenuItem
                             onClick={() => {
-                              if (confirm(t(`Supprimer le bon BV-${String(order.id).padStart(5, "0")} ?`, `حذف البون؟`))) {
+                              if (confirm(t(`Supprimer BV-${String(order.id).padStart(5, "0")} ?`, `حذف البون؟`))) {
                                 deleteMutation.mutate(order.id);
                               }
                             }}
@@ -404,9 +418,9 @@ export default function SaleOrders() {
             })}
             {!isLoading && orders.length === 0 && (
               <TableRow>
-                <TableCell colSpan={7} className="text-center py-12 text-muted-foreground">
+                <TableCell colSpan={8} className="text-center py-12 text-muted-foreground">
                   <Receipt className="h-8 w-8 mx-auto mb-2 opacity-30" />
-                  <p>{t("Aucun bon de vente", "لا توجد بونات بيع")}</p>
+                  <p>{t("Aucune vente enregistrée", "لا توجد مبيعات مسجلة")}</p>
                   <p className="text-xs mt-1">{t('Cliquez sur "+ Nouveau bon" pour commencer', 'انقر على "+ بون جديد" للبدء')}</p>
                 </TableCell>
               </TableRow>

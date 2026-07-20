@@ -762,7 +762,9 @@ function SaleOrderEditor({ open, onOpenChange, editing, onSave, isSaving }: {
                           onChange={(e) => {
                             const raw = e.target.value;
                             const parsed = parseFloat(raw.replace(",", "."));
-                            updateLine(idx, { puInput: raw, pu: isNaN(parsed) || parsed < 0 ? line.pu : parsed });
+                            setLines((prev) => prev.map((l, i) =>
+                              i === idx ? { ...l, puInput: raw, pu: isNaN(parsed) || parsed < 0 ? l.pu : parsed } : l
+                            ));
                           }}
                           className="h-7 w-24 text-right text-sm ml-auto"
                         />

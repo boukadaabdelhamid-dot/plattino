@@ -609,14 +609,14 @@ export default function Pos() {
                     onChange={(e) => {
                       const raw = e.target.value;
                       const parsed = parseFloat(raw.replace(",", "."));
-                      setEditLine({ ...editLine, qtyInput: raw, line: { ...editLine.line, qty: isNaN(parsed) || parsed <= 0 ? editLine.line.qty : parsed } });
+                      setEditLine((prev) => prev ? { ...prev, qtyInput: raw, line: { ...prev.line, qty: isNaN(parsed) || parsed <= 0 ? prev.line.qty : parsed } } : null);
                     }}
                     className="h-9" data-testid="input-edit-qty" />
                 </div>
                 <div>
                   <Label className="text-xs">{t("Qté Bonus", "مجانية")}</Label>
                   <Input type="number" min="0" value={editLine.line.qtyBonus}
-                    onChange={(e) => setEditLine({ ...editLine, line: { ...editLine.line, qtyBonus: Math.max(0, parseInt(e.target.value) || 0) } })}
+                    onChange={(e) => setEditLine((prev) => prev ? { ...prev, line: { ...prev.line, qtyBonus: Math.max(0, parseInt(e.target.value) || 0) } } : null)}
                     className="h-9" />
                 </div>
                 <div>
@@ -625,7 +625,7 @@ export default function Pos() {
                     onChange={(e) => {
                       const raw = e.target.value;
                       const parsed = parseFloat(raw.replace(",", "."));
-                      setEditLine({ ...editLine, puInput: raw, line: { ...editLine.line, pu: isNaN(parsed) || parsed < 0 ? editLine.line.pu : parsed } });
+                      setEditLine((prev) => prev ? { ...prev, puInput: raw, line: { ...prev.line, pu: isNaN(parsed) || parsed < 0 ? prev.line.pu : parsed } } : null);
                     }}
                     className="h-9" data-testid="input-edit-pu" />
                 </div>
@@ -635,7 +635,7 @@ export default function Pos() {
                     onChange={(e) => {
                       const raw = e.target.value;
                       const parsed = parseFloat(raw.replace(",", "."));
-                      setEditLine({ ...editLine, reductionInput: raw, line: { ...editLine.line, reduction: isNaN(parsed) || parsed < 0 ? editLine.line.reduction : parsed } });
+                      setEditLine((prev) => prev ? { ...prev, reductionInput: raw, line: { ...prev.line, reduction: isNaN(parsed) || parsed < 0 ? prev.line.reduction : parsed } } : null);
                     }}
                     className="h-9" />
                 </div>

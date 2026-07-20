@@ -104,6 +104,8 @@ export default function Pos() {
   const [draftsOpen, setDraftsOpen] = useState(false);
 
   const codeRef = useRef<HTMLInputElement>(null);
+  const editLineRef = useRef(editLine);
+  editLineRef.current = editLine;
 
   const subtotal = lines.reduce((s, l) => s + l.pu * l.qty, 0);
   const totalReduction = lines.reduce((s, l) => s + l.reduction, 0);
@@ -158,7 +160,7 @@ export default function Pos() {
     if (found) {
       addProduct(found, qtyToAdd);
       setCode(""); setQtyStr("1");
-      setTimeout(() => codeRef.current?.focus(), 50);
+      setTimeout(() => { if (!editLineRef.current) codeRef.current?.focus(); }, 50);
     } else {
       setPickerOpen(true);
     }

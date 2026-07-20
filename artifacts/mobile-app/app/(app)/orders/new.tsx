@@ -40,7 +40,7 @@ export default function NewOrder() {
   const [paymentMode, setPaymentMode] = useState<"comptant" | "terme">("comptant");
   const [versement, setVersement] = useState("");
 
-  const productsParams = { limit: 500 };
+  const productsParams = { limit: 9999 };
   const { data: productsData, isLoading: productsLoading } = useGetProducts(productsParams, {
     query: { enabled: ready, queryKey: getGetProductsQueryKey(productsParams) },
   });

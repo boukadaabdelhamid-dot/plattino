@@ -98,7 +98,7 @@ export default function Pos() {
   const [preparateur] = useState(user?.name ?? "Admin");
   const [versement, setVersement] = useState(0);
   const [pickerOpen, setPickerOpen] = useState(false);
-  const [editLine, setEditLine] = useState<{ idx: number; line: CartLine; qtyInput: string } | null>(null);
+  const [editLine, setEditLine] = useState<{ idx: number; line: CartLine; qtyInput: string; puInput: string; reductionInput: string } | null>(null);
   const [paymentOpen, setPaymentOpen] = useState(false);
   const [emptyState, setEmptyState] = useState(false);
   const [draftsOpen, setDraftsOpen] = useState(false);
@@ -432,7 +432,7 @@ export default function Pos() {
                         <TableCell className="text-center">
                           <div className="flex gap-1 justify-end">
                             <Button size="icon" variant="ghost" className="h-7 w-7"
-                              onClick={() => setEditLine({ idx, line: { ...l }, qtyInput: String(l.qty) })}
+                              onClick={() => setEditLine({ idx, line: { ...l }, qtyInput: String(l.qty), puInput: String(l.pu), reductionInput: String(l.reduction) })}
                               aria-label={t("Modifier", "تعديل")} data-testid={`button-edit-line-${idx}`}>
                               <Pencil className="h-3.5 w-3.5" />
                             </Button>
@@ -621,14 +621,22 @@ export default function Pos() {
                 </div>
                 <div>
                   <Label className="text-xs">{t(`PU (${currency})`, `ث.و (${currency})`)}</Label>
-                  <Input type="number" step="0.01" value={editLine.line.pu}
-                    onChange={(e) => setEditLine({ ...editLine, line: { ...editLine.line, pu: parseFloat(e.target.value) || 0 } })}
-                    className="h-9" />
+                  <Input inputMode="decimal" value={editLine.puInput}
+                    onChange={(e) => {
+                      const raw = e.target.value;
+                      const parsed = parseFloat(raw.replace(",", "."));
+                      setEditLine({ ...editLine, puInput: raw, line: { ...editLine.line, pu: isNaN(parsed) || parsed < 0 ? editLine.line.pu : parsed } });
+                    }}
+                    className="h-9" data-testid="input-edit-pu" />
                 </div>
                 <div>
                   <Label className="text-xs">{t(`Réduction (${currency})`, `تخفيض (${currency})`)}</Label>
-                  <Input type="number" step="0.01" min="0" value={editLine.line.reduction}
-                    onChange={(e) => setEditLine({ ...editLine, line: { ...editLine.line, reduction: Math.max(0, parseFloat(e.target.value) || 0) } })}
+                  <Input inputMode="decimal" value={editLine.reductionInput}
+                    onChange={(e) => {
+                      const raw = e.target.value;
+                      const parsed = parseFloat(raw.replace(",", "."));
+                      setEditLine({ ...editLine, reductionInput: raw, line: { ...editLine.line, reduction: isNaN(parsed) || parsed < 0 ? editLine.line.reduction : parsed } });
+                    }}
                     className="h-9" />
                 </div>
               </div>

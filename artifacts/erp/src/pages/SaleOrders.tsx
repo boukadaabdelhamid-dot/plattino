@@ -58,6 +58,7 @@ type EditLine = {
   designation: string;
   qty: number;
   pu: number;
+  puInput?: string; // intermediate string while user is typing (supports comma separator)
 };
 
 // ─── API helpers ─────────────────────────────────────────────────────────────
@@ -486,7 +487,7 @@ function SaleOrderEditor({ open, onOpenChange, editing, onSave, isSaving }: {
   const t = (fr: string, ar: string) => lang === "ar" ? ar : fr;
   const currency = lang === "ar" ? "دج" : "DA";
 
-  const { data: productsResp } = useGetProducts({ limit: 500 });
+  const { data: productsResp } = useGetProducts({ limit: 9999 });
   const products: Product[] = useMemo(() => (productsResp?.products ?? []) as Product[], [productsResp]);
 
   const [lines, setLines] = useState<EditLine[]>([]);
@@ -756,11 +757,13 @@ function SaleOrderEditor({ open, onOpenChange, editing, onSave, isSaving }: {
                       </TableCell>
                       <TableCell className="text-right">
                         <Input
-                          type="number"
-                          min={0}
-                          step="0.01"
-                          value={line.pu}
-                          onChange={(e) => updateLine(idx, { pu: parseFloat(e.target.value) || 0 })}
+                          inputMode="decimal"
+                          value={line.puInput ?? String(line.pu)}
+                          onChange={(e) => {
+                            const raw = e.target.value;
+                            const parsed = parseFloat(raw.replace(",", "."));
+                            updateLine(idx, { puInput: raw, pu: isNaN(parsed) || parsed < 0 ? line.pu : parsed });
+                          }}
                           className="h-7 w-24 text-right text-sm ml-auto"
                         />
                       </TableCell>

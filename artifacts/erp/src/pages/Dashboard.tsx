@@ -33,9 +33,12 @@ interface KpiCardProps {
   t: TFn;
   onClick?: () => void;
   variant?: "default" | "positive" | "negative";
+  warning?: number;
+  warningTipFr?: string;
+  warningTipAr?: string;
 }
 
-function KpiCard({ icon: Icon, labelFr, labelAr, value, t, onClick, variant = "default" }: KpiCardProps) {
+function KpiCard({ icon: Icon, labelFr, labelAr, value, t, onClick, variant = "default", warning, warningTipFr, warningTipAr }: KpiCardProps) {
   const valueColor =
     variant === "positive" ? "text-emerald-600" :
     variant === "negative" ? "text-destructive" :
@@ -49,7 +52,18 @@ function KpiCard({ icon: Icon, labelFr, labelAr, value, t, onClick, variant = "d
         <CardTitle className="text-sm font-medium text-muted-foreground">
           {t(labelFr, labelAr)}
         </CardTitle>
-        <Icon className="h-4 w-4 text-muted-foreground/60 shrink-0" />
+        <div className="flex items-center gap-1.5">
+          {warning != null && warning > 0 && (
+            <span
+              title={warningTipFr && warningTipAr ? t(warningTipFr, warningTipAr) : undefined}
+              className="inline-flex items-center gap-0.5 rounded-full bg-orange-100 px-1.5 py-0.5 text-[10px] font-semibold text-orange-700 dark:bg-orange-900/40 dark:text-orange-400 cursor-help"
+            >
+              <AlertCircle className="h-2.5 w-2.5 shrink-0" />
+              {warning}
+            </span>
+          )}
+          <Icon className="h-4 w-4 text-muted-foreground/60 shrink-0" />
+        </div>
       </CardHeader>
       <CardContent>
         <p className={`text-2xl font-bold tracking-tight ${valueColor}`}>{value}</p>
@@ -349,7 +363,7 @@ function SupplierDebtsModal({ open, onClose, rows, loading, error, currency, t }
 
 // ─── Général tab ──────────────────────────────────────────────────
 function GeneralTab({ t, currency, lang, storeId }: { t: TFn; currency: string; lang: string; storeId?: string }) {
-  const { data, loading: isLoading, error: genError } = useFetch<{ stockValue: number }>(buildPath("/api/erp/dashboard/general", storeId));
+  const { data, loading: isLoading, error: genError } = useFetch<{ stockValue: number; productsWithoutCost: number }>(buildPath("/api/erp/dashboard/general", storeId));
   const [stockDetailOpen, setStockDetailOpen] = useState(false);
   const [clientReceivablesOpen, setClientReceivablesOpen] = useState(false);
   const [supplierDebtsOpen, setSupplierDebtsOpen] = useState(false);
@@ -374,7 +388,7 @@ function GeneralTab({ t, currency, lang, storeId }: { t: TFn; currency: string; 
     <>
       <div className="space-y-4">
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-          <KpiCard icon={Package} labelFr="Stock courant" labelAr="قيمة المخزون" value={fmtNum(data.stockValue, currency)} t={t} onClick={() => setStockDetailOpen(true)} />
+          <KpiCard icon={Package} labelFr="Stock courant" labelAr="قيمة المخزون" value={fmtNum(data.stockValue, currency)} t={t} onClick={() => setStockDetailOpen(true)} warning={data.productsWithoutCost} warningTipFr={`${data.productsWithoutCost} produit(s) sans prix de revient — la valeur du stock peut être sous-estimée`} warningTipAr={`${data.productsWithoutCost} منتج بدون سعر تكلفة — قد تكون قيمة المخزون أقل من الواقع`} />
           <KpiCard icon={Wallet} labelFr="Trésorerie totale" labelAr="إجمالي الصناديق" value={caissesLoading ? "…" : fmtNum(caissesData?.total, currency)} t={t} />
           <KpiCard icon={Users} labelFr="Créances clients" labelAr="ذمم العملاء" value={clientLoading ? "…" : clientError ? "—" : fmtNum(clientTotal, currency)} t={t} onClick={() => setClientReceivablesOpen(true)} />
           <KpiCard icon={Truck} labelFr="Dettes fournisseurs" labelAr="ديون الموردين" value={supplierLoading ? "…" : supplierError ? "—" : fmtNum(supplierTotal, currency)} t={t} onClick={() => setSupplierDebtsOpen(true)} />

@@ -289,7 +289,15 @@ router.get("/erp/dashboard/general", authenticate, requireStaff, requireStore, r
       })
       .from(schema.productsTable)
       .where(storeCondition);
-    res.json({ stockValue: Number(stockValue) });
+    // Count products with stock > 0 but costPrice NULL or 0 — used for the warning badge
+    const noCostCondition = sid !== null
+      ? and(eq(schema.productsTable.storeId, sid), gt(schema.productsTable.stock, 0), sql`(${schema.productsTable.costPrice} IS NULL OR CAST(${schema.productsTable.costPrice} AS numeric) = 0)`)
+      : and(gt(schema.productsTable.stock, 0), sql`(${schema.productsTable.costPrice} IS NULL OR CAST(${schema.productsTable.costPrice} AS numeric) = 0)`);
+    const [{ productsWithoutCost }] = await db
+      .select({ productsWithoutCost: sql<number>`COUNT(*)` })
+      .from(schema.productsTable)
+      .where(noCostCondition);
+    res.json({ stockValue: Number(stockValue), productsWithoutCost: Number(productsWithoutCost) });
   } catch (err) { req.log.error(err); res.status(500).json({ error: "Internal server error" }); }
 });
 
@@ -330,21 +338,17 @@ router.get("/erp/dashboard/client-receivables", authenticate, requireStaff, requ
     // number of stores that customer has a profile in — mirrors the same dedup
     // already applied to the supplier-debts widget below.
     const result = await db.execute(sql`
-      SELECT id, name, balance FROM (
-        SELECT DISTINCT ON (lower(name))
-               id, name, balance
-        FROM (
-          SELECT DISTINCT ON (u.id)
-                 u.id, u.name AS name,
-                 ROUND(CAST(cp.current_balance AS numeric), 2) AS balance
-          FROM customer_profiles cp
-          JOIN users u ON cp.user_id = u.id
-          WHERE CAST(cp.current_balance AS numeric) > 0
-          ${storeFilter}
-          ORDER BY u.id, cp.id
-        ) linked_dedup
-        ORDER BY lower(name), balance DESC
-      ) name_dedup
+      SELECT id, name, balance
+      FROM (
+        SELECT DISTINCT ON (u.id)
+               u.id, u.name AS name,
+               ROUND(CAST(cp.current_balance AS numeric), 2) AS balance
+        FROM customer_profiles cp
+        JOIN users u ON cp.user_id = u.id
+        WHERE CAST(cp.current_balance AS numeric) > 0
+        ${storeFilter}
+        ORDER BY u.id, cp.id
+      ) linked_dedup
       ORDER BY balance DESC
     `);
     res.json(result.rows);

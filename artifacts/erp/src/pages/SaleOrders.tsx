@@ -498,6 +498,7 @@ function SaleOrderEditor({ open, onOpenChange, editing, onSave, isSaving }: {
   const [codeInput, setCodeInput] = useState("");
   const [paymentMethod, setPaymentMethod] = useState<"comptant" | "a_terme">("comptant");
   const [pendingProduct, setPendingProduct] = useState<Product | null>(null);
+  const [pendingEditIdx, setPendingEditIdx] = useState<number | null>(null);
   const clientPickerRef = React.useRef<HTMLDivElement>(null);
 
   const { data: _custRes } = useGetErpCustomers(
@@ -749,37 +750,24 @@ function SaleOrderEditor({ open, onOpenChange, editing, onSave, isSaving }: {
                 </TableHeader>
                 <TableBody>
                   {lines.map((line, idx) => (
-                    <TableRow key={line.productId}>
+                    <TableRow
+                      key={line.productId}
+                      className="cursor-pointer hover:bg-[#1B3057]/5"
+                      onClick={() => {
+                        const prod = products.find((p) => p.id === line.productId) ?? null;
+                        setPendingEditIdx(idx);
+                        setPendingProduct(prod ?? { id: line.productId, nameEn: line.designation, nameAr: line.designation, price: String(line.pu) } as Product);
+                      }}
+                    >
                       <TableCell className="text-sm font-medium">{line.designation}</TableCell>
-                      <TableCell className="text-center">
-                        <Input
-                          type="number"
-                          min={1}
-                          value={line.qty}
-                          onChange={(e) => updateLine(idx, { qty: Math.max(1, parseInt(e.target.value) || 1) })}
-                          className="h-7 w-16 text-center text-sm mx-auto"
-                        />
-                      </TableCell>
-                      <TableCell className="text-right">
-                        <Input
-                          inputMode="decimal"
-                          value={line.puInput ?? String(line.pu)}
-                          onChange={(e) => {
-                            const raw = e.target.value;
-                            const parsed = parseFloat(raw.replace(",", "."));
-                            setLines((prev) => prev.map((l, i) =>
-                              i === idx ? { ...l, puInput: raw, pu: isNaN(parsed) || parsed < 0 ? l.pu : parsed } : l
-                            ));
-                          }}
-                          className="h-7 w-24 text-right text-sm ml-auto"
-                        />
-                      </TableCell>
+                      <TableCell className="text-center text-sm">{line.qty}</TableCell>
+                      <TableCell className="text-right text-sm">{line.pu.toFixed(2)}</TableCell>
                       <TableCell className="text-right text-sm font-semibold">
                         {(line.pu * line.qty).toFixed(2)} {currency}
                       </TableCell>
                       <TableCell>
                         <Button size="icon" variant="ghost" className="h-7 w-7 text-red-500 hover:text-red-700"
-                          onClick={() => removeLine(idx)}>
+                          onClick={(e) => { e.stopPropagation(); removeLine(idx); }}>
                           <Trash2 className="h-3.5 w-3.5" />
                         </Button>
                       </TableCell>
@@ -832,11 +820,19 @@ function SaleOrderEditor({ open, onOpenChange, editing, onSave, isSaving }: {
 
       <AddLineBvDialog
         product={pendingProduct}
+        initialQty={pendingEditIdx !== null ? lines[pendingEditIdx]?.qty : undefined}
+        initialPu={pendingEditIdx !== null ? lines[pendingEditIdx]?.pu : undefined}
+        isEdit={pendingEditIdx !== null}
         onConfirm={({ qty, pu }) => {
-          if (pendingProduct) addProductWithValues(pendingProduct, { qty, pu });
+          if (pendingEditIdx !== null) {
+            updateLine(pendingEditIdx, { qty, pu });
+          } else if (pendingProduct) {
+            addProductWithValues(pendingProduct, { qty, pu });
+          }
           setPendingProduct(null);
+          setPendingEditIdx(null);
         }}
-        onCancel={() => setPendingProduct(null)}
+        onCancel={() => { setPendingProduct(null); setPendingEditIdx(null); }}
       />
     </Dialog>
   );
@@ -844,11 +840,14 @@ function SaleOrderEditor({ open, onOpenChange, editing, onSave, isSaving }: {
 
 // ─── Add Line BV Dialog ───────────────────────────────────────────────────────
 function AddLineBvDialog({
-  product, onConfirm, onCancel,
+  product, onConfirm, onCancel, initialQty, initialPu, isEdit,
 }: {
   product: Product | null;
   onConfirm: (vals: { qty: number; pu: number }) => void;
   onCancel: () => void;
+  initialQty?: number;
+  initialPu?: number;
+  isEdit?: boolean;
 }) {
   const { lang } = useLang();
   const t = (fr: string, ar: string) => lang === "ar" ? ar : fr;
@@ -859,10 +858,10 @@ function AddLineBvDialog({
 
   React.useEffect(() => {
     if (!product) return;
-    setQty("1");
-    setPu(product.price ?? "0");
+    setQty(initialQty !== undefined ? String(initialQty) : "1");
+    setPu(initialPu !== undefined ? String(initialPu) : (product.price ?? "0"));
     setTimeout(() => { qtyRef.current?.focus(); qtyRef.current?.select(); }, 50);
-  }, [product]);
+  }, [product, initialQty, initialPu]);
 
   function handleConfirm() {
     const qtyN = Math.max(1, parseFloat(qty) || 1);
@@ -875,7 +874,7 @@ function AddLineBvDialog({
       <DialogContent className="max-w-sm" onPointerDownOutside={(e) => e.preventDefault()}>
         <DialogHeader>
           <DialogTitle className="text-base">
-            {t("Ajouter l'article", "إضافة المنتج")}
+            {isEdit ? t("Modifier l'article", "تعديل المنتج") : t("Ajouter l'article", "إضافة المنتج")}
           </DialogTitle>
         </DialogHeader>
 
@@ -923,7 +922,7 @@ function AddLineBvDialog({
           </Button>
           <Button onClick={handleConfirm} className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white">
             <Plus className="h-4 w-4 mr-1.5" />
-            {t("Ajouter", "إضافة")}
+            {isEdit ? t("Modifier", "تعديل") : t("Ajouter", "إضافة")}
           </Button>
         </DialogFooter>
       </DialogContent>

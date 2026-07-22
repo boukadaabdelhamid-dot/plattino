@@ -729,6 +729,7 @@ function PurchaseEditor({
   }
 
   const isExisting = !!editing;
+  const isLocked = editing?.status === "received" || editing?.status === "cancelled";
   const isReceived = editing?.status === "received";
   const hasCharges = isExisting && lines.some(l => l.charges > 0);
   const totalChargesAmt = lines.reduce((s, l) => s + l.charges, 0);
@@ -824,25 +825,25 @@ function PurchaseEditor({
                 <div className="flex gap-2">
                   <button
                     type="button"
-                    onClick={() => { if (!isExisting) setPaymentMethod("comptant"); }}
-                    disabled={isExisting}
+                    onClick={() => { if (!isLocked) setPaymentMethod("comptant"); }}
+                    disabled={isLocked}
                     className={`flex-1 h-9 rounded-md border text-sm font-semibold transition-colors
                       ${paymentMethod === "comptant"
                         ? "bg-emerald-600 text-white border-emerald-600"
                         : "bg-white text-slate-600 border-slate-300 hover:border-emerald-400 hover:text-emerald-700"}
-                      ${isExisting ? "opacity-60 cursor-not-allowed" : "cursor-pointer"}`}
+                      ${isLocked ? "opacity-60 cursor-not-allowed" : "cursor-pointer"}`}
                   >
                     ✓ {t("Comptant", "نقدي")}
                   </button>
                   <button
                     type="button"
-                    onClick={() => { if (!isExisting) setPaymentMethod("a_terme"); }}
-                    disabled={isExisting}
+                    onClick={() => { if (!isLocked) setPaymentMethod("a_terme"); }}
+                    disabled={isLocked}
                     className={`flex-1 h-9 rounded-md border text-sm font-semibold transition-colors
                       ${paymentMethod === "a_terme"
                         ? "bg-amber-500 text-white border-amber-500"
                         : "bg-white text-slate-600 border-slate-300 hover:border-amber-400 hover:text-amber-700"}
-                      ${isExisting ? "opacity-60 cursor-not-allowed" : "cursor-pointer"}`}
+                      ${isLocked ? "opacity-60 cursor-not-allowed" : "cursor-pointer"}`}
                   >
                     ⏱ {t("À terme", "آجل")}
                   </button>

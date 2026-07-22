@@ -52,6 +52,7 @@ import ProductHistorySheet from "@/components/ProductHistorySheet";
 import CopyToStoresModal from "@/components/CopyToStoresModal";
 import { SearchableSelect } from "@/components/ui/searchable-select";
 import ImportExcelModal from "@/components/ImportExcelModal";
+import { usePermissions } from "@/hooks/use-permissions";
 
 // ── Store identity ──────────────────────────────────────────────────
 import { getStoreName } from "@/lib/store-settings";
@@ -249,6 +250,8 @@ export default function Products() {
   const qc = useQueryClient();
   const { toast } = useToast();
   const { lang } = useLang();
+  const { can } = usePermissions();
+  const canViewPurchasePrice = can("products", "view_purchase_price");
   const t = (fr: string, ar: string) => lang === "ar" ? ar : fr;
   const currency = lang === "ar" ? "دج" : "DA";
   const [page, setPage] = useState(1);
@@ -760,7 +763,7 @@ export default function Products() {
                 {t("Afficher les colonnes", "إظهار الأعمدة")}
               </p>
               <div className="space-y-0.5">
-                {ALL_COLUMNS.map((c) => (
+                {ALL_COLUMNS.filter((c) => c.key !== "costPrice" || canViewPurchasePrice).map((c) => (
                   <label
                     key={c.key}
                     className="flex items-center gap-2 px-2 py-1.5 rounded hover:bg-muted/50 cursor-pointer select-none"
@@ -778,7 +781,7 @@ export default function Products() {
               <div className="border-t mt-2 pt-2 flex gap-1">
                 <button
                   className="flex-1 h-7 text-xs rounded hover:bg-muted/50 transition-colors"
-                  onClick={() => { const s = new Set(ALL_COLUMNS.map(c => c.key) as ColKey[]); setVisibleCols(s); saveVisibleCols(s); }}
+                  onClick={() => { const s = new Set(ALL_COLUMNS.filter(c => c.key !== "costPrice" || canViewPurchasePrice).map(c => c.key) as ColKey[]); setVisibleCols(s); saveVisibleCols(s); }}
                 >
                   {t("Tout afficher", "إظهار الكل")}
                 </button>
@@ -830,7 +833,7 @@ export default function Products() {
                     {col("priceGros")    && <TableHead className="text-xs font-semibold uppercase text-muted-foreground text-right w-24">PU Gros</TableHead>}
                     {col("priceSemiGros")&& <TableHead className="text-xs font-semibold uppercase text-muted-foreground text-right w-24">PU S.Gros</TableHead>}
                     {col("priceMin")     && <TableHead className="text-xs font-semibold uppercase text-muted-foreground text-right w-24">Prix Min</TableHead>}
-                    {col("costPrice")    && <TableHead className="text-xs font-semibold uppercase text-muted-foreground text-right w-28">Coût</TableHead>}
+                    {col("costPrice") && canViewPurchasePrice && <TableHead className="text-xs font-semibold uppercase text-muted-foreground text-right w-28">Coût</TableHead>}
                     {col("stock")        && <TableHead className="text-xs font-semibold uppercase text-muted-foreground w-20">Stock</TableHead>}
                     {col("vitrine")      && <TableHead className="text-xs font-semibold uppercase text-muted-foreground w-20 text-center">Vitrine</TableHead>}
                     {col("actions")      && <TableHead className="w-20" />}
@@ -864,7 +867,7 @@ export default function Products() {
                     {col("priceGros")    && <TableHead className="w-24 px-2 py-1"><div className="flex items-center gap-1"><span className="text-[9px] font-medium text-muted-foreground/60 shrink-0">abc</span><input type="text" className="min-w-0 flex-1 bg-transparent border-0 border-b border-muted-foreground/25 rounded-none text-[11px] px-0 pb-px text-right placeholder:text-muted-foreground/40 focus:outline-none focus:border-primary/60 transition-colors" placeholder="Filtre …" value={columnFilters.priceGros} onChange={(e) => setColumnFilter("priceGros", e.target.value)} /></div></TableHead>}
                     {col("priceSemiGros")&& <TableHead className="w-24 px-2 py-1"><div className="flex items-center gap-1"><span className="text-[9px] font-medium text-muted-foreground/60 shrink-0">abc</span><input type="text" className="min-w-0 flex-1 bg-transparent border-0 border-b border-muted-foreground/25 rounded-none text-[11px] px-0 pb-px text-right placeholder:text-muted-foreground/40 focus:outline-none focus:border-primary/60 transition-colors" placeholder="Filtre …" value={columnFilters.priceSemiGros} onChange={(e) => setColumnFilter("priceSemiGros", e.target.value)} /></div></TableHead>}
                     {col("priceMin")     && <TableHead className="w-24 px-2 py-1"><div className="flex items-center gap-1"><span className="text-[9px] font-medium text-muted-foreground/60 shrink-0">abc</span><input type="text" className="min-w-0 flex-1 bg-transparent border-0 border-b border-muted-foreground/25 rounded-none text-[11px] px-0 pb-px text-right placeholder:text-muted-foreground/40 focus:outline-none focus:border-primary/60 transition-colors" placeholder="Filtre …" value={columnFilters.priceMin} onChange={(e) => setColumnFilter("priceMin", e.target.value)} /></div></TableHead>}
-                    {col("costPrice")    && <TableHead className="w-28 px-2 py-1"><div className="flex items-center gap-1"><span className="text-[9px] font-medium text-muted-foreground/60 shrink-0">abc</span><input type="text" className="min-w-0 flex-1 bg-transparent border-0 border-b border-muted-foreground/25 rounded-none text-[11px] px-0 pb-px text-right placeholder:text-muted-foreground/40 focus:outline-none focus:border-primary/60 transition-colors" placeholder="Filtre …" value={columnFilters.costPrice} onChange={(e) => setColumnFilter("costPrice", e.target.value)} /></div></TableHead>}
+                    {col("costPrice") && canViewPurchasePrice && <TableHead className="w-28 px-2 py-1"><div className="flex items-center gap-1"><span className="text-[9px] font-medium text-muted-foreground/60 shrink-0">abc</span><input type="text" className="min-w-0 flex-1 bg-transparent border-0 border-b border-muted-foreground/25 rounded-none text-[11px] px-0 pb-px text-right placeholder:text-muted-foreground/40 focus:outline-none focus:border-primary/60 transition-colors" placeholder="Filtre …" value={columnFilters.costPrice} onChange={(e) => setColumnFilter("costPrice", e.target.value)} /></div></TableHead>}
                     {col("stock")        && <TableHead className="w-20 px-2 py-1"><div className="flex items-center gap-1"><span className="text-[9px] font-medium text-muted-foreground/60 shrink-0">abc</span><input type="text" className="min-w-0 flex-1 bg-transparent border-0 border-b border-muted-foreground/25 rounded-none text-[11px] px-0 pb-px placeholder:text-muted-foreground/40 focus:outline-none focus:border-primary/60 transition-colors" placeholder="Filtre …" value={columnFilters.stock} onChange={(e) => setColumnFilter("stock", e.target.value)} /></div></TableHead>}
                     {col("vitrine")      && <TableHead className="w-20 px-2 py-1" />}
                     {col("actions")      && <TableHead className="w-20 px-2 py-1" />}
@@ -985,7 +988,7 @@ export default function Products() {
                           {p.priceMin ? `${parseFloat(p.priceMin).toLocaleString("fr-DZ", { minimumFractionDigits: 2 })} ${currency}` : "—"}
                         </TableCell>
                       )}
-                      {col("costPrice")    && (
+                      {col("costPrice") && canViewPurchasePrice && (
                         <TableCell className="text-right text-sm text-muted-foreground">
                           {p.costPrice ? `${parseFloat(p.costPrice).toLocaleString("fr-DZ", { minimumFractionDigits: 2 })} ${currency}` : "—"}
                         </TableCell>
@@ -1494,12 +1497,13 @@ export default function Products() {
                 <h3 className="text-sm font-semibold flex items-center gap-2 mb-4 text-[#1B3057]">
                   <DollarSign className="h-4 w-4" /> {t("Gestion des prix", "الأسعار")}
                 </h3>
-                {form.costPrice && form.price && parseFloat(form.price) < parseFloat(form.costPrice) && (
+                {canViewPurchasePrice && form.costPrice && form.price && parseFloat(form.price) < parseFloat(form.costPrice) && (
                   <div className="mb-4 flex items-center gap-2 bg-red-50 border border-red-200 text-red-700 rounded-md px-3 py-2 text-xs">
                     ⚠️ {t("Attention: Certains prix sont inférieurs au coût !", "تحذير: بعض الأسعار أقل من التكلفة!")}
                   </div>
                 )}
                 <div className="grid grid-cols-2 gap-4">
+                  {canViewPurchasePrice && (
                   <div className="space-y-1">
                     <Label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
                       {t("Coût (CUMP)", "التكلفة (م.م.م)")}
@@ -1517,6 +1521,7 @@ export default function Products() {
                       {t("Mis à jour automatiquement à chaque réception d'un bon d'achat.", "يُحدَّث تلقائياً عند استلام كل طلبية شراء (CUMP).")}
                     </p>
                   </div>
+                  )}
                   <div className="space-y-1">
                     <Label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">{t("PU Détail", "سعر البيع")} *</Label>
                     <div className="flex items-center gap-1">
@@ -1529,7 +1534,7 @@ export default function Products() {
                       />
                       <span className="text-xs font-mono text-muted-foreground whitespace-nowrap">DZD</span>
                     </div>
-                    {form.costPrice && form.price && (
+                    {canViewPurchasePrice && form.costPrice && form.price && (
                       <p className="text-xs text-muted-foreground">
                         Marge: {(((parseFloat(form.price) - parseFloat(form.costPrice)) / parseFloat(form.costPrice)) * 100).toFixed(1)}%
                       </p>

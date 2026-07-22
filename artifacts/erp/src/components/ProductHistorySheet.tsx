@@ -13,6 +13,7 @@ import {
   AlertCircle, Package2, ArrowLeftRight, RotateCcw,
 } from "lucide-react";
 import { useLang } from "@/hooks/use-lang";
+import { usePermissions } from "@/hooks/use-permissions";
 import {
   useGetProductHistory,
   type ProductHistoryPurchase,
@@ -67,7 +68,7 @@ function Chip({ text, color }: { text: string; color: string }) {
 
 // ── row components ─────────────────────────────────────────────────────────────
 
-function PurchaseRow({ p, lang }: { p: ProductHistoryPurchase; lang: string }) {
+function PurchaseRow({ p, lang, canViewPurchasePrice }: { p: ProductHistoryPurchase; lang: string; canViewPurchasePrice: boolean }) {
   const t = (fr: string, ar: string) => (lang === "ar" ? ar : fr);
   const storeName = lang === "ar" ? (p.storeNameAr ?? p.storeNameEn) : (p.storeNameEn ?? p.storeNameAr);
   const statusLabel = p.status === "received" ? t("Reçu", "مستلم") : t("En attente", "معلق");
@@ -90,7 +91,7 @@ function PurchaseRow({ p, lang }: { p: ProductHistoryPurchase; lang: string }) {
       </div>
       <div className="text-right shrink-0">
         <p className="text-sm font-semibold text-emerald-600">+{p.quantity}</p>
-        <p className="text-xs text-muted-foreground">{fmtAmt(Number(p.unitCost))} DA</p>
+        {canViewPurchasePrice && <p className="text-xs text-muted-foreground">{fmtAmt(Number(p.unitCost))} DA</p>}
       </div>
     </div>
   );
@@ -159,7 +160,7 @@ function MovementRow({ m, lang }: { m: ProductHistoryMovementEntry; lang: string
   );
 }
 
-function SupplierReturnRow({ r, lang }: { r: ProductHistorySupplierReturn; lang: string }) {
+function SupplierReturnRow({ r, lang, canViewPurchasePrice }: { r: ProductHistorySupplierReturn; lang: string; canViewPurchasePrice: boolean }) {
   const t = (fr: string, ar: string) => (lang === "ar" ? ar : fr);
   return (
     <div className="flex items-start gap-3 py-3 border-b last:border-0">
@@ -183,7 +184,7 @@ function SupplierReturnRow({ r, lang }: { r: ProductHistorySupplierReturn; lang:
       </div>
       <div className="text-right shrink-0">
         <p className="text-sm font-semibold text-rose-600">-{r.quantity}</p>
-        <p className="text-xs text-muted-foreground">{fmtAmt(Number(r.unitCost))} DA</p>
+        {canViewPurchasePrice && <p className="text-xs text-muted-foreground">{fmtAmt(Number(r.unitCost))} DA</p>}
       </div>
     </div>
   );
@@ -292,6 +293,8 @@ interface Props {
 
 export default function ProductHistorySheet({ product, onClose }: Props) {
   const { lang } = useLang();
+  const { can } = usePermissions();
+  const canViewPurchasePrice = can("products", "view_purchase_price");
   const t = (fr: string, ar: string) => (lang === "ar" ? ar : fr);
   const [, navigate] = useLocation();
 
@@ -430,7 +433,7 @@ export default function ProductHistorySheet({ product, onClose }: Props) {
                   ? <EmptyState label={t("Aucune activité enregistrée", "لا توجد أنشطة مسجّلة")} />
                   : all.map((row) => {
                       if (row._type === "purchase")
-                        return <PurchaseRow key={`p-${(row as ProductHistoryPurchase).purchaseOrderId}`} p={row as ProductHistoryPurchase} lang={lang} />;
+                        return <PurchaseRow key={`p-${(row as ProductHistoryPurchase).purchaseOrderId}`} p={row as ProductHistoryPurchase} lang={lang} canViewPurchasePrice={canViewPurchasePrice} />;
                       if (row._type === "sale")
                         return <SaleRow key={`s-${(row as ProductHistorySale).orderId}`} s={row as ProductHistorySale} lang={lang} />;
                       if (row._type === "movement")
@@ -438,7 +441,7 @@ export default function ProductHistorySheet({ product, onClose }: Props) {
                       if (row._type === "return")
                         return <ReturnRow key={`ret-${(row as ProductHistoryReturn).id}`} r={row as ProductHistoryReturn} lang={lang} onOrderClick={handleOrderClick} />;
                       if (row._type === "supplierReturn")
-                        return <SupplierReturnRow key={`sret-${(row as ProductHistorySupplierReturn).id}`} r={row as ProductHistorySupplierReturn} lang={lang} />;
+                        return <SupplierReturnRow key={`sret-${(row as ProductHistorySupplierReturn).id}`} r={row as ProductHistorySupplierReturn} lang={lang} canViewPurchasePrice={canViewPurchasePrice} />;
                       return <TransferRow key={(row as ProductHistoryTransferEntry).id} tr={row as ProductHistoryTransferEntry} lang={lang} />;
                     })
                 }
@@ -447,7 +450,7 @@ export default function ProductHistorySheet({ product, onClose }: Props) {
               <TabsContent value="purchases" className="flex-1 overflow-y-auto px-5 mt-3 data-[state=inactive]:hidden">
                 {data.purchases.length === 0
                   ? <EmptyState label={t("Aucun achat", "لا توجد مشتريات")} />
-                  : data.purchases.map((p) => <PurchaseRow key={p.purchaseOrderId} p={p} lang={lang} />)
+                  : data.purchases.map((p) => <PurchaseRow key={p.purchaseOrderId} p={p} lang={lang} canViewPurchasePrice={canViewPurchasePrice} />)
                 }
               </TabsContent>
 
@@ -479,7 +482,7 @@ export default function ProductHistorySheet({ product, onClose }: Props) {
               <TabsContent value="avoirs" className="flex-1 overflow-y-auto px-5 mt-3 data-[state=inactive]:hidden">
                 {(data.supplierReturns ?? []).length === 0
                   ? <EmptyState label={t("Aucun avoir fournisseur", "لا توجد أفوار موردين")} />
-                  : (data.supplierReturns ?? []).map((r) => <SupplierReturnRow key={r.id} r={r} lang={lang} />)
+                  : (data.supplierReturns ?? []).map((r) => <SupplierReturnRow key={r.id} r={r} lang={lang} canViewPurchasePrice={canViewPurchasePrice} />)
                 }
               </TabsContent>
             </>

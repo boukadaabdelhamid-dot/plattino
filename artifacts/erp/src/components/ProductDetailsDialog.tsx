@@ -15,6 +15,7 @@ import {
   History, ArrowLeftRight, ArrowDownToLine, ArrowUpFromLine, SlidersHorizontal,
 } from "lucide-react";
 import { useLang } from "@/hooks/use-lang";
+import { usePermissions } from "@/hooks/use-permissions";
 
 const API_BASE = (import.meta.env.VITE_API_URL as string | undefined) ?? "";
 
@@ -238,6 +239,8 @@ interface Props {
 export default function ProductDetailsDialog({ product, onClose }: Props) {
   const open = !!product;
   const { lang } = useLang();
+  const { can } = usePermissions();
+  const canViewPurchasePrice = can("products", "view_purchase_price");
   const t: Translator = (fr, ar) => lang === "ar" ? ar : fr;
   const fmt = makeFmt(lang);
   const fmtDateTime = makeFmtDateTime(lang);
@@ -340,7 +343,7 @@ export default function ProductDetailsDialog({ product, onClose }: Props) {
                   <InfoRow label={t("Marque", "العلامة التجارية")}         value={product.brand ?? "—"} />
                   <InfoRow label={t("Stock actuel", "المخزون الحالي")}     value={String(product.stock ?? 0)} highlight />
                   <InfoRow label={t("Prix de vente", "سعر البيع")}         value={`${num(product.price)} ${t("DA", "دج")}`} highlight />
-                  <InfoRow label={t("Prix de revient", "سعر التكلفة")}     value={product.costPrice ? `${num(product.costPrice)} ${t("DA", "دج")}` : "—"} />
+                  {canViewPurchasePrice && <InfoRow label={t("Prix de revient", "سعر التكلفة")} value={product.costPrice ? `${num(product.costPrice)} ${t("DA", "دج")}` : "—"} />}
                   <InfoRow label={t("Prix en gros", "سعر الجملة")}         value={product.priceGros ? `${num(product.priceGros)} ${t("DA", "دج")}` : "—"} />
                 </div>
 
@@ -419,7 +422,7 @@ export default function ProductDetailsDialog({ product, onClose }: Props) {
                     <TableHead className="text-xs font-semibold uppercase">{t("Date achat", "تاريخ الشراء")}</TableHead>
                     <TableHead className="text-xs font-semibold uppercase">{t("Fournisseur", "المورد")}</TableHead>
                     <TableHead className="text-xs font-semibold uppercase">{t("Qté", "الكمية")}</TableHead>
-                    <TableHead className="text-xs font-semibold uppercase">{t("Prix achat", "سعر الشراء")}</TableHead>
+                    {canViewPurchasePrice && <TableHead className="text-xs font-semibold uppercase">{t("Prix achat", "سعر الشراء")}</TableHead>}
                     <TableHead className="text-xs font-semibold uppercase">{t("Statut", "الحالة")}</TableHead>
                   </TableRow>
                 </TableHeader>
@@ -435,7 +438,7 @@ export default function ProductDetailsDialog({ product, onClose }: Props) {
                       <TableCell>{fmt(r.createdAt)}</TableCell>
                       <TableCell>{r.supplierName ?? "—"}</TableCell>
                       <TableCell className="font-semibold">{r.quantity}</TableCell>
-                      <TableCell>{num(r.unitCost)} {t("DA", "دج")}</TableCell>
+                      {canViewPurchasePrice && <TableCell>{num(r.unitCost)} {t("DA", "دج")}</TableCell>}
                       <TableCell><StatusBadge status={r.status} t={t} /></TableCell>
                     </TableRow>
                   ))}

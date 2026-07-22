@@ -14,7 +14,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import {
   Receipt, Plus, MoreHorizontal, Pencil, Eye, Lock, Trash2, Printer,
-  ChevronsUpDown, Check, User, TrendingUp,
+  ChevronsUpDown, Check, User, TrendingUp, Search,
 } from "lucide-react";
 import { format } from "date-fns";
 import { ProductPickerDialog } from "@/components/pos/ProductPickerDialog";
@@ -499,6 +499,7 @@ function SaleOrderEditor({ open, onOpenChange, editing, onSave, isSaving }: {
   const [paymentMethod, setPaymentMethod] = useState<"comptant" | "a_terme">("comptant");
   const [pendingProduct, setPendingProduct] = useState<Product | null>(null);
   const [pendingEditIdx, setPendingEditIdx] = useState<number | null>(null);
+  const [lineSearch, setLineSearch] = useState("");
   const clientPickerRef = React.useRef<HTMLDivElement>(null);
 
   const { data: _custRes } = useGetErpCustomers(
@@ -534,6 +535,7 @@ function SaleOrderEditor({ open, onOpenChange, editing, onSave, isSaving }: {
       setPaymentMethod("comptant");
     }
     setClientComboOpen(false);
+    setLineSearch("");
   }, [open, editing]);
 
   // Close customer picker on outside click
@@ -736,6 +738,18 @@ function SaleOrderEditor({ open, onOpenChange, editing, onSave, isSaving }: {
           </div>
 
           {/* Lines table */}
+          {lines.length > 0 && (
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground pointer-events-none" />
+              <input
+                type="text"
+                value={lineSearch}
+                onChange={(e) => setLineSearch(e.target.value)}
+                placeholder={t("Rechercher dans les lignes…", "بحث في السطور…")}
+                className="w-full pl-8 pr-3 py-1.5 text-sm border rounded bg-background focus:outline-none focus:ring-1 focus:ring-[#1B3057]/40"
+              />
+            </div>
+          )}
           {lines.length > 0 ? (
             <div className="border rounded overflow-hidden">
               <Table>
@@ -749,7 +763,9 @@ function SaleOrderEditor({ open, onOpenChange, editing, onSave, isSaving }: {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {lines.map((line, idx) => (
+                  {lines.filter((line) => !lineSearch.trim() || line.designation.toLowerCase().includes(lineSearch.trim().toLowerCase())).map((line, _filteredIdx) => {
+                    const idx = lines.indexOf(line);
+                    return (
                     <TableRow
                       key={line.productId}
                       className="cursor-pointer hover:bg-[#1B3057]/5"
@@ -772,7 +788,7 @@ function SaleOrderEditor({ open, onOpenChange, editing, onSave, isSaving }: {
                         </Button>
                       </TableCell>
                     </TableRow>
-                  ))}
+                  ); })}
                   <TableRow className="bg-[#1B3057]/5">
                     <TableCell colSpan={3} className="text-right font-bold text-sm">
                       {t("Total", "المجموع الكلي")}

@@ -497,6 +497,7 @@ function SaleOrderEditor({ open, onOpenChange, editing, onSave, isSaving }: {
   const [pickerOpen, setPickerOpen] = useState(false);
   const [codeInput, setCodeInput] = useState("");
   const [paymentMethod, setPaymentMethod] = useState<"comptant" | "a_terme">("comptant");
+  const [pendingProduct, setPendingProduct] = useState<Product | null>(null);
   const clientPickerRef = React.useRef<HTMLDivElement>(null);
 
   const { data: _custRes } = useGetErpCustomers(
@@ -547,32 +548,36 @@ function SaleOrderEditor({ open, onOpenChange, editing, onSave, isSaving }: {
     return () => document.removeEventListener("mousedown", handler);
   }, [clientComboOpen]);
 
-  const addProduct = (p: Product) => {
+  const addProductWithValues = (p: Product, { qty, pu }: { qty: number; pu: number }) => {
     setLines((prev) => {
       const idx = prev.findIndex((l) => l.productId === p.id);
       if (idx >= 0) {
         const next = [...prev];
-        next[idx] = { ...next[idx], qty: next[idx].qty + 1 };
+        next[idx] = { ...next[idx], qty: next[idx].qty + qty, pu };
         return next;
       }
       return [...prev, {
         productId: p.id,
         designation: (lang === "ar" ? (p.nameAr || p.nameEn) : (p.nameEn || p.nameAr) || `#${p.id}`).toUpperCase(),
-        qty: 1,
-        pu: parseFloat(p.price ?? "0"),
+        qty,
+        pu,
       }];
     });
-    setPickerOpen(false);
     setCodeInput("");
+  };
+
+  const selectProduct = (p: Product) => {
+    setPickerOpen(false);
+    setPendingProduct(p);
   };
 
   const tryAddByCode = (raw: string) => {
     const tok = raw.trim().toLowerCase();
     if (!tok) { setPickerOpen(true); return; }
     const byId = products.find((p) => String(p.id) === tok);
-    if (byId) { addProduct(byId); return; }
+    if (byId) { selectProduct(byId); return; }
     const byBarcode = products.find((p) => (p.barcode ?? "").toLowerCase() === tok || (p.reference ?? "").toLowerCase() === tok);
-    if (byBarcode) { addProduct(byBarcode); return; }
+    if (byBarcode) { selectProduct(byBarcode); return; }
     setPickerOpen(true);
   };
 
@@ -821,9 +826,107 @@ function SaleOrderEditor({ open, onOpenChange, editing, onSave, isSaving }: {
         open={pickerOpen}
         onOpenChange={setPickerOpen}
         products={products}
-        onPick={addProduct}
+        onPick={selectProduct}
         extraBarcodesMap={new Map()}
       />
+
+      <AddLineBvDialog
+        product={pendingProduct}
+        onConfirm={({ qty, pu }) => {
+          if (pendingProduct) addProductWithValues(pendingProduct, { qty, pu });
+          setPendingProduct(null);
+        }}
+        onCancel={() => setPendingProduct(null)}
+      />
+    </Dialog>
+  );
+}
+
+// ─── Add Line BV Dialog ───────────────────────────────────────────────────────
+function AddLineBvDialog({
+  product, onConfirm, onCancel,
+}: {
+  product: Product | null;
+  onConfirm: (vals: { qty: number; pu: number }) => void;
+  onCancel: () => void;
+}) {
+  const { lang } = useLang();
+  const t = (fr: string, ar: string) => lang === "ar" ? ar : fr;
+
+  const [qty, setQty] = useState("1");
+  const [pu, setPu] = useState("0");
+  const qtyRef = React.useRef<HTMLInputElement>(null);
+
+  React.useEffect(() => {
+    if (!product) return;
+    setQty("1");
+    setPu(product.price ?? "0");
+    setTimeout(() => { qtyRef.current?.focus(); qtyRef.current?.select(); }, 50);
+  }, [product]);
+
+  function handleConfirm() {
+    const qtyN = Math.max(1, parseFloat(qty) || 1);
+    const puN = Math.max(0, parseFloat(pu) || 0);
+    onConfirm({ qty: qtyN, pu: puN });
+  }
+
+  return (
+    <Dialog open={!!product} onOpenChange={(o) => { if (!o) onCancel(); }}>
+      <DialogContent className="max-w-sm" onPointerDownOutside={(e) => e.preventDefault()}>
+        <DialogHeader>
+          <DialogTitle className="text-base">
+            {t("Ajouter l'article", "إضافة المنتج")}
+          </DialogTitle>
+        </DialogHeader>
+
+        {product && (
+          <div className="rounded-md bg-slate-50 border px-3 py-2 text-sm mb-1">
+            <p className="font-semibold uppercase leading-tight">{product.nameEn || product.nameAr}</p>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              {product.reference ?? product.barcode ?? `#${product.id}`}
+            </p>
+          </div>
+        )}
+
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <Label className="text-xs mb-1 block">{t("Qté", "الكمية")}</Label>
+            <Input
+              ref={qtyRef}
+              type="number"
+              min={1}
+              value={qty}
+              onChange={(e) => setQty(e.target.value)}
+              onFocus={(e) => e.target.select()}
+              className="h-9"
+              onKeyDown={(e) => { if (e.key === "Enter") handleConfirm(); }}
+            />
+          </div>
+          <div>
+            <Label className="text-xs mb-1 block">{t("PU (Vente)", "سعر البيع")}</Label>
+            <Input
+              type="number"
+              min={0}
+              step="0.01"
+              value={pu}
+              onChange={(e) => setPu(e.target.value)}
+              onFocus={(e) => e.target.select()}
+              className="h-9"
+              onKeyDown={(e) => { if (e.key === "Enter") handleConfirm(); }}
+            />
+          </div>
+        </div>
+
+        <DialogFooter className="mt-2 gap-2">
+          <Button variant="outline" onClick={onCancel} className="flex-1">
+            {t("Annuler", "إلغاء")}
+          </Button>
+          <Button onClick={handleConfirm} className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white">
+            <Plus className="h-4 w-4 mr-1.5" />
+            {t("Ajouter", "إضافة")}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
     </Dialog>
   );
 }

@@ -18,7 +18,19 @@ export type PermSection =
   | "attendance"
   | "leaves"
   | "accounting";
-export type PermAction = "view" | "create" | "edit" | "delete";
+
+export type PermAction =
+  | "view" | "create" | "edit" | "delete"
+  // orders
+  | "close" | "print" | "change_payment" | "edit_line_price" | "view_profit"
+  // products
+  | "edit_price" | "view_purchase_price" | "expose" | "manage_stock"
+  | "manage_images" | "duplicate" | "copy_to_store" | "import"
+  | "print_barcode" | "view_history" | "bulk_actions"
+  // purchases
+  | "receive" | "manage_charges" | "column_settings"
+  // settings
+  | "edit_store_name" | "edit_default_customer" | "manage_permissions" | "manage_stores";
 
 export type PermRow = { section: string; action: string; granted: boolean };
 

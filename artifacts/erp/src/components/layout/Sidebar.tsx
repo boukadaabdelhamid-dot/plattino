@@ -34,6 +34,8 @@ type NavItem = {
   section?: PermSection;
   /** Optional badge key for live counters (e.g. pending online orders). */
   badge?: "online-orders-pending";
+  /** Extra action (beyond "view") required to show this item for non-admins. */
+  permAction?: import("@/hooks/use-permissions").PermAction;
 };
 
 type NavGroup = {
@@ -63,7 +65,7 @@ const navEntries: NavEntry[] = [
     section: "orders" as PermSection,
     children: [
       { href: "/orders", icon: ShoppingCart, labelEn: "Vente rapide", labelAr: "بيع سريع" },
-      { href: "/sale-orders", icon: Receipt, labelEn: "Bons de vente", labelAr: "بونات البيع" },
+      { href: "/sale-orders", icon: Receipt, labelEn: "Bons de vente", labelAr: "بونات البيع", permAction: "view_sale_orders" },
       { href: "/retours", icon: RotateCcw, labelEn: "Retours", labelAr: "المرتجعات" },
     ],
   },
@@ -299,7 +301,15 @@ export function Sidebar() {
         {visibleEntries.map((entry) => {
           if ("group" in entry) {
             const { icon: Icon, labelEn, labelAr, children } = entry;
-            const groupActive = children.some((c) => location === c.href || location.startsWith(c.href + "/"));
+            const visibleChildren = isAdmin
+              ? children
+              : children.filter((child) => {
+                  if (child.adminOnly) return false;
+                  if (!child.permAction) return true;
+                  if (!entry.section) return true;
+                  return can(entry.section, child.permAction);
+                });
+            const groupActive = visibleChildren.some((c) => location === c.href || location.startsWith(c.href + "/"));
             const isOpen = groupsOpen[labelEn] ?? false;
             if (isCollapsed) {
               return (
@@ -318,7 +328,7 @@ export function Sidebar() {
                   </button>
                   {isOpen && (
                     <div className="absolute left-full top-0 ml-2 z-50 w-52 rounded-md border bg-popover text-popover-foreground shadow-lg overflow-hidden py-1">
-                      {children.map(({ href, icon: ChildIcon, labelEn: cEn, labelAr: cAr }) => {
+                      {visibleChildren.map(({ href, icon: ChildIcon, labelEn: cEn, labelAr: cAr }) => {
                         const active = location === href || (href !== "/settings" && location.startsWith(href + "/"));
                         return (
                           <Link key={href} href={href} onClick={() => setOpen(false)}>
@@ -357,7 +367,7 @@ export function Sidebar() {
                 </button>
                 {isOpen && (
                   <div className="ml-3 mt-0.5 space-y-0.5 border-l border-sidebar-border pl-2">
-                    {children.map(({ href, icon: ChildIcon, labelEn: cEn, labelAr: cAr }) => {
+                    {visibleChildren.map(({ href, icon: ChildIcon, labelEn: cEn, labelAr: cAr }) => {
                       const active = location === href || (href !== "/settings" && location.startsWith(href + "/"));
                       return (
                         <Link key={href} href={href} onClick={() => setOpen(false)}>

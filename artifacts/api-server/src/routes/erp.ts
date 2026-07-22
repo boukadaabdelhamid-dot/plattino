@@ -654,7 +654,7 @@ router.put("/erp/permissions/:userId", authenticate, requireAdmin, requireStore,
       // base actions (all modules)
       "view", "create", "edit", "delete",
       // orders
-      "close", "print", "change_payment", "edit_line_price", "view_profit",
+      "close", "print", "change_payment", "edit_line_price", "view_profit", "view_sale_orders",
       // products
       "edit_price", "view_purchase_price", "expose", "manage_stock",
       "manage_images", "duplicate", "copy_to_store", "import",

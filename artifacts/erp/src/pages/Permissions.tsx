@@ -4,7 +4,7 @@ import {
   Eye, PenLine, Plus, Trash2, Lock, Unlock,
   Printer, CreditCard, Tag, TrendingUp, Globe, Package,
   Image as ImageIcon, Copy, Send, Upload, QrCode, History,
-  LayoutGrid, Check, Cloud, Columns3, Store, User, Building2,
+  LayoutGrid, Check, Cloud, Columns3, Store, User, Building2, Receipt,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
@@ -66,7 +66,8 @@ const BASE_ACTIONS: ActionDef[] = [
 /** Granular per-section actions for Ventes, Articles, Achats, Paramètres */
 const SECTION_ACTIONS: Record<string, ActionDef[]> = {
   orders: [
-    { key: "view",            labelFr: "Voir les bons de vente",                labelAr: "عرض بونات البيع",            icon: Eye        },
+    { key: "view",            labelFr: "Accéder au module Ventes",              labelAr: "الوصول لقسم المبيعات",       icon: Eye        },
+    { key: "view_sale_orders",labelFr: "Afficher Bons de vente dans le menu",   labelAr: "إظهار بونات البيع في القائمة", icon: Receipt  },
     { key: "create",          labelFr: "Créer un bon de vente",                 labelAr: "إنشاء بون بيع",              icon: Plus       },
     { key: "edit",            labelFr: "Modifier un bon en cours",              labelAr: "تعديل بون جارٍ",             icon: PenLine    },
     { key: "delete",          labelFr: "Supprimer un bon",                      labelAr: "حذف بون",                    icon: Trash2     },

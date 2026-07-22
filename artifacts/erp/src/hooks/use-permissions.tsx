@@ -30,7 +30,9 @@ export type PermAction =
   // purchases
   | "receive" | "manage_charges" | "column_settings"
   // settings
-  | "edit_store_name" | "edit_default_customer" | "manage_permissions" | "manage_stores";
+  | "edit_store_name" | "edit_default_customer" | "manage_permissions" | "manage_stores"
+  // orders – sidebar child visibility
+  | "view_sale_orders";
 
 export type PermRow = { section: string; action: string; granted: boolean };
 

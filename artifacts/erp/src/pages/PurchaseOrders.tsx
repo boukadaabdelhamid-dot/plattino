@@ -605,6 +605,7 @@ function PurchaseEditor({
   const [productPickerOpen, setProductPickerOpen] = useState(false);
   const [pendingProduct, setPendingProduct] = useState<Product | null>(null);
   const [lines, setLines] = useState<EditLine[]>([]);
+  const [lineSearch, setLineSearch] = useState("");
   const [code, setCode] = useState("");
   const updateProduct = useUpdateProduct();
   const cs = columnSettings;
@@ -623,6 +624,7 @@ function PurchaseEditor({
     if (!open) return;
     // Reset the guard whenever the dialog opens/switches to a different PO.
     hasLoadedItemsRef.current = false;
+    setLineSearch("");
     if (editing) {
       setRefAchat(editing.notes || `Bon N°${editing.id}`);
       setDate(editing.createdAt ? editing.createdAt.slice(0, 16) : new Date().toISOString().slice(0, 16));
@@ -733,6 +735,12 @@ function PurchaseEditor({
   const isReceived = editing?.status === "received";
   const hasCharges = isExisting && lines.some(l => l.charges > 0);
   const totalChargesAmt = lines.reduce((s, l) => s + l.charges, 0);
+  const displayedLines = useMemo(() => {
+    const q = lineSearch.trim().toLowerCase();
+    const indexed = lines.map((l, i) => ({ l, i }));
+    if (!q) return indexed;
+    return indexed.filter(({ l }) => l.designation.toLowerCase().includes(q));
+  }, [lines, lineSearch]);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -903,8 +911,19 @@ function PurchaseEditor({
               </div>
 
               <div className="border rounded-md overflow-hidden">
-                <div className="px-3 py-1.5 bg-slate-50 border-b flex items-center justify-between">
-                  <span className="font-semibold text-sm">{t("Contenu", "المحتوى")}</span>
+                <div className="px-3 py-1.5 bg-slate-50 border-b flex items-center justify-between gap-3">
+                  <span className="font-semibold text-sm shrink-0">{t("Contenu", "المحتوى")}</span>
+                  {lines.length > 0 && (
+                    <div className="relative flex-1 max-w-xs">
+                      <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground pointer-events-none" />
+                      <Input
+                        value={lineSearch}
+                        onChange={(e) => setLineSearch(e.target.value)}
+                        placeholder={t("Rechercher un article…", "بحث عن منتج…")}
+                        className="h-7 pl-7 text-xs"
+                      />
+                    </div>
+                  )}
                 </div>
                 <Table>
                   <TableHeader className="bg-slate-50/50">
@@ -928,22 +947,28 @@ function PurchaseEditor({
                           {t("Aucune donnée disponible", "لا توجد بيانات")}
                         </TableCell>
                       </TableRow>
+                    ) : displayedLines.length === 0 ? (
+                      <TableRow>
+                        <TableCell colSpan={4 + (cs.showQtyPrepared ? 1 : 0) + (cs.showProgression ? 1 : 0) + (cs.showQtyGratuit ? 1 : 0) + (cs.showMontant ? 1 : 0) + (hasCharges && cs.showMontant ? 2 : 0)} className="text-center py-6 text-muted-foreground italic text-sm">
+                          {t("Aucun article ne correspond à la recherche", "لا يوجد منتج مطابق للبحث")}
+                        </TableCell>
+                      </TableRow>
                     ) : (
                       <>
-                        {lines.map((l, idx) => {
+                        {displayedLines.map(({ l, i }) => {
                           const progression = l.qty > 0 ? Math.round((l.qtyPrepared / l.qty) * 100) : 0;
                           return (
-                            <TableRow key={idx} data-testid={`row-line-${idx}`}>
+                            <TableRow key={i} data-testid={`row-line-${i}`}>
                               <TableCell className="font-medium uppercase text-xs">{l.designation}</TableCell>
                               <TableCell className="text-center">
                                 <Input type="number" min="1" value={l.qty}
-                                  onChange={(e) => updateLine(idx, { qty: Math.max(1, parseInt(e.target.value) || 1) })}
-                                  className="h-7 w-16 text-center text-xs mx-auto" disabled={isReceived} data-testid={`input-qty-${idx}`} />
+                                  onChange={(e) => updateLine(i, { qty: Math.max(1, parseInt(e.target.value) || 1) })}
+                                  className="h-7 w-16 text-center text-xs mx-auto" disabled={isReceived} data-testid={`input-qty-${i}`} />
                               </TableCell>
                               {cs.showQtyPrepared && (
                                 <TableCell className="text-center">
                                   <Input type="number" min="0" value={l.qtyPrepared}
-                                    onChange={(e) => updateLine(idx, { qtyPrepared: Math.max(0, parseInt(e.target.value) || 0) })}
+                                    onChange={(e) => updateLine(i, { qtyPrepared: Math.max(0, parseInt(e.target.value) || 0) })}
                                     className="h-7 w-16 text-center text-xs mx-auto" disabled={isReceived} />
                                 </TableCell>
                               )}
@@ -957,13 +982,13 @@ function PurchaseEditor({
                               {cs.showQtyGratuit && (
                                 <TableCell className="text-center">
                                   <Input type="number" min="0" value={l.qtyGratuit}
-                                    onChange={(e) => updateLine(idx, { qtyGratuit: Math.max(0, parseInt(e.target.value) || 0) })}
+                                    onChange={(e) => updateLine(i, { qtyGratuit: Math.max(0, parseInt(e.target.value) || 0) })}
                                     className="h-7 w-16 text-center text-xs mx-auto" disabled={isReceived} />
                                 </TableCell>
                               )}
                               <TableCell className="text-right">
                                 <Input type="number" step="0.01" min="0" value={l.pu}
-                                  onChange={(e) => updateLine(idx, { pu: parseFloat(e.target.value) || 0 })}
+                                  onChange={(e) => updateLine(i, { pu: parseFloat(e.target.value) || 0 })}
                                   className="h-7 w-20 text-right text-xs ml-auto" disabled={isReceived} />
                               </TableCell>
                               {hasCharges && cs.showMontant && (
@@ -979,7 +1004,7 @@ function PurchaseEditor({
                               )}
                               <TableCell>
                                 <Button size="icon" variant="ghost" className="h-7 w-7 text-red-500"
-                                  onClick={() => removeLine(idx)} disabled={isReceived} aria-label={t("Supprimer", "حذف")}>
+                                  onClick={() => removeLine(i)} disabled={isReceived} aria-label={t("Supprimer", "حذف")}>
                                   <Trash2 className="h-3.5 w-3.5" />
                                 </Button>
                               </TableCell>

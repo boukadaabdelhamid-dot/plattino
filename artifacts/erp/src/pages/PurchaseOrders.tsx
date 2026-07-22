@@ -7,7 +7,7 @@ import {
   getGetPurchaseOrdersQueryKey, getGetSuppliersQueryKey,
   getGetPurchaseAnnexeChargesQueryKey,
   useGetPurchaseAnnexeCharges, useCreatePurchaseAnnexeCharge, useDeletePurchaseAnnexeCharge,
-  getProducts,
+  getProducts, useUpdateProduct,
   type PurchaseOrder, type Supplier, type Product, type PurchaseAnnexeCharge,
 } from "@workspace/api-client-react";
 import { useQueryClient, keepPreviousData } from "@tanstack/react-query";
@@ -603,8 +603,10 @@ function PurchaseEditor({
   const [paymentMethod, setPaymentMethod] = useState<"comptant" | "a_terme">("a_terme");
   const [supplierPickerOpen, setSupplierPickerOpen] = useState(false);
   const [productPickerOpen, setProductPickerOpen] = useState(false);
+  const [pendingProduct, setPendingProduct] = useState<Product | null>(null);
   const [lines, setLines] = useState<EditLine[]>([]);
   const [code, setCode] = useState("");
+  const updateProduct = useUpdateProduct();
   const cs = columnSettings;
   const store = useCurrentStore();
 
@@ -659,17 +661,22 @@ function PurchaseEditor({
 
   const subtotal = lines.reduce((s, l) => s + l.pu * l.qty, 0);
 
-  function addProduct(p: Product) {
+  function addProductWithValues(p: Product, vals: { qty: number; pu: number; qtyGratuit: number }) {
     setLines((prev) => {
       if (prev.some((l) => l.productId === p.id)) return prev;
       return [...prev, {
         productId: p.id,
         designation: (p.nameEn || p.nameAr || `#${p.id}`).toUpperCase(),
-        qty: 1, qtyPrepared: 0, qtyGratuit: 0,
-        pu: parseFloat(p.costPrice ?? p.price ?? "0"),
+        qty: vals.qty, qtyPrepared: 0, qtyGratuit: vals.qtyGratuit,
+        pu: vals.pu,
         charges: 0,
       }];
     });
+  }
+
+  // Opens the confirmation dialog instead of adding directly
+  function selectProduct(p: Product) {
+    setPendingProduct(p);
   }
 
   async function tryAddByCode(input: string) {
@@ -678,7 +685,7 @@ function PurchaseEditor({
 
     // Fast path: numeric ID → check local list first
     const byId = (products ?? []).find((p) => String(p.id) === tok);
-    if (byId) { addProduct(byId); setCode(""); return; }
+    if (byId) { selectProduct(byId); setCode(""); return; }
 
     // Server-side lookup: barcode (filterCode) + reference (filterRef) in parallel
     try {
@@ -696,7 +703,7 @@ function PurchaseEditor({
           (p.barcode ?? "").toLowerCase() === tok ||
           (p.reference ?? "").toLowerCase() === tok,
       );
-      if (found) { addProduct(found); setCode(""); return; }
+      if (found) { selectProduct(found); setCode(""); return; }
     } catch { /* network error → fall through to picker */ }
 
     // Fallback: open product picker for manual selection
@@ -1080,7 +1087,27 @@ function PurchaseEditor({
         <ProductPickerDialog
           open={productPickerOpen}
           onOpenChange={setProductPickerOpen}
-          onPick={(p) => { addProduct(p); setProductPickerOpen(false); }}
+          onPick={(p) => { setProductPickerOpen(false); selectProduct(p); }}
+        />
+
+        <AddLineDialog
+          product={pendingProduct}
+          onConfirm={async (vals) => {
+            if (!pendingProduct) return;
+            addProductWithValues(pendingProduct, vals);
+            // Update retail price if changed
+            const origPrice = parseFloat(pendingProduct.price ?? "0");
+            if (vals.prixDetail !== origPrice) {
+              try {
+                await updateProduct.mutateAsync({
+                  id: pendingProduct.id,
+                  data: { price: String(vals.prixDetail) },
+                });
+              } catch { /* price update failed silently; line was still added */ }
+            }
+            setPendingProduct(null);
+          }}
+          onCancel={() => setPendingProduct(null)}
         />
       </DialogContent>
     </Dialog>
@@ -1280,6 +1307,133 @@ function ProductPickerDialog({
             ))
           )}
         </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ─── Add Line Dialog ──────────────────────────────────────────────────────────
+type AddLineValues = { qty: number; pu: number; qtyGratuit: number; prixDetail: number };
+
+function AddLineDialog({
+  product, onConfirm, onCancel,
+}: {
+  product: Product | null;
+  onConfirm: (vals: AddLineValues) => Promise<void>;
+  onCancel: () => void;
+}) {
+  const { lang } = useLang();
+  const t: TFn = (fr, ar) => lang === "ar" ? ar : fr;
+
+  const [qty, setQty] = useState("1");
+  const [pu, setPu] = useState("0");
+  const [qtyGratuit, setQtyGratuit] = useState("0");
+  const [prixDetail, setPrixDetail] = useState("0");
+  const [saving, setSaving] = useState(false);
+  const qtyRef = React.useRef<HTMLInputElement>(null);
+
+  // Reset & pre-fill whenever a new product is selected
+  React.useEffect(() => {
+    if (!product) return;
+    setQty("1");
+    setPu(product.costPrice && parseFloat(product.costPrice) > 0 ? product.costPrice : (product.price ?? "0"));
+    setQtyGratuit("0");
+    setPrixDetail(product.price ?? "0");
+    setSaving(false);
+    setTimeout(() => qtyRef.current?.select(), 50);
+  }, [product]);
+
+  async function handleConfirm() {
+    const qtyN = Math.max(0, parseFloat(qty) || 0);
+    const puN = Math.max(0, parseFloat(pu) || 0);
+    const qtyGN = Math.max(0, parseFloat(qtyGratuit) || 0);
+    const pdN = Math.max(0, parseFloat(prixDetail) || 0);
+    setSaving(true);
+    await onConfirm({ qty: qtyN || 1, pu: puN, qtyGratuit: qtyGN, prixDetail: pdN });
+    setSaving(false);
+  }
+
+  return (
+    <Dialog open={!!product} onOpenChange={(o) => { if (!o) onCancel(); }}>
+      <DialogContent className="max-w-sm" onPointerDownOutside={(e) => e.preventDefault()}>
+        <DialogHeader>
+          <DialogTitle className="text-base">
+            {t("Ajouter l'article", "إضافة المنتج")}
+          </DialogTitle>
+        </DialogHeader>
+
+        {product && (
+          <div className="rounded-md bg-slate-50 border px-3 py-2 text-sm mb-1">
+            <p className="font-semibold uppercase leading-tight">{product.nameEn || product.nameAr}</p>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              {product.reference ?? product.barcode ?? `#${product.id}`}
+            </p>
+          </div>
+        )}
+
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <Label className="text-xs mb-1 block">{t("Qté", "الكمية")}</Label>
+            <Input
+              ref={qtyRef}
+              type="number"
+              min={1}
+              value={qty}
+              onChange={(e) => setQty(e.target.value)}
+              onFocus={(e) => e.target.select()}
+              className="h-9"
+              onKeyDown={(e) => { if (e.key === "Enter") handleConfirm(); }}
+            />
+          </div>
+          <div>
+            <Label className="text-xs mb-1 block">{t("PU (Achat)", "سعر الشراء")}</Label>
+            <Input
+              type="number"
+              min={0}
+              step="0.01"
+              value={pu}
+              onChange={(e) => setPu(e.target.value)}
+              onFocus={(e) => e.target.select()}
+              className="h-9"
+              onKeyDown={(e) => { if (e.key === "Enter") handleConfirm(); }}
+            />
+          </div>
+          <div>
+            <Label className="text-xs mb-1 block">{t("Qté Gratuite", "الكمية المجانية")}</Label>
+            <Input
+              type="number"
+              min={0}
+              value={qtyGratuit}
+              onChange={(e) => setQtyGratuit(e.target.value)}
+              onFocus={(e) => e.target.select()}
+              className="h-9"
+              onKeyDown={(e) => { if (e.key === "Enter") handleConfirm(); }}
+            />
+          </div>
+          <div>
+            <Label className="text-xs mb-1 block">{t("Prix Détail", "سعر البيع")}</Label>
+            <Input
+              type="number"
+              min={0}
+              step="0.01"
+              value={prixDetail}
+              onChange={(e) => setPrixDetail(e.target.value)}
+              onFocus={(e) => e.target.select()}
+              className="h-9"
+              onKeyDown={(e) => { if (e.key === "Enter") handleConfirm(); }}
+            />
+          </div>
+        </div>
+
+        <DialogFooter className="mt-2 gap-2">
+          <Button variant="outline" onClick={onCancel} disabled={saving} className="flex-1">
+            {t("Annuler", "إلغاء")}
+          </Button>
+          <Button onClick={handleConfirm} disabled={saving} className="flex-1 bg-emerald-600 hover:bg-emerald-700">
+            <Plus className="h-4 w-4 mr-1.5" />
+            {saving ? t("…", "…") : t("Ajouter", "إضافة")}
+          </Button>
+        </DialogFooter>
       </DialogContent>
     </Dialog>
   );

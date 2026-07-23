@@ -331,23 +331,49 @@ router.get("/erp/dashboard/client-receivables", authenticate, requireStaff, requ
   try {
     const sid = dashboardStoreId(req);
     const storeFilter = sid !== null ? sql` AND cp.store_id = ${sid}` : sql``;
-    // Cross-store customers share one users.id but have ONE customer_profiles row
-    // PER STORE, each carrying the SAME synced balance (see cross-store customer
-    // balance unify). When viewing all stores, collapse every customer to a single
-    // row (DISTINCT ON u.id) so the count and totals are not multiplied by the
-    // number of stores that customer has a profile in — mirrors the same dedup
-    // already applied to the supplier-debts widget below.
+    // Unified Créances/Dettes rule:
+    //   - For customer_supplier contacts, use contacts.current_balance (the net
+    //     unified balance). If net > 0 → Créances; if net ≤ 0 → excluded here
+    //     (and may appear in supplier-debts instead). This makes the two widgets
+    //     mutually exclusive for customer_supplier entities.
+    //   - For regular customers, use cp.current_balance as before.
+    // Dedup key: contacts.global_contact_id (primary) falls back to u.id — covers
+    // the case where the same real customer has different user_id values across stores.
     const result = await db.execute(sql`
       SELECT id, name, balance
       FROM (
-        SELECT DISTINCT ON (u.id)
+        SELECT DISTINCT ON (
+                 COALESCE(
+                   CASE WHEN c.global_contact_id IS NOT NULL
+                        THEN 'gc:' || c.global_contact_id
+                        ELSE NULL END,
+                   'u:' || u.id::text
+                 )
+               )
                u.id, u.name AS name,
-               ROUND(CAST(cp.current_balance AS numeric), 2) AS balance
+               ROUND(CAST(
+                 CASE WHEN cp.contact_type = 'customer_supplier' AND c.id IS NOT NULL
+                      THEN c.current_balance
+                      ELSE cp.current_balance
+                 END
+               AS numeric), 2) AS balance
         FROM customer_profiles cp
-        JOIN users u ON cp.user_id = u.id
-        WHERE CAST(cp.current_balance AS numeric) > 0
+        JOIN  users    u ON u.id  = cp.user_id
+        LEFT JOIN contacts c ON c.id = cp.contact_id
+        WHERE CAST(
+                CASE WHEN cp.contact_type = 'customer_supplier' AND c.id IS NOT NULL
+                     THEN c.current_balance
+                     ELSE cp.current_balance
+                END
+              AS numeric) > 0
         ${storeFilter}
-        ORDER BY u.id, cp.id
+        ORDER BY
+          COALESCE(
+            CASE WHEN c.global_contact_id IS NOT NULL
+                 THEN 'gc:' || c.global_contact_id
+                 ELSE NULL END,
+            'u:' || u.id::text
+          ), cp.id
       ) linked_dedup
       ORDER BY balance DESC
     `);
@@ -368,8 +394,11 @@ router.get("/erp/dashboard/supplier-debts", authenticate, requireStaff, requireS
     //   2. c.global_contact_id    — unified-contact system; covers customer_supplier
     //      contacts linked via the contact layer without going through import-to-stores
     //   3. 'id:' || s.id          — standalone unlinked supplier (stays distinct)
-    // The balance read is always s.current_balance (pure supplier role — never
-    // contacts.current_balance), so customer_supplier accounting is untouched.
+    // Unified Créances/Dettes rule (mirrors client-receivables):
+    //   - For customer_supplier suppliers, use contacts.current_balance (net unified).
+    //     If net < 0 → Dettes; if net ≥ 0 → excluded here (appears in Créances instead).
+    //   - For regular suppliers, use s.current_balance as before.
+    // This makes the two widgets mutually exclusive for customer_supplier entities.
     const result = await db.execute(sql`
       SELECT id, name, balance FROM (
         SELECT DISTINCT ON (
@@ -382,10 +411,20 @@ router.get("/erp/dashboard/supplier-debts", authenticate, requireStaff, requireS
                  )
                )
                s.id, s.name,
-               ROUND(CAST(s.current_balance AS numeric), 2) AS balance
+               ROUND(CAST(
+                 CASE WHEN s.contact_type = 'customer_supplier' AND c.id IS NOT NULL
+                      THEN c.current_balance
+                      ELSE s.current_balance
+                 END
+               AS numeric), 2) AS balance
         FROM suppliers s
         LEFT JOIN contacts c ON c.id = s.contact_id
-        WHERE CAST(s.current_balance AS numeric) < 0
+        WHERE CAST(
+                CASE WHEN s.contact_type = 'customer_supplier' AND c.id IS NOT NULL
+                     THEN c.current_balance
+                     ELSE s.current_balance
+                END
+              AS numeric) < 0
         ${storeFilter}
         ORDER BY
           COALESCE(

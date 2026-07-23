@@ -9,6 +9,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useLang } from "@/hooks/use-lang";
+import { usePermissions } from "@/hooks/use-permissions";
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   Cell, Legend,
@@ -49,6 +50,8 @@ export default function Reports() {
   const { lang } = useLang();
   const t = (fr: string, ar: string) => lang === "ar" ? ar : fr;
   const currency = lang === "ar" ? "دج" : "DA";
+  const { can } = usePermissions();
+  const canViewProfit = can("products", "view_purchase_price");
 
   const [from, setFrom] = useState(MONTH_AGO);
   const [to, setTo] = useState(TODAY);
@@ -172,7 +175,11 @@ export default function Reports() {
               {monthlyRows.length > 0 && (
                 <Card className="border shadow-sm">
                   <CardHeader className="pb-2">
-                    <CardTitle className="text-sm">{t("Évolution mensuelle — CA vs Bénéfice", "التطور الشهري — الإيراد مقابل الربح")}</CardTitle>
+                    <CardTitle className="text-sm">
+                      {canViewProfit
+                        ? t("Évolution mensuelle — CA vs Bénéfice", "التطور الشهري — الإيراد مقابل الربح")
+                        : t("Évolution mensuelle — Chiffre d'affaires", "التطور الشهري — الإيراد")}
+                    </CardTitle>
                   </CardHeader>
                   <CardContent>
                     <ResponsiveContainer width="100%" height={260}>
@@ -183,9 +190,9 @@ export default function Reports() {
                         <Tooltip
                           formatter={(v: number, name: string) => {
                             const labels: Record<string, string> = {
-                              totalRevenue: t("Chiffre d'affaires", "الإيراد"),
-                              grossProfit:  t("Bénéfice brut", "الربح الإجمالي"),
-                              netProfit:    t("Bénéfice net", "الربح الصافي"),
+                              totalRevenue:  t("Chiffre d'affaires", "الإيراد"),
+                              grossProfit:   t("Bénéfice brut", "الربح الإجمالي"),
+                              netProfit:     t("Bénéfice net", "الربح الصافي"),
                               totalExpenses: t("Charges", "المصاريف"),
                             };
                             return [`${fmt(v)} ${currency}`, labels[name] ?? name];
@@ -202,10 +209,10 @@ export default function Reports() {
                             return labels[value] ?? value;
                           }}
                         />
-                        <Bar dataKey="totalRevenue"  fill="hsl(var(--chart-1))" radius={[3,3,0,0]} />
-                        <Bar dataKey="grossProfit"   fill="hsl(var(--chart-2))" radius={[3,3,0,0]} />
-                        <Bar dataKey="totalExpenses" fill="hsl(var(--chart-5))" radius={[3,3,0,0]} />
-                        <Bar dataKey="netProfit"     fill="hsl(var(--chart-3))" radius={[3,3,0,0]} />
+                        <Bar dataKey="totalRevenue" fill="hsl(var(--chart-1))" radius={[3,3,0,0]} />
+                        {canViewProfit && <Bar dataKey="grossProfit"   fill="hsl(var(--chart-2))" radius={[3,3,0,0]} />}
+                        {canViewProfit && <Bar dataKey="totalExpenses" fill="hsl(var(--chart-5))" radius={[3,3,0,0]} />}
+                        {canViewProfit && <Bar dataKey="netProfit"     fill="hsl(var(--chart-3))" radius={[3,3,0,0]} />}
                       </BarChart>
                     </ResponsiveContainer>
                   </CardContent>
@@ -223,18 +230,18 @@ export default function Reports() {
                         <tr className="border-b bg-muted/30">
                           <th className="text-left px-4 py-2 font-medium text-muted-foreground">{t("Mois", "الشهر")}</th>
                           <th className="text-right px-4 py-2 font-medium text-muted-foreground">{t("Chiffre d'affaires", "الإيراد")}</th>
-                          <th className="text-right px-4 py-2 font-medium text-muted-foreground">{t("COGS", "تكلفة البضاعة")}</th>
+                          {canViewProfit && <th className="text-right px-4 py-2 font-medium text-muted-foreground">{t("COGS", "تكلفة البضاعة")}</th>}
                           <th className="text-right px-4 py-2 font-medium text-muted-foreground">{t("Retours", "المرتجعات")}</th>
-                          <th className="text-right px-4 py-2 font-medium text-muted-foreground">{t("Bénéfice brut", "الربح الإجمالي")}</th>
+                          {canViewProfit && <th className="text-right px-4 py-2 font-medium text-muted-foreground">{t("Bénéfice brut", "الربح الإجمالي")}</th>}
                           <th className="text-right px-4 py-2 font-medium text-muted-foreground">{t("Charges", "المصاريف")}</th>
-                          <th className="text-right px-4 py-2 font-medium text-muted-foreground">{t("Bénéfice net", "الربح الصافي")}</th>
-                          <th className="text-right px-4 py-2 font-medium text-muted-foreground">{t("Marge brute", "الهامش الإجمالي")}</th>
+                          {canViewProfit && <th className="text-right px-4 py-2 font-medium text-muted-foreground">{t("Bénéfice net", "الربح الصافي")}</th>}
+                          {canViewProfit && <th className="text-right px-4 py-2 font-medium text-muted-foreground">{t("Marge brute", "الهامش الإجمالي")}</th>}
                         </tr>
                       </thead>
                       <tbody>
                         {monthlyRows.length === 0 && (
                           <tr>
-                            <td colSpan={8} className="text-center py-8 text-muted-foreground text-sm">
+                            <td colSpan={canViewProfit ? 8 : 4} className="text-center py-8 text-muted-foreground text-sm">
                               {t("Aucune donnée pour cette période", "لا توجد بيانات لهذه الفترة")}
                             </td>
                           </tr>
@@ -243,18 +250,24 @@ export default function Reports() {
                           <tr key={row.month} className="border-b hover:bg-muted/20 transition-colors">
                             <td className="px-4 py-2.5 font-medium">{row.month}</td>
                             <td className="px-4 py-2.5 text-right">{fmt(row.totalRevenue)} {currency}</td>
-                            <td className="px-4 py-2.5 text-right text-muted-foreground">{fmt(row.totalCogs)} {currency}</td>
+                            {canViewProfit && <td className="px-4 py-2.5 text-right text-muted-foreground">{fmt(row.totalCogs)} {currency}</td>}
                             <td className="px-4 py-2.5 text-right text-amber-600">{fmt(row.totalRetours)} {currency}</td>
-                            <td className={`px-4 py-2.5 text-right font-semibold ${row.grossProfit >= 0 ? "text-emerald-600" : "text-red-500"}`}>
-                              {fmt(row.grossProfit)} {currency}
-                            </td>
+                            {canViewProfit && (
+                              <td className={`px-4 py-2.5 text-right font-semibold ${row.grossProfit >= 0 ? "text-emerald-600" : "text-red-500"}`}>
+                                {fmt(row.grossProfit)} {currency}
+                              </td>
+                            )}
                             <td className="px-4 py-2.5 text-right text-red-500">{fmt(row.totalExpenses)} {currency}</td>
-                            <td className={`px-4 py-2.5 text-right font-bold ${row.netProfit >= 0 ? "text-emerald-700" : "text-red-600"}`}>
-                              {fmt(row.netProfit)} {currency}
-                            </td>
-                            <td className="px-4 py-2.5 text-right">
-                              <MarginBadge margin={row.grossMargin} />
-                            </td>
+                            {canViewProfit && (
+                              <td className={`px-4 py-2.5 text-right font-bold ${row.netProfit >= 0 ? "text-emerald-700" : "text-red-600"}`}>
+                                {fmt(row.netProfit)} {currency}
+                              </td>
+                            )}
+                            {canViewProfit && (
+                              <td className="px-4 py-2.5 text-right">
+                                <MarginBadge margin={row.grossMargin} />
+                              </td>
+                            )}
                           </tr>
                         ))}
                       </tbody>
@@ -272,7 +285,7 @@ export default function Reports() {
             <div className="space-y-2">{[...Array(6)].map((_, i) => <Skeleton key={i} className="h-10" />)}</div>
           ) : (
             <>
-              {topProducts.length > 0 && (
+              {canViewProfit && topProducts.length > 0 && (
                 <Card className="border shadow-sm">
                   <CardHeader className="pb-2">
                     <CardTitle className="text-sm">{t("Top 10 — Bénéfice brut", "أعلى 10 — الربح الإجمالي")}</CardTitle>
@@ -312,16 +325,16 @@ export default function Reports() {
                           <th className="text-left px-4 py-2 font-medium text-muted-foreground">{t("Produit", "المنتج")}</th>
                           <th className="text-right px-4 py-2 font-medium text-muted-foreground">{t("Vendu", "مباع")}</th>
                           <th className="text-right px-4 py-2 font-medium text-muted-foreground">{t("Chiffre d'affaires", "الإيراد")}</th>
-                          <th className="text-right px-4 py-2 font-medium text-muted-foreground">{t("COGS", "تكلفة البضاعة")}</th>
-                          <th className="text-right px-4 py-2 font-medium text-muted-foreground">{t("Bénéfice brut", "الربح الإجمالي")}</th>
-                          <th className="text-right px-4 py-2 font-medium text-muted-foreground">{t("Marge", "الهامش")}</th>
+                          {canViewProfit && <th className="text-right px-4 py-2 font-medium text-muted-foreground">{t("COGS", "تكلفة البضاعة")}</th>}
+                          {canViewProfit && <th className="text-right px-4 py-2 font-medium text-muted-foreground">{t("Bénéfice brut", "الربح الإجمالي")}</th>}
+                          {canViewProfit && <th className="text-right px-4 py-2 font-medium text-muted-foreground">{t("Marge", "الهامش")}</th>}
                           <th className="text-right px-4 py-2 font-medium text-muted-foreground">{t("Stock", "المخزون")}</th>
                         </tr>
                       </thead>
                       <tbody>
                         {productRows.length === 0 && (
                           <tr>
-                            <td colSpan={7} className="text-center py-8 text-muted-foreground text-sm">
+                            <td colSpan={canViewProfit ? 7 : 4} className="text-center py-8 text-muted-foreground text-sm">
                               {t("Aucune donnée pour cette période", "لا توجد بيانات لهذه الفترة")}
                             </td>
                           </tr>
@@ -335,13 +348,17 @@ export default function Reports() {
                             </td>
                             <td className="px-4 py-2.5 text-right">{row.totalSold.toLocaleString()}</td>
                             <td className="px-4 py-2.5 text-right font-medium">{fmt(row.totalRevenue)} {currency}</td>
-                            <td className="px-4 py-2.5 text-right text-muted-foreground">{fmt(row.totalCogs)} {currency}</td>
-                            <td className={`px-4 py-2.5 text-right font-semibold ${row.grossProfit >= 0 ? "text-emerald-600" : "text-red-500"}`}>
-                              {fmt(row.grossProfit)} {currency}
-                            </td>
-                            <td className="px-4 py-2.5 text-right">
-                              <MarginBadge margin={row.grossMargin} />
-                            </td>
+                            {canViewProfit && <td className="px-4 py-2.5 text-right text-muted-foreground">{fmt(row.totalCogs)} {currency}</td>}
+                            {canViewProfit && (
+                              <td className={`px-4 py-2.5 text-right font-semibold ${row.grossProfit >= 0 ? "text-emerald-600" : "text-red-500"}`}>
+                                {fmt(row.grossProfit)} {currency}
+                              </td>
+                            )}
+                            {canViewProfit && (
+                              <td className="px-4 py-2.5 text-right">
+                                <MarginBadge margin={row.grossMargin} />
+                              </td>
+                            )}
                             <td className="px-4 py-2.5 text-right">
                               <span className={`text-xs font-medium ${row.stock < 5 ? "text-red-500" : "text-foreground"}`}>
                                 {row.stock}
@@ -397,16 +414,16 @@ export default function Reports() {
                           <th className="text-left px-4 py-2 font-medium text-muted-foreground">{t("Client", "العميل")}</th>
                           <th className="text-right px-4 py-2 font-medium text-muted-foreground">{t("Commandes", "الطلبات")}</th>
                           <th className="text-right px-4 py-2 font-medium text-muted-foreground">{t("Chiffre d'affaires", "الإيراد")}</th>
-                          <th className="text-right px-4 py-2 font-medium text-muted-foreground">{t("COGS", "تكلفة البضاعة")}</th>
-                          <th className="text-right px-4 py-2 font-medium text-muted-foreground">{t("Bénéfice brut", "الربح الإجمالي")}</th>
-                          <th className="text-right px-4 py-2 font-medium text-muted-foreground">{t("Marge", "الهامش")}</th>
+                          {canViewProfit && <th className="text-right px-4 py-2 font-medium text-muted-foreground">{t("COGS", "تكلفة البضاعة")}</th>}
+                          {canViewProfit && <th className="text-right px-4 py-2 font-medium text-muted-foreground">{t("Bénéfice brut", "الربح الإجمالي")}</th>}
+                          {canViewProfit && <th className="text-right px-4 py-2 font-medium text-muted-foreground">{t("Marge", "الهامش")}</th>}
                           <th className="text-right px-4 py-2 font-medium text-muted-foreground">{t("Solde", "الرصيد")}</th>
                         </tr>
                       </thead>
                       <tbody>
                         {customerRows.length === 0 && (
                           <tr>
-                            <td colSpan={7} className="text-center py-8 text-muted-foreground text-sm">
+                            <td colSpan={canViewProfit ? 7 : 4} className="text-center py-8 text-muted-foreground text-sm">
                               {t("Aucun client enregistré pour cette période", "لا يوجد عملاء مسجلون لهذه الفترة")}
                             </td>
                           </tr>
@@ -420,13 +437,17 @@ export default function Reports() {
                             </td>
                             <td className="px-4 py-2.5 text-right">{row.totalOrders}</td>
                             <td className="px-4 py-2.5 text-right font-medium">{fmt(row.totalRevenue)} {currency}</td>
-                            <td className="px-4 py-2.5 text-right text-muted-foreground">{fmt(row.totalCogs)} {currency}</td>
-                            <td className={`px-4 py-2.5 text-right font-semibold ${row.grossProfit >= 0 ? "text-emerald-600" : "text-red-500"}`}>
-                              {fmt(row.grossProfit)} {currency}
-                            </td>
-                            <td className="px-4 py-2.5 text-right">
-                              <MarginBadge margin={row.grossMargin} />
-                            </td>
+                            {canViewProfit && <td className="px-4 py-2.5 text-right text-muted-foreground">{fmt(row.totalCogs)} {currency}</td>}
+                            {canViewProfit && (
+                              <td className={`px-4 py-2.5 text-right font-semibold ${row.grossProfit >= 0 ? "text-emerald-600" : "text-red-500"}`}>
+                                {fmt(row.grossProfit)} {currency}
+                              </td>
+                            )}
+                            {canViewProfit && (
+                              <td className="px-4 py-2.5 text-right">
+                                <MarginBadge margin={row.grossMargin} />
+                              </td>
+                            )}
                             <td className={`px-4 py-2.5 text-right font-medium ${row.currentBalance > 0 ? "text-red-500" : "text-emerald-600"}`}>
                               {fmt(row.currentBalance)} {currency}
                             </td>

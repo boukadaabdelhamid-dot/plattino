@@ -5,6 +5,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useLang } from "@/hooks/use-lang";
 import { useAuth } from "@/hooks/use-auth";
+import { usePermissions } from "@/hooks/use-permissions";
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Legend,
 } from "recharts";
@@ -445,7 +446,7 @@ function GeneralTab({ t, currency, lang, storeId }: { t: TFn; currency: string; 
 // ─── Ventes tab ───────────────────────────────────────────────────
 const VENTES_PAGE_SIZE = 20;
 
-function VentesTab({ t, currency, storeId }: { t: TFn; currency: string; storeId?: string }) {
+function VentesTab({ t, currency, storeId, canViewProfit }: { t: TFn; currency: string; storeId?: string; canViewProfit: boolean }) {
   const today = new Date().toISOString().slice(0, 10);
   const defaultFrom = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
 
@@ -541,13 +542,13 @@ function VentesTab({ t, currency, storeId }: { t: TFn; currency: string; storeId
                   <th className="py-2.5 px-4 text-right font-semibold text-muted-foreground text-xs uppercase tracking-wide">{t("Réduction", "التخفيض")}</th>
                   <th className="py-2.5 px-4 text-right font-semibold text-muted-foreground text-xs uppercase tracking-wide">{t("Retours", "المرتجعات")}</th>
                   <th className="py-2.5 px-4 text-right font-semibold text-muted-foreground text-xs uppercase tracking-wide">{t("Charges", "المصاريف")}</th>
-                  <th className="py-2.5 px-4 text-right font-semibold text-muted-foreground text-xs uppercase tracking-wide">{t("Bénéfice net", "الربح الصافي")}</th>
+                  {canViewProfit && <th className="py-2.5 px-4 text-right font-semibold text-muted-foreground text-xs uppercase tracking-wide">{t("Bénéfice net", "الربح الصافي")}</th>}
                 </tr>
               </thead>
               <tbody>
                 {pageRows.length === 0 ? (
                   <tr>
-                    <td colSpan={6} className="py-12 text-center text-muted-foreground italic text-sm">
+                    <td colSpan={canViewProfit ? 6 : 5} className="py-12 text-center text-muted-foreground italic text-sm">
                       {t("Aucune vente sur cette période", "لا توجد مبيعات في هذه الفترة")}
                     </td>
                   </tr>
@@ -559,7 +560,7 @@ function VentesTab({ t, currency, storeId }: { t: TFn; currency: string; storeId
                       <td className="py-2.5 px-4 text-right tabular-nums">{fmtNum(row.reduction)}</td>
                       <td className="py-2.5 px-4 text-right tabular-nums text-amber-700">{fmtNum(row.retours)}</td>
                       <td className="py-2.5 px-4 text-right tabular-nums text-amber-700">{fmtNum(row.charges)}</td>
-                      <td className={`py-2.5 px-4 text-right font-semibold tabular-nums ${Number(row.benefice) < 0 ? "text-rose-700" : "text-emerald-700"}`}>{fmtNum(row.benefice)}</td>
+                      {canViewProfit && <td className={`py-2.5 px-4 text-right font-semibold tabular-nums ${Number(row.benefice) < 0 ? "text-rose-700" : "text-emerald-700"}`}>{fmtNum(row.benefice)}</td>}
                     </tr>
                   ))
                 )}
@@ -570,7 +571,7 @@ function VentesTab({ t, currency, storeId }: { t: TFn; currency: string; storeId
                     <td className="py-2.5 px-4 text-right tabular-nums font-semibold text-rose-800">{fmtNum(totals.reduction)}</td>
                     <td className="py-2.5 px-4 text-right tabular-nums font-semibold text-rose-800">{fmtNum(totals.retours)}</td>
                     <td className="py-2.5 px-4 text-right tabular-nums font-semibold text-rose-800">{fmtNum(totals.charges)}</td>
-                    <td className="py-2.5 px-4 text-right font-bold tabular-nums text-rose-800">{fmtNum(totals.benefice)}</td>
+                    {canViewProfit && <td className="py-2.5 px-4 text-right font-bold tabular-nums text-rose-800">{fmtNum(totals.benefice)}</td>}
                   </tr>
                 )}
               </tbody>
@@ -951,7 +952,7 @@ function SortIcon({ active, dir }: { active: boolean; dir: "asc" | "desc" }) {
   return dir === "asc" ? <ChevronUp className="h-3 w-3 shrink-0" /> : <ChevronDown className="h-3 w-3 shrink-0" />;
 }
 
-function VentePlusTab({ t, currency, storeId }: { t: TFn; currency: string; storeId?: string }) {
+function VentePlusTab({ t, currency, storeId, canViewProfit }: { t: TFn; currency: string; storeId?: string; canViewProfit: boolean }) {
   const today = new Date().toISOString().slice(0, 10);
   const defaultFrom = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
 
@@ -1056,7 +1057,7 @@ function VentePlusTab({ t, currency, storeId }: { t: TFn; currency: string; stor
     { key: "qte_vendue",  fr: "Qté",         ar: "الكمية",       numeric: true },
     { key: "pu",          fr: "PU",          ar: "س.الوحدة",     numeric: true },
     { key: "montant",     fr: "Montant",     ar: "المبلغ",       numeric: true },
-    { key: "benefice",    fr: "Bénéfice",    ar: "الأرباح",      numeric: true },
+    ...(canViewProfit ? [{ key: "benefice" as VPSortCol, fr: "Bénéfice", ar: "الأرباح", numeric: true }] : []),
   ];
 
   return (
@@ -1129,7 +1130,7 @@ function VentePlusTab({ t, currency, storeId }: { t: TFn; currency: string; stor
               </thead>
               <tbody>
                 {pageRows.length === 0 ? (
-                  <tr><td colSpan={8} className="py-12 text-center text-muted-foreground italic text-sm">
+                  <tr><td colSpan={canViewProfit ? 8 : 7} className="py-12 text-center text-muted-foreground italic text-sm">
                     {t("Aucune vente sur cette période", "لا توجد مبيعات في هذه الفترة")}
                   </td></tr>
                 ) : pageRows.map((row, i) => {
@@ -1156,9 +1157,11 @@ function VentePlusTab({ t, currency, storeId }: { t: TFn; currency: string; stor
                     <td className={`py-2 px-3 tabular-nums font-bold text-right ${isRetour ? "text-rose-700" : ""}`}>
                       {fmtNum(row.montant)}
                     </td>
-                    <td className={`py-2 px-3 tabular-nums font-semibold text-right ${isRetour ? "text-rose-700" : "text-emerald-700"}`}>
-                      {fmtNum(row.benefice)}
-                    </td>
+                    {canViewProfit && (
+                      <td className={`py-2 px-3 tabular-nums font-semibold text-right ${isRetour ? "text-rose-700" : "text-emerald-700"}`}>
+                        {fmtNum(row.benefice)}
+                      </td>
+                    )}
                     <td className="py-2 px-3 text-center">
                       {!isRetour && (
                         <button onClick={() => setSelected(row)} className="text-teal-600 hover:text-teal-800 transition-colors" aria-label="Détails">
@@ -1179,7 +1182,7 @@ function VentePlusTab({ t, currency, storeId }: { t: TFn; currency: string; stor
                     <td className="py-2 px-3 tabular-nums font-bold text-right text-rose-800">{gTot.qte.toLocaleString("fr-DZ")}</td>
                     <td />
                     <td className="py-2 px-3 tabular-nums font-bold text-right text-rose-800">{fmtNum(gTot.montant)}</td>
-                    <td className="py-2 px-3 tabular-nums font-bold text-right text-rose-800">{fmtNum(gTot.benefice)}</td>
+                    {canViewProfit && <td className="py-2 px-3 tabular-nums font-bold text-right text-rose-800">{fmtNum(gTot.benefice)}</td>}
                     <td />
                   </tr>
                 )}
@@ -1238,17 +1241,19 @@ function VentePlusTab({ t, currency, storeId }: { t: TFn; currency: string; stor
                   { label: t("Qté vendue", "الكمية"), value: Number(selected.qte_vendue).toLocaleString("fr-DZ"), cls: "bg-muted/30" },
                   { label: t("Prix moyen", "متوسط السعر"), value: `${fmtNum(selected.pu)} ${currency}`, cls: "bg-muted/30" },
                   { label: t("Montant total", "الإجمالي"), value: `${fmtNum(selected.montant)} ${currency}`, cls: "bg-emerald-50 border border-emerald-100" },
-                  { label: t("Bénéfice", "الأرباح"), value: `${fmtNum(selected.benefice)} ${currency}`, cls: "bg-emerald-50 border border-emerald-100" },
+                  ...(canViewProfit ? [{ label: t("Bénéfice", "الأرباح"), value: `${fmtNum(selected.benefice)} ${currency}`, cls: "bg-emerald-50 border border-emerald-100" }] : []),
                 ].map(({ label, value, cls }) => (
                   <div key={label} className={`rounded-md p-2.5 text-center ${cls}`}>
                     <div className="text-xs text-muted-foreground">{label}</div>
                     <div className="font-bold text-base tabular-nums">{value}</div>
                   </div>
                 ))}
-                <div className="col-span-2 bg-primary/5 rounded-md p-3 text-center border border-primary/10">
-                  <div className="text-xs text-muted-foreground mb-1">{t("Marge bénéficiaire", "هامش الربح")}</div>
-                  <div className="font-bold text-3xl tabular-nums text-primary">{marge}%</div>
-                </div>
+                {canViewProfit && (
+                  <div className="col-span-2 bg-primary/5 rounded-md p-3 text-center border border-primary/10">
+                    <div className="text-xs text-muted-foreground mb-1">{t("Marge bénéficiaire", "هامش الربح")}</div>
+                    <div className="font-bold text-3xl tabular-nums text-primary">{marge}%</div>
+                  </div>
+                )}
               </div>
             </div>
           )}
@@ -1259,16 +1264,16 @@ function VentePlusTab({ t, currency, storeId }: { t: TFn; currency: string; stor
 }
 
 // ─── Tab config ───────────────────────────────────────────────────
-const TABS = [
-  { value: "general",      labelFr: "Général",      labelAr: "عام",        icon: LayoutDashboard },
-  { value: "ventes",       labelFr: "Ventes",       labelAr: "المبيعات",   icon: ShoppingCart },
-  { value: "vente-plus",   labelFr: "Vente+",       labelAr: "مبيعات+",    icon: TrendingUp },
-  { value: "benefice",     labelFr: "Bénéfice",     labelAr: "الأرباح",    icon: TrendingUp },
-  { value: "clients",      labelFr: "Clients",      labelAr: "العملاء",    icon: Users },
-  { value: "employes",     labelFr: "Employés",     labelAr: "الموظفون",   icon: UserCog },
-  { value: "stock",        labelFr: "Stock",        labelAr: "المخزون",    icon: Package },
-  { value: "caisses",      labelFr: "Caisses",      labelAr: "الصناديق",   icon: Wallet },
-  { value: "fournisseurs", labelFr: "Fournisseurs", labelAr: "الموردون",   icon: Truck },
+const ALL_TABS = [
+  { value: "general",      labelFr: "Général",      labelAr: "عام",        icon: LayoutDashboard, profitOnly: false },
+  { value: "ventes",       labelFr: "Ventes",       labelAr: "المبيعات",   icon: ShoppingCart,    profitOnly: false },
+  { value: "vente-plus",   labelFr: "Vente+",       labelAr: "مبيعات+",    icon: TrendingUp,      profitOnly: false },
+  { value: "benefice",     labelFr: "Bénéfice",     labelAr: "الأرباح",    icon: TrendingUp,      profitOnly: true  },
+  { value: "clients",      labelFr: "Clients",      labelAr: "العملاء",    icon: Users,           profitOnly: false },
+  { value: "employes",     labelFr: "Employés",     labelAr: "الموظفون",   icon: UserCog,         profitOnly: false },
+  { value: "stock",        labelFr: "Stock",        labelAr: "المخزون",    icon: Package,         profitOnly: false },
+  { value: "caisses",      labelFr: "Caisses",      labelAr: "الصناديق",   icon: Wallet,          profitOnly: false },
+  { value: "fournisseurs", labelFr: "Fournisseurs", labelAr: "الموردون",   icon: Truck,           profitOnly: false },
 ] as const;
 
 // ─── Dashboard page ───────────────────────────────────────────────
@@ -1279,6 +1284,10 @@ export default function Dashboard() {
 
   const { token } = useAuth();
   const isAdmin = getTokenRole(token) === "admin";
+  const { can } = usePermissions();
+  const canViewProfit = can("products", "view_purchase_price");
+
+  const TABS = ALL_TABS.filter(tab => !tab.profitOnly || canViewProfit);
 
   const [selectedStore, setSelectedStore] = useState<string>("all");
   const [stores, setStores] = useState<{ id: number; nameAr: string; nameEn: string }[]>([]);
@@ -1341,14 +1350,16 @@ export default function Dashboard() {
           <GeneralTab t={t} currency={currency} lang={lang} storeId={storeIdParam} />
         </TabsContent>
         <TabsContent value="ventes" className="flex-1 mt-4 outline-none ring-0 focus-visible:ring-0">
-          <VentesTab t={t} currency={currency} storeId={storeIdParam} />
+          <VentesTab t={t} currency={currency} storeId={storeIdParam} canViewProfit={canViewProfit} />
         </TabsContent>
         <TabsContent value="vente-plus" className="flex-1 mt-4 outline-none ring-0 focus-visible:ring-0">
-          <VentePlusTab t={t} currency={currency} storeId={storeIdParam} />
+          <VentePlusTab t={t} currency={currency} storeId={storeIdParam} canViewProfit={canViewProfit} />
         </TabsContent>
-        <TabsContent value="benefice" className="flex-1 mt-4 outline-none ring-0 focus-visible:ring-0">
-          <BeneficeTab t={t} currency={currency} storeId={storeIdParam} />
-        </TabsContent>
+        {canViewProfit && (
+          <TabsContent value="benefice" className="flex-1 mt-4 outline-none ring-0 focus-visible:ring-0">
+            <BeneficeTab t={t} currency={currency} storeId={storeIdParam} />
+          </TabsContent>
+        )}
         <TabsContent value="clients" className="flex-1 mt-4 outline-none ring-0 focus-visible:ring-0">
           <ClientsTab t={t} currency={currency} storeId={storeIdParam} />
         </TabsContent>

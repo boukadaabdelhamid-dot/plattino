@@ -2,6 +2,7 @@ import React, { useState, useMemo } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useGetErpCustomers, useGetProducts, type CustomerSummary, type Product } from "@workspace/api-client-react";
 import { useLang } from "@/hooks/use-lang";
+import { usePermissions } from "@/hooks/use-permissions";
 import { useCurrentStore } from "@/hooks/use-current-store";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -128,6 +129,8 @@ export default function SaleOrders() {
   const { lang } = useLang();
   const t = (fr: string, ar: string) => lang === "ar" ? ar : fr;
   const currency = lang === "ar" ? "دج" : "DA";
+  const { can } = usePermissions();
+  const canViewProfit = can("orders", "view_profit");
   const store = useCurrentStore();
   const qc = useQueryClient();
 
@@ -262,7 +265,7 @@ export default function SaleOrders() {
       </div>
 
       {/* KPIs */}
-      <div className="grid grid-cols-3 gap-4">
+      <div className={`grid ${canViewProfit ? "grid-cols-3" : "grid-cols-2"} gap-4`}>
         <div className="rounded-lg border bg-card p-4">
           <p className="text-xs text-muted-foreground">{t("Total bons", "إجمالي البونات")}</p>
           <p className="text-2xl font-bold mt-1">{orders.length}</p>
@@ -271,6 +274,7 @@ export default function SaleOrders() {
           <p className="text-xs text-muted-foreground">{t("Chiffre d'affaires", "رقم الأعمال")}</p>
           <p className="text-2xl font-bold mt-1">{totalCA.toFixed(2)} <span className="text-sm font-normal">{currency}</span></p>
         </div>
+        {canViewProfit && (
         <div className="rounded-lg border bg-card p-4">
           <p className="text-xs text-muted-foreground flex items-center gap-1">
             <TrendingUp className="h-3 w-3 text-emerald-600" />
@@ -280,6 +284,7 @@ export default function SaleOrders() {
             {totalBenefice.toFixed(2)} <span className="text-sm font-normal">{currency}</span>
           </p>
         </div>
+        )}
       </div>
 
       {/* Filters */}
@@ -312,7 +317,7 @@ export default function SaleOrders() {
               <TableHead className="text-xs">{t("Client", "العميل")}</TableHead>
               <TableHead className="text-xs">{t("Date", "التاريخ")}</TableHead>
               <TableHead className="text-xs text-right">{t("Montant", "المبلغ")}</TableHead>
-              <TableHead className="text-xs text-right">{t("Bénéfice", "الربح")}</TableHead>
+              {canViewProfit && <TableHead className="text-xs text-right">{t("Bénéfice", "الربح")}</TableHead>}
               <TableHead className="text-xs">{t("État", "الحالة")}</TableHead>
               <TableHead className="text-xs w-8" />
             </TableRow>
@@ -363,11 +368,13 @@ export default function SaleOrders() {
                   <TableCell className="text-right font-semibold text-sm">
                     {parseFloat(order.total_amount).toFixed(2)} {currency}
                   </TableCell>
+                  {canViewProfit && (
                   <TableCell className="text-right text-sm">
                     <span className={benefice >= 0 ? "text-emerald-600 font-semibold" : "text-red-600 font-semibold"}>
                       {benefice >= 0 ? "+" : ""}{benefice.toFixed(2)} {currency}
                     </span>
                   </TableCell>
+                  )}
                   <TableCell>
                     <span className={`inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full border ${statusColor(order.status)}`}>
                       {isDelivered && <Lock className="h-2.5 w-2.5" />}
@@ -954,6 +961,8 @@ function SaleOrderViewDialog({ open, onOpenChange, order }: {
   order: SaleOrderDetail | null;
 }) {
   const { lang } = useLang();
+  const { can } = usePermissions();
+  const canViewProfit = can("orders", "view_profit");
   const t = (fr: string, ar: string) => lang === "ar" ? ar : fr;
   const currency = lang === "ar" ? "دج" : "DA";
   if (!order) return null;
@@ -1020,6 +1029,7 @@ function SaleOrderViewDialog({ open, onOpenChange, order }: {
                   <TableCell colSpan={3} className="text-right font-bold text-sm">{t("Total", "المجموع")}</TableCell>
                   <TableCell className="text-right font-bold">{total.toFixed(2)} {currency}</TableCell>
                 </TableRow>
+                {canViewProfit && (
                 <TableRow>
                   <TableCell colSpan={3} className="text-right text-sm text-muted-foreground">
                     <span className="flex items-center justify-end gap-1">
@@ -1031,6 +1041,7 @@ function SaleOrderViewDialog({ open, onOpenChange, order }: {
                     {benefice >= 0 ? "+" : ""}{benefice.toFixed(2)} {currency}
                   </TableCell>
                 </TableRow>
+                )}
               </TableBody>
             </Table>
           </div>

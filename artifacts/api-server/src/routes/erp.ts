@@ -3568,6 +3568,37 @@ router.delete("/erp/customers/:id/operations/:opId", authenticate, requireAdmin,
   }
 });
 
+// ─── Customer Sale Items (for return dialog) ───────────────────────
+// GET /erp/customers/:id/sale-items
+// Returns all order items purchased by this customer in this store,
+// to allow staff to quickly build a return from the customer's history.
+router.get("/erp/customers/:id/sale-items", authenticate, requireStaff, requireStore, requirePermission("orders", "view"), async (req: AuthRequest, res) => {
+  try {
+    const storeId = req.currentStoreId!;
+    const customerId = pid(req, "id");
+    const result = await db.execute(sql`
+      SELECT
+        oi.product_id      AS "productId",
+        p.name_en          AS "productNameEn",
+        p.name_ar          AS "productNameAr",
+        oi.unit_price      AS "unitPrice",
+        oi.quantity        AS "quantity",
+        o.id               AS "orderId",
+        o.created_at       AS "orderDate",
+        o.order_source     AS "orderSource"
+      FROM orders o
+      JOIN order_items oi ON oi.order_id = o.id
+      LEFT JOIN products p ON p.id = oi.product_id
+      WHERE o.store_id   = ${storeId}
+        AND o.user_id    = ${customerId}
+        AND o.order_source IN ('bon', 'pos')
+        AND o.status     != 'cancelled'
+      ORDER BY o.created_at DESC, oi.id ASC
+    `);
+    res.json(result.rows);
+  } catch (err) { req.log.error(err); res.status(500).json({ error: "Internal server error" }); }
+});
+
 // ─── Customer Classifications ──────────────────────────────────────
 router.get("/erp/customer-classifications", authenticate, requireStaff, requirePermission("customers", "view"), async (req, res) => {
   try {

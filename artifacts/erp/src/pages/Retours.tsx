@@ -16,12 +16,23 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
-import { RotateCcw, Plus, Printer, Trash2, ChevronsUpDown, Check, User } from "lucide-react";
+import { RotateCcw, Plus, Printer, Trash2, ChevronsUpDown, Check, User, Search, ShoppingBag } from "lucide-react";
 import { format } from "date-fns";
 import InvoiceDialog from "@/components/InvoiceDialog";
 import type { InvoiceData } from "@/components/InvoiceTemplate";
 import { useCurrentStore } from "@/hooks/use-current-store";
 import { ProductPickerDialog } from "@/components/pos/ProductPickerDialog";
+
+type CustomerSaleItem = {
+  productId: number;
+  productNameEn: string | null;
+  productNameAr: string | null;
+  unitPrice: string;
+  quantity: number;
+  orderId: number;
+  orderDate: string;
+  orderSource: string;
+};
 
 type RetourLine = {
   productId: number;
@@ -409,10 +420,36 @@ function NouveauRetourDialog({ open, onOpenChange, onCreated }: {
   const [selectedCustomer, setSelectedCustomer] = useState<CustomerSummary | null>(null);
   const [clientComboOpen, setClientComboOpen] = useState(false);
   const [clientSearch, setClientSearch] = useState("");
+  const [saleItemSearch, setSaleItemSearch] = useState("");
   const [reason, setReason] = useState("");
   const [pickerOpen, setPickerOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const clientPickerRef = React.useRef<HTMLDivElement>(null);
+
+  // Fetch past purchase items only when a real named customer is selected
+  const hasRealCustomer = !!(selectedCustomer && selectedCustomer.id !== 0);
+  const { data: customerSaleItems = [], isLoading: saleItemsLoading } = useQuery<CustomerSaleItem[]>({
+    queryKey: ["customer-sale-items", selectedCustomer?.id],
+    queryFn: async () => {
+      const token = localStorage.getItem("midanic_token");
+      const r = await fetch(`${apiBase}/api/erp/customers/${selectedCustomer!.id}/sale-items`, {
+        headers: { Authorization: `Bearer ${token ?? ""}` },
+      });
+      if (!r.ok) return [];
+      return r.json() as Promise<CustomerSaleItem[]>;
+    },
+    enabled: hasRealCustomer,
+    staleTime: 30_000,
+  });
+
+  const filteredSaleItems = useMemo(() => {
+    const q = saleItemSearch.trim().toLowerCase();
+    if (!q) return customerSaleItems;
+    return customerSaleItems.filter((item) =>
+      (item.productNameEn ?? "").toLowerCase().includes(q) ||
+      (item.productNameAr ?? "").toLowerCase().includes(q)
+    );
+  }, [customerSaleItems, saleItemSearch]);
 
   const { data: _custRes } = useGetErpCustomers(
     clientSearch.trim().length > 0 ? { search: clientSearch.trim(), limit: 20 } : { limit: 20 }
@@ -428,6 +465,7 @@ function NouveauRetourDialog({ open, onOpenChange, onCreated }: {
       setSelectedCustomer(null);
       setClientSearch("");
       setClientComboOpen(false);
+      setSaleItemSearch("");
       setReason("");
       setError(null);
     }
@@ -464,6 +502,31 @@ function NouveauRetourDialog({ open, onOpenChange, onCreated }: {
       ];
     });
     setPickerOpen(false);
+  };
+
+  const addFromSaleItem = (item: CustomerSaleItem) => {
+    const designation = (lang === "ar"
+      ? (item.productNameAr || item.productNameEn)
+      : (item.productNameEn || item.productNameAr) || `#${item.productId}`
+    )!.toUpperCase();
+    setLines((prev) => {
+      const idx = prev.findIndex((l) => l.productId === item.productId);
+      if (idx >= 0) {
+        // already in list — just increment by sold qty
+        const next = [...prev];
+        next[idx] = { ...next[idx], qty: next[idx].qty + item.quantity };
+        return next;
+      }
+      return [
+        ...prev,
+        {
+          productId: item.productId,
+          designation,
+          qty: item.quantity,
+          pu: parseFloat(item.unitPrice),
+        },
+      ];
+    });
   };
 
   const removeLine = (productId: number) => setLines((prev) => prev.filter((l) => l.productId !== productId));
@@ -519,7 +582,7 @@ function NouveauRetourDialog({ open, onOpenChange, onCreated }: {
         isPending={createRetour.isPending}
       />
       <Dialog open={open} onOpenChange={onOpenChange}>
-        <DialogContent className="max-w-2xl">
+        <DialogContent className="max-w-3xl">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <RotateCcw className="h-5 w-5 text-amber-600" />
@@ -604,66 +667,179 @@ function NouveauRetourDialog({ open, onOpenChange, onCreated }: {
               </div>
             </div>
 
-            <div className="flex items-center justify-between">
-              <span className="text-sm font-medium">{t("Articles", "المنتجات")} ({lines.length})</span>
-              <Button size="sm" variant="outline" className="h-8 text-xs border-amber-300 text-amber-700 hover:bg-amber-50"
-                onClick={() => setPickerOpen(true)}>
-                <Plus className="h-3.5 w-3.5 mr-1" /> {t("Ajouter article", "إضافة منتج")}
-              </Button>
-            </div>
+            {/* ── Customer past purchases panel ── */}
+            {hasRealCustomer ? (
+              <div className="border rounded-lg overflow-hidden">
+                <div className="flex items-center justify-between px-3 py-2 bg-amber-50 border-b">
+                  <span className="text-xs font-semibold text-amber-800 flex items-center gap-1.5">
+                    <ShoppingBag className="h-3.5 w-3.5" />
+                    {t("Achats de ce client", "مشتريات هذا الزبون")}
+                    {customerSaleItems.length > 0 && (
+                      <span className="text-amber-600 font-normal">({customerSaleItems.length})</span>
+                    )}
+                  </span>
+                  <Button size="sm" variant="outline" className="h-7 text-xs border-amber-300 text-amber-700 hover:bg-amber-100"
+                    onClick={() => setPickerOpen(true)}>
+                    <Plus className="h-3 w-3 mr-1" /> {t("Autre article", "منتج آخر")}
+                  </Button>
+                </div>
 
-            {lines.length > 0 ? (
-              <div className="border rounded overflow-hidden">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>{t("Désignation", "المنتج")}</TableHead>
-                      <TableHead className="text-center w-24">{t("Qté", "الكمية")}</TableHead>
-                      <TableHead className="text-right">{t("P.U.", "السعر")}</TableHead>
-                      <TableHead className="text-right">{t("Total", "المجموع")}</TableHead>
-                      <TableHead className="w-8" />
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {lines.map((line) => (
-                      <TableRow key={line.productId}>
-                        <TableCell className="text-sm font-medium">{line.designation}</TableCell>
-                        <TableCell className="text-center">
-                          <Input
-                            type="number"
-                            min={1}
-                            value={line.qty}
-                            onChange={(e) => setQty(line.productId, parseInt(e.target.value) || 1)}
-                            className="h-7 w-16 text-center text-sm mx-auto"
-                          />
-                        </TableCell>
-                        <TableCell className="text-right text-sm text-muted-foreground">
-                          {line.pu.toFixed(2)} {currency}
-                        </TableCell>
-                        <TableCell className="text-right text-sm font-semibold">
-                          {(line.pu * line.qty).toFixed(2)} {currency}
-                        </TableCell>
-                        <TableCell>
-                          <Button size="icon" variant="ghost" className="h-7 w-7 text-red-500 hover:text-red-700"
-                            onClick={() => removeLine(line.productId)}>
-                            <Trash2 className="h-3.5 w-3.5" />
-                          </Button>
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                    <TableRow className="bg-amber-50">
-                      <TableCell colSpan={3} className="text-right font-semibold text-sm">
-                        {t("Total Retour", "إجمالي الإرجاع")}
-                      </TableCell>
-                      <TableCell className="text-right font-bold text-amber-700">
-                        {total.toFixed(2)} {currency}
-                      </TableCell>
-                      <TableCell />
-                    </TableRow>
-                  </TableBody>
-                </Table>
+                {/* Search */}
+                <div className="px-3 py-2 border-b bg-white">
+                  <div className="relative">
+                    <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
+                    <Input
+                      value={saleItemSearch}
+                      onChange={(e) => setSaleItemSearch(e.target.value)}
+                      placeholder={t("Rechercher un produit acheté...", "البحث عن منتج تم شراؤه...")}
+                      className="h-8 pl-8 text-xs"
+                    />
+                  </div>
+                </div>
+
+                {/* Items list */}
+                <div className="max-h-48 overflow-y-auto">
+                  {saleItemsLoading ? (
+                    <div className="p-3 space-y-2">
+                      {[...Array(3)].map((_, i) => <Skeleton key={i} className="h-8 w-full" />)}
+                    </div>
+                  ) : filteredSaleItems.length === 0 ? (
+                    <div className="py-6 text-center text-xs text-muted-foreground">
+                      {saleItemSearch
+                        ? t("Aucun produit trouvé", "لم يتم العثور على منتج")
+                        : t("Aucun achat trouvé pour ce client", "لا توجد مشتريات لهذا الزبون")}
+                    </div>
+                  ) : (
+                    <table className="w-full text-xs">
+                      <thead className="sticky top-0 bg-muted/60 border-b">
+                        <tr>
+                          <th className="text-left px-3 py-1.5 font-semibold text-muted-foreground uppercase tracking-wide">{t("Produit", "المنتج")}</th>
+                          <th className="text-center px-2 py-1.5 font-semibold text-muted-foreground uppercase tracking-wide w-16">{t("Qté vendue", "الكمية")}</th>
+                          <th className="text-right px-3 py-1.5 font-semibold text-muted-foreground uppercase tracking-wide w-24">{t("Prix payé", "السعر المدفوع")}</th>
+                          <th className="w-20 px-2 py-1.5" />
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {filteredSaleItems.map((item, idx) => {
+                          const name = lang === "ar"
+                            ? (item.productNameAr || item.productNameEn || `#${item.productId}`)
+                            : (item.productNameEn || item.productNameAr || `#${item.productId}`);
+                          const alreadyAdded = lines.some((l) => l.productId === item.productId);
+                          return (
+                            <tr key={`${item.orderId}-${item.productId}-${idx}`}
+                              className="border-b last:border-0 hover:bg-amber-50/50 transition-colors">
+                              <td className="px-3 py-2">
+                                <div className="font-medium truncate max-w-[200px]">{name}</div>
+                                <div className="text-muted-foreground text-[10px]">
+                                  {item.orderSource === "pos" ? "VR" : "BV"}-{String(item.orderId).padStart(5, "0")}
+                                  {" · "}{item.orderDate ? format(new Date(item.orderDate), "dd/MM/yy") : "—"}
+                                </div>
+                              </td>
+                              <td className="text-center px-2 py-2 font-semibold">{item.quantity}</td>
+                              <td className="text-right px-3 py-2 text-muted-foreground">
+                                {parseFloat(item.unitPrice).toFixed(2)} {currency}
+                              </td>
+                              <td className="px-2 py-2 text-right">
+                                <button
+                                  type="button"
+                                  onClick={() => addFromSaleItem(item)}
+                                  className={`inline-flex items-center gap-1 text-[10px] font-medium px-2 py-1 rounded border transition-colors ${
+                                    alreadyAdded
+                                      ? "border-amber-400 bg-amber-100 text-amber-700 hover:bg-amber-200"
+                                      : "border-amber-300 bg-white text-amber-700 hover:bg-amber-50"
+                                  }`}
+                                >
+                                  <Plus className="h-2.5 w-2.5" />
+                                  {alreadyAdded ? t("+Ajouter", "+إضافة") : t("Ajouter", "إضافة")}
+                                </button>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  )}
+                </div>
               </div>
             ) : (
+              <div className="flex items-center justify-between">
+                <span className="text-sm font-medium">{t("Articles", "المنتجات")} ({lines.length})</span>
+                <Button size="sm" variant="outline" className="h-8 text-xs border-amber-300 text-amber-700 hover:bg-amber-50"
+                  onClick={() => setPickerOpen(true)}>
+                  <Plus className="h-3.5 w-3.5 mr-1" /> {t("Ajouter article", "إضافة منتج")}
+                </Button>
+              </div>
+            )}
+
+            {/* ── Return lines table ── */}
+            {(hasRealCustomer || lines.length > 0) && (
+              <div>
+                {hasRealCustomer && (
+                  <div className="flex items-center justify-between mb-1.5">
+                    <span className="text-sm font-medium">{t("Articles à retourner", "المنتجات المراد إرجاعها")} ({lines.length})</span>
+                  </div>
+                )}
+                {lines.length > 0 ? (
+                  <div className="border rounded overflow-hidden">
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>{t("Désignation", "المنتج")}</TableHead>
+                          <TableHead className="text-center w-24">{t("Qté", "الكمية")}</TableHead>
+                          <TableHead className="text-right">{t("P.U.", "السعر")}</TableHead>
+                          <TableHead className="text-right">{t("Total", "المجموع")}</TableHead>
+                          <TableHead className="w-8" />
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {lines.map((line) => (
+                          <TableRow key={line.productId}>
+                            <TableCell className="text-sm font-medium">{line.designation}</TableCell>
+                            <TableCell className="text-center">
+                              <Input
+                                type="number"
+                                min={1}
+                                value={line.qty}
+                                onChange={(e) => setQty(line.productId, parseInt(e.target.value) || 1)}
+                                className="h-7 w-16 text-center text-sm mx-auto"
+                              />
+                            </TableCell>
+                            <TableCell className="text-right text-sm text-muted-foreground">
+                              {line.pu.toFixed(2)} {currency}
+                            </TableCell>
+                            <TableCell className="text-right text-sm font-semibold">
+                              {(line.pu * line.qty).toFixed(2)} {currency}
+                            </TableCell>
+                            <TableCell>
+                              <Button size="icon" variant="ghost" className="h-7 w-7 text-red-500 hover:text-red-700"
+                                onClick={() => removeLine(line.productId)}>
+                                <Trash2 className="h-3.5 w-3.5" />
+                              </Button>
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                        <TableRow className="bg-amber-50">
+                          <TableCell colSpan={3} className="text-right font-semibold text-sm">
+                            {t("Total Retour", "إجمالي الإرجاع")}
+                          </TableCell>
+                          <TableCell className="text-right font-bold text-amber-700">
+                            {total.toFixed(2)} {currency}
+                          </TableCell>
+                          <TableCell />
+                        </TableRow>
+                      </TableBody>
+                    </Table>
+                  </div>
+                ) : (
+                  <div className="border rounded py-6 text-center text-xs text-muted-foreground">
+                    {t("Cliquez sur « Ajouter » pour sélectionner des articles à retourner", "اضغط على « إضافة » لاختيار منتجات الإرجاع")}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* When no customer: show empty state for lines */}
+            {!hasRealCustomer && lines.length === 0 && (
               <div className="border rounded py-8 text-center text-sm text-muted-foreground">
                 {t("Aucun article ajouté", "لم يتم إضافة أي منتج")}
               </div>

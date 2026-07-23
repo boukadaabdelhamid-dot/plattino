@@ -1384,6 +1384,100 @@ router.post("/admin/retours", authenticate, requireStaff, requireStore, requireP
       return;
     }
 
+    // When a known client is linked, validate that the quantities being returned
+    // don't exceed what the client actually purchased across all their orders in
+    // this store (already returned qty + new qty ≤ total purchased qty).
+    if (clientUserId) {
+      const productIds = [...new Set(items.map((i) => Number(i.productId)))];
+
+      // Aggregate new request quantities per product
+      const newQtyMap: Record<number, number> = {};
+      for (const item of items) {
+        const id = Number(item.productId);
+        newQtyMap[id] = (newQtyMap[id] ?? 0) + Number(item.quantity);
+      }
+
+      // Total purchased by this client per product (non-cancelled, non-draft)
+      const purchasedRows = await db
+        .select({
+          productId: schema.orderItemsTable.productId,
+          totalQty: sql<number>`COALESCE(SUM(${schema.orderItemsTable.quantity}::numeric), 0)`,
+        })
+        .from(schema.orderItemsTable)
+        .innerJoin(schema.ordersTable, eq(schema.orderItemsTable.orderId, schema.ordersTable.id))
+        .where(
+          and(
+            eq(schema.ordersTable.userId, clientUserId),
+            eq(schema.ordersTable.storeId, storeId),
+            sql`${schema.ordersTable.status} NOT IN ('draft', 'cancelled')`,
+            inArray(schema.orderItemsTable.productId, productIds),
+          )
+        )
+        .groupBy(schema.orderItemsTable.productId);
+
+      const purchasedMap: Record<number, number> = {};
+      for (const row of purchasedRows) {
+        purchasedMap[row.productId] = Number(row.totalQty);
+      }
+
+      // Total already returned by this client per product (via direct client_user_id
+      // or via original_order_id belonging to one of their orders)
+      const alreadyReturnedRows = await db
+        .select({
+          productId: schema.bonRetourItemsTable.productId,
+          returnedQty: sql<number>`COALESCE(SUM(${schema.bonRetourItemsTable.quantity}::numeric), 0)`,
+        })
+        .from(schema.bonRetourItemsTable)
+        .innerJoin(
+          schema.bonRetoursTable,
+          eq(schema.bonRetourItemsTable.bonRetourId, schema.bonRetoursTable.id)
+        )
+        .where(
+          and(
+            eq(schema.bonRetoursTable.storeId, storeId),
+            inArray(schema.bonRetourItemsTable.productId, productIds),
+            sql`(
+              ${schema.bonRetoursTable.clientUserId} = ${clientUserId}
+              OR ${schema.bonRetoursTable.originalOrderId} IN (
+                SELECT id FROM orders WHERE user_id = ${clientUserId} AND store_id = ${storeId}
+              )
+            )`,
+          )
+        )
+        .groupBy(schema.bonRetourItemsTable.productId);
+
+      const returnedMap: Record<number, number> = {};
+      for (const row of alreadyReturnedRows) {
+        returnedMap[row.productId] = Number(row.returnedQty);
+      }
+
+      // Fetch product names for readable error messages
+      const productRows = await db
+        .select({ id: schema.productsTable.id, nameEn: schema.productsTable.nameEn, nameAr: schema.productsTable.nameAr })
+        .from(schema.productsTable)
+        .where(inArray(schema.productsTable.id, productIds));
+      const nameMap: Record<number, string> = {};
+      for (const p of productRows) nameMap[p.id] = p.nameEn || p.nameAr || `#${p.id}`;
+
+      const violations: string[] = [];
+      for (const [productIdStr, newQty] of Object.entries(newQtyMap)) {
+        const productId = Number(productIdStr);
+        const purchased = purchasedMap[productId] ?? 0;
+        const alreadyReturned = returnedMap[productId] ?? 0;
+        const maxReturnable = purchased - alreadyReturned;
+        if (newQty > maxReturnable) {
+          violations.push(
+            `${nameMap[productId] ?? `Produit #${productId}`} : retour demandé ${newQty}, max autorisé ${Math.max(0, maxReturnable)} (acheté ${purchased}, déjà retourné ${alreadyReturned})`
+          );
+        }
+      }
+
+      if (violations.length > 0) {
+        res.status(422).json({ error: violations.join("\n") });
+        return;
+      }
+    }
+
     let retourCaisseId: number | null = null;
     const result = await db.transaction(async (tx) => {
       const [bonRetour] = await tx.insert(schema.bonRetoursTable).values({

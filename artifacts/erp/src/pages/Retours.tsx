@@ -29,6 +29,7 @@ type CustomerSaleItem = {
   productNameAr: string | null;
   unitPrice: string;
   quantity: number;
+  returnedQty: number;
   orderId: number;
   orderDate: string;
   orderSource: string;
@@ -505,6 +506,8 @@ function NouveauRetourDialog({ open, onOpenChange, onCreated }: {
   };
 
   const addFromSaleItem = (item: CustomerSaleItem) => {
+    const returnableQty = Math.max(0, item.quantity - (item.returnedQty ?? 0));
+    if (returnableQty === 0) return;
     const designation = (lang === "ar"
       ? (item.productNameAr || item.productNameEn)
       : (item.productNameEn || item.productNameAr) || `#${item.productId}`
@@ -512,9 +515,9 @@ function NouveauRetourDialog({ open, onOpenChange, onCreated }: {
     setLines((prev) => {
       const idx = prev.findIndex((l) => l.productId === item.productId);
       if (idx >= 0) {
-        // already in list — just increment by sold qty
+        // already in list — increment by returnable qty
         const next = [...prev];
-        next[idx] = { ...next[idx], qty: next[idx].qty + item.quantity };
+        next[idx] = { ...next[idx], qty: next[idx].qty + returnableQty };
         return next;
       }
       return [
@@ -522,7 +525,7 @@ function NouveauRetourDialog({ open, onOpenChange, onCreated }: {
         {
           productId: item.productId,
           designation,
-          qty: item.quantity,
+          qty: returnableQty,
           pu: parseFloat(item.unitPrice),
         },
       ];
@@ -714,7 +717,9 @@ function NouveauRetourDialog({ open, onOpenChange, onCreated }: {
                       <thead className="sticky top-0 bg-muted/60 border-b">
                         <tr>
                           <th className="text-left px-3 py-1.5 font-semibold text-muted-foreground uppercase tracking-wide">{t("Produit", "المنتج")}</th>
-                          <th className="text-center px-2 py-1.5 font-semibold text-muted-foreground uppercase tracking-wide w-16">{t("Qté vendue", "الكمية")}</th>
+                          <th className="text-center px-2 py-1.5 font-semibold text-muted-foreground uppercase tracking-wide w-20">{t("Vendue", "مباعة")}</th>
+                          <th className="text-center px-2 py-1.5 font-semibold text-muted-foreground uppercase tracking-wide w-20">{t("Retournée", "مُرجعة")}</th>
+                          <th className="text-center px-2 py-1.5 font-semibold text-muted-foreground uppercase tracking-wide w-20">{t("Restante", "متبقية")}</th>
                           <th className="text-right px-3 py-1.5 font-semibold text-muted-foreground uppercase tracking-wide w-24">{t("Prix payé", "السعر المدفوع")}</th>
                           <th className="w-20 px-2 py-1.5" />
                         </tr>
@@ -724,33 +729,47 @@ function NouveauRetourDialog({ open, onOpenChange, onCreated }: {
                           const name = lang === "ar"
                             ? (item.productNameAr || item.productNameEn || `#${item.productId}`)
                             : (item.productNameEn || item.productNameAr || `#${item.productId}`);
+                          const returnedQty = item.returnedQty ?? 0;
+                          const returnableQty = Math.max(0, item.quantity - returnedQty);
+                          const exhausted = returnableQty === 0;
                           const alreadyAdded = lines.some((l) => l.productId === item.productId);
                           return (
                             <tr key={`${item.orderId}-${item.productId}-${idx}`}
-                              className="border-b last:border-0 hover:bg-amber-50/50 transition-colors">
+                              className={`border-b last:border-0 transition-colors ${exhausted ? "opacity-50 bg-gray-50" : "hover:bg-amber-50/50"}`}>
                               <td className="px-3 py-2">
-                                <div className="font-medium truncate max-w-[200px]">{name}</div>
+                                <div className="font-medium truncate max-w-[180px]">{name}</div>
                                 <div className="text-muted-foreground text-[10px]">
                                   {item.orderSource === "pos" ? "VR" : "BV"}-{String(item.orderId).padStart(5, "0")}
                                   {" · "}{item.orderDate ? format(new Date(item.orderDate), "dd/MM/yy") : "—"}
                                 </div>
                               </td>
                               <td className="text-center px-2 py-2 font-semibold">{item.quantity}</td>
+                              <td className="text-center px-2 py-2 text-red-600 font-medium">
+                                {returnedQty > 0 ? returnedQty : <span className="text-muted-foreground">—</span>}
+                              </td>
+                              <td className="text-center px-2 py-2">
+                                <span className={`font-semibold ${exhausted ? "text-gray-400" : "text-emerald-700"}`}>
+                                  {returnableQty}
+                                </span>
+                              </td>
                               <td className="text-right px-3 py-2 text-muted-foreground">
                                 {parseFloat(item.unitPrice).toFixed(2)} {currency}
                               </td>
                               <td className="px-2 py-2 text-right">
                                 <button
                                   type="button"
-                                  onClick={() => addFromSaleItem(item)}
+                                  disabled={exhausted}
+                                  onClick={() => !exhausted && addFromSaleItem(item)}
                                   className={`inline-flex items-center gap-1 text-[10px] font-medium px-2 py-1 rounded border transition-colors ${
-                                    alreadyAdded
-                                      ? "border-amber-400 bg-amber-100 text-amber-700 hover:bg-amber-200"
-                                      : "border-amber-300 bg-white text-amber-700 hover:bg-amber-50"
+                                    exhausted
+                                      ? "border-gray-200 bg-gray-100 text-gray-400 cursor-not-allowed"
+                                      : alreadyAdded
+                                        ? "border-amber-400 bg-amber-100 text-amber-700 hover:bg-amber-200"
+                                        : "border-amber-300 bg-white text-amber-700 hover:bg-amber-50"
                                   }`}
                                 >
                                   <Plus className="h-2.5 w-2.5" />
-                                  {alreadyAdded ? t("+Ajouter", "+إضافة") : t("Ajouter", "إضافة")}
+                                  {exhausted ? t("Épuisé", "مُكتمل") : alreadyAdded ? t("+Ajouter", "+إضافة") : t("Ajouter", "إضافة")}
                                 </button>
                               </td>
                             </tr>

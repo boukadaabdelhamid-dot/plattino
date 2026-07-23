@@ -3576,24 +3576,48 @@ router.get("/erp/customers/:id/sale-items", authenticate, requireStaff, requireS
   try {
     const storeId = req.currentStoreId!;
     const customerId = pid(req, "id");
+    // Group by product so each product appears once with total qty sold and
+    // total qty returned. This ensures the returnableQty (sold − returned) is
+    // correct even when the same product was purchased across multiple orders.
+    // returnedQty aggregates ALL customer returns for that product in this store:
+    // both order-linked (original_order_id IN customer's orders) and standalone
+    // (client_user_id = customer, original_order_id IS NULL), so a return created
+    // from this panel (standalone) is counted on the next fetch.
     const result = await db.execute(sql`
       SELECT
-        oi.product_id      AS "productId",
-        p.name_en          AS "productNameEn",
-        p.name_ar          AS "productNameAr",
-        oi.unit_price      AS "unitPrice",
-        oi.quantity        AS "quantity",
-        o.id               AS "orderId",
-        o.created_at       AS "orderDate",
-        o.order_source     AS "orderSource"
+        oi.product_id                     AS "productId",
+        p.name_en                         AS "productNameEn",
+        p.name_ar                         AS "productNameAr",
+        MAX(oi.unit_price)                AS "unitPrice",
+        SUM(oi.quantity)::int             AS "quantity",
+        MAX(o.id)                         AS "orderId",
+        MAX(o.created_at)                 AS "orderDate",
+        MAX(o.order_source)               AS "orderSource",
+        COALESCE(ret.returned_qty, 0)::int AS "returnedQty"
       FROM orders o
       JOIN order_items oi ON oi.order_id = o.id
       LEFT JOIN products p ON p.id = oi.product_id
-      WHERE o.store_id   = ${storeId}
-        AND o.user_id    = ${customerId}
-        AND o.order_source IN ('bon', 'pos')
-        AND o.status     != 'cancelled'
-      ORDER BY o.created_at DESC, oi.id ASC
+      LEFT JOIN (
+        SELECT bri.product_id,
+               SUM(bri.quantity)::int AS returned_qty
+        FROM bon_retour_items bri
+        JOIN bon_retours br ON br.id = bri.bon_retour_id
+        WHERE br.store_id = ${storeId}
+          AND (
+            br.original_order_id IN (
+              SELECT id FROM orders
+              WHERE user_id = ${customerId} AND store_id = ${storeId}
+            )
+            OR (br.client_user_id = ${customerId} AND br.original_order_id IS NULL)
+          )
+        GROUP BY bri.product_id
+      ) ret ON ret.product_id = oi.product_id
+      WHERE o.store_id       = ${storeId}
+        AND o.user_id        = ${customerId}
+        AND o.order_source  IN ('bon', 'pos')
+        AND o.status        != 'cancelled'
+      GROUP BY oi.product_id, p.name_en, p.name_ar, ret.returned_qty
+      ORDER BY MAX(o.created_at) DESC
     `);
     res.json(result.rows);
   } catch (err) { req.log.error(err); res.status(500).json({ error: "Internal server error" }); }

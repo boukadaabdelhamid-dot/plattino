@@ -359,21 +359,42 @@ router.get("/erp/dashboard/client-receivables", authenticate, requireStaff, requ
 router.get("/erp/dashboard/supplier-debts", authenticate, requireStaff, requireStore, requirePermission("dashboard", "view"), async (req: AuthRequest, res) => {
   try {
     const sid = dashboardStoreId(req);
-    const storeFilter = sid !== null ? sql` AND store_id = ${sid}` : sql``;
-    // Cross-store linked suppliers (same global_supplier_id) exist as one row per
-    // store, each carrying the SAME synced balance. When viewing all stores,
-    // collapse every unified supplier to a single row (DISTINCT ON) so the count
-    // and Total Dettes are not multiplied by the number of linked stores. Unlinked
-    // suppliers (global_supplier_id IS NULL) stay distinct, keyed by their own id.
+    const storeFilter = sid !== null ? sql` AND s.store_id = ${sid}` : sql``;
+    // Cross-store linked suppliers exist as one row per store, each carrying the
+    // SAME synced balance. Collapse every unified supplier to a single row via
+    // DISTINCT ON so Total Dettes is never multiplied by the number of linked stores.
+    // Dedup key priority (first non-null wins):
+    //   1. s.global_supplier_id   — set by import-to-stores (most explicit link)
+    //   2. c.global_contact_id    — unified-contact system; covers customer_supplier
+    //      contacts linked via the contact layer without going through import-to-stores
+    //   3. 'id:' || s.id          — standalone unlinked supplier (stays distinct)
+    // The balance read is always s.current_balance (pure supplier role — never
+    // contacts.current_balance), so customer_supplier accounting is untouched.
     const result = await db.execute(sql`
       SELECT id, name, balance FROM (
-        SELECT DISTINCT ON (COALESCE(global_supplier_id::text, 'id:' || id::text))
-               id, name,
-               ROUND(CAST(current_balance AS numeric), 2) AS balance
-        FROM suppliers
-        WHERE CAST(current_balance AS numeric) < 0
+        SELECT DISTINCT ON (
+                 COALESCE(
+                   s.global_supplier_id::text,
+                   CASE WHEN c.global_contact_id IS NOT NULL
+                        THEN 'gc:' || c.global_contact_id
+                        ELSE NULL END,
+                   'id:' || s.id::text
+                 )
+               )
+               s.id, s.name,
+               ROUND(CAST(s.current_balance AS numeric), 2) AS balance
+        FROM suppliers s
+        LEFT JOIN contacts c ON c.id = s.contact_id
+        WHERE CAST(s.current_balance AS numeric) < 0
         ${storeFilter}
-        ORDER BY COALESCE(global_supplier_id::text, 'id:' || id::text), id
+        ORDER BY
+          COALESCE(
+            s.global_supplier_id::text,
+            CASE WHEN c.global_contact_id IS NOT NULL
+                 THEN 'gc:' || c.global_contact_id
+                 ELSE NULL END,
+            'id:' || s.id::text
+          ), s.id
       ) deduped
       ORDER BY balance ASC
     `);

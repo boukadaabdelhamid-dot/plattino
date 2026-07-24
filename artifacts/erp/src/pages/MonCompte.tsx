@@ -3,6 +3,7 @@ import {
   useGetErpAccountMe, useGetErpCaisseTransfers,
   useAcceptErpCaisseTransfer, useRejectErpCaisseTransfer, useCancelErpCaisseTransfer,
   getGetErpAccountMeQueryKey, getGetErpCaisseTransfersQueryKey, getGetErpCaissesQueryKey,
+  getGetMeQueryKey,
 } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useMe } from "@/hooks/use-me";
@@ -11,8 +12,10 @@ import { useToast } from "@/hooks/use-toast";
 import { usePermissions } from "@/hooks/use-permissions";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
-import { User, Wallet, Send, Inbox, Building2, CheckCircle2, XCircle, Store as StoreIcon } from "lucide-react";
+import { User, Wallet, Send, Inbox, Building2, CheckCircle2, XCircle, Store as StoreIcon, Pencil, X, Loader2 } from "lucide-react";
 import {
   fmtAmount, errMsg, personLabel, makeCaisseLabel, makeTransferStatusBadge,
   TransfersTable, SendTransferDialog, type TFn,
@@ -43,8 +46,6 @@ export default function MonCompte() {
     ),
     [transfers, myId],
   );
-  // Pending transfers awaiting my approval: addressed to my own caisse, or —
-  // for admins — to the store's main caisse. Exclude my own sends.
   const inbox = useMemo(
     () => (transfers ?? []).filter(tr =>
       tr.status === "pending" && tr.senderCaisse?.ownerUserId !== myId && (
@@ -60,6 +61,51 @@ export default function MonCompte() {
   );
 
   const [sendOpen, setSendOpen] = useState(false);
+
+  // ─── Edit profile ─────────────────────────────────────────────────────────
+  const [editMode, setEditMode] = useState(false);
+  const [formName, setFormName] = useState("");
+  const [formEmail, setFormEmail] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  const startEdit = () => {
+    setFormName(account?.user?.name ?? "");
+    setFormEmail(account?.user?.email ?? "");
+    setEditMode(true);
+  };
+
+  const saveProfile = async () => {
+    setSaving(true);
+    try {
+      const token = localStorage.getItem("midanic_token");
+      const apiBase = ((import.meta.env.VITE_API_URL as string) ?? "").replace(/\/+$/, "");
+      const res = await fetch(`${apiBase}/api/auth/me`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ name: formName.trim(), email: formEmail.trim() }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        const msg = res.status === 409
+          ? t("Cette adresse email est déjà utilisée.", "البريد الإلكتروني مستخدم من حساب آخر.")
+          : (data.error ?? t("Une erreur est survenue.", "حدث خطأ."));
+        toast({ title: t("Erreur", "خطأ"), description: msg, variant: "destructive" });
+        return;
+      }
+      toast({ title: t("Profil mis à jour", "تم تحديث الملف الشخصي") });
+      // Invalidate BOTH queries so name/email refresh everywhere:
+      //   - getGetMeQueryKey  → useMe() → Sidebar, caisse dialogs, etc.
+      //   - getGetErpAccountMeQueryKey → profile card on this page
+      qc.invalidateQueries({ queryKey: getGetMeQueryKey() });
+      qc.invalidateQueries({ queryKey: getGetErpAccountMeQueryKey() });
+      setEditMode(false);
+    } catch {
+      toast({ title: t("Erreur", "خطأ"), description: t("Erreur réseau", "خطأ في الشبكة"), variant: "destructive" });
+    } finally {
+      setSaving(false);
+    }
+  };
+  // ──────────────────────────────────────────────────────────────────────────
 
   const refreshAll = () => {
     qc.invalidateQueries({ queryKey: getGetErpAccountMeQueryKey() });
@@ -104,35 +150,106 @@ export default function MonCompte() {
       ) : (
         <>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+
+            {/* ── Profile card ──────────────────────────────────────────── */}
             <Card data-testid="card-identity">
               <CardHeader className="pb-2">
-                <CardTitle className="text-base flex items-center gap-2">
-                  <User className="h-5 w-5 text-[#1B3057]" />
-                  {t("Profil", "الملف الشخصي")}
+                <CardTitle className="text-base flex items-center justify-between">
+                  <span className="flex items-center gap-2">
+                    <User className="h-5 w-5 text-[#1B3057]" />
+                    {t("Profil", "الملف الشخصي")}
+                  </span>
+                  {!editMode && (
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="h-7 px-2 text-xs text-muted-foreground hover:text-foreground"
+                      onClick={startEdit}
+                      data-testid="button-edit-profile"
+                    >
+                      <Pencil className="h-3.5 w-3.5 mr-1" />
+                      {t("Modifier", "تعديل")}
+                    </Button>
+                  )}
                 </CardTitle>
               </CardHeader>
               <CardContent className="space-y-2 text-sm">
-                <div className="flex justify-between">
-                  <span className="text-muted-foreground">{t("Nom", "الاسم")}</span>
-                  <span className="font-medium" data-testid="text-account-name">{personLabel(account?.user)}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-muted-foreground">{t("Rôle", "الدور")}</span>
-                  <span className="font-medium" data-testid="text-account-role">{roleLabel(account?.user?.role)}</span>
-                </div>
-                <div className="flex justify-between items-center">
-                  <span className="text-muted-foreground flex items-center gap-1"><StoreIcon className="h-3.5 w-3.5" /> {t("Magasin", "المتجر")}</span>
-                  <span className="font-medium" data-testid="text-account-store">{storeName}</span>
-                </div>
-                {account?.user?.email && (
-                  <div className="flex justify-between">
-                    <span className="text-muted-foreground">Email</span>
-                    <span className="font-medium text-xs">{account.user.email}</span>
+                {editMode ? (
+                  /* ── Edit form ─────────────────────────────────────────── */
+                  <div className="space-y-3 pt-1">
+                    <div className="space-y-1">
+                      <Label htmlFor="edit-name">{t("Nom", "الاسم")}</Label>
+                      <Input
+                        id="edit-name"
+                        value={formName}
+                        onChange={e => setFormName(e.target.value)}
+                        disabled={saving}
+                        data-testid="input-edit-name"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <Label htmlFor="edit-email">Email</Label>
+                      <Input
+                        id="edit-email"
+                        type="email"
+                        value={formEmail}
+                        onChange={e => setFormEmail(e.target.value)}
+                        disabled={saving}
+                        data-testid="input-edit-email"
+                      />
+                    </div>
+                    <div className="flex gap-2 pt-1">
+                      <Button
+                        size="sm"
+                        className="bg-[#1B3057] hover:bg-[#152544]"
+                        onClick={saveProfile}
+                        disabled={saving || !formName.trim() || !formEmail.trim()}
+                        data-testid="button-save-profile"
+                      >
+                        {saving && <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />}
+                        {t("Enregistrer", "حفظ")}
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => setEditMode(false)}
+                        disabled={saving}
+                        data-testid="button-cancel-edit-profile"
+                      >
+                        <X className="h-3.5 w-3.5 mr-1" />
+                        {t("Annuler", "إلغاء")}
+                      </Button>
+                    </div>
                   </div>
+                ) : (
+                  /* ── Read-only view ────────────────────────────────────── */
+                  <>
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">{t("Nom", "الاسم")}</span>
+                      <span className="font-medium" data-testid="text-account-name">{personLabel(account?.user)}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">{t("Rôle", "الدور")}</span>
+                      <span className="font-medium" data-testid="text-account-role">{roleLabel(account?.user?.role)}</span>
+                    </div>
+                    <div className="flex justify-between items-center">
+                      <span className="text-muted-foreground flex items-center gap-1">
+                        <StoreIcon className="h-3.5 w-3.5" /> {t("Magasin", "المتجر")}
+                      </span>
+                      <span className="font-medium" data-testid="text-account-store">{storeName}</span>
+                    </div>
+                    {account?.user?.email && (
+                      <div className="flex justify-between">
+                        <span className="text-muted-foreground">Email</span>
+                        <span className="font-medium text-xs" data-testid="text-account-email">{account.user.email}</span>
+                      </div>
+                    )}
+                  </>
                 )}
               </CardContent>
             </Card>
 
+            {/* ── Caisse card ───────────────────────────────────────────── */}
             <Card className="border-2 border-amber-200 bg-amber-50/40" data-testid="card-account-caisse">
               <CardHeader className="pb-2">
                 <CardTitle className="text-base flex items-center gap-2">

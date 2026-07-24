@@ -99,12 +99,28 @@ router.get("/auth/me", authenticate, async (req: AuthRequest, res) => {
 
 router.put("/auth/me", authenticate, async (req: AuthRequest, res) => {
   try {
-    const { name, phone, address, city } = req.body || {};
+    const { name, phone, address, city, email } = req.body || {};
     const update: Record<string, unknown> = {};
     if (name !== undefined) update["name"] = String(name).trim() || null;
     if (phone !== undefined) update["phone"] = String(phone).trim() || null;
     if (address !== undefined) update["address"] = String(address).trim() || null;
     if (city !== undefined) update["city"] = String(city).trim() || null;
+    if (email !== undefined) {
+      const trimmed = String(email).trim().toLowerCase();
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmed)) {
+        res.status(400).json({ error: "Invalid email format" });
+        return;
+      }
+      const [existing] = await db.select({ id: schema.usersTable.id })
+        .from(schema.usersTable)
+        .where(eq(schema.usersTable.email, trimmed))
+        .limit(1);
+      if (existing && existing.id !== req.user!.id) {
+        res.status(409).json({ error: "Email already in use" });
+        return;
+      }
+      update["email"] = trimmed;
+    }
     if (Object.keys(update).length === 0) {
       res.status(400).json({ error: "Nothing to update" });
       return;

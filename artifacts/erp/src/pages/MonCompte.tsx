@@ -15,7 +15,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
-import { User, Wallet, Send, Inbox, Building2, CheckCircle2, XCircle, Store as StoreIcon, Pencil, X, Loader2 } from "lucide-react";
+import { User, Wallet, Send, Inbox, Building2, CheckCircle2, XCircle, Store as StoreIcon, Pencil, X, Loader2, KeyRound } from "lucide-react";
 import {
   fmtAmount, errMsg, personLabel, makeCaisseLabel, makeTransferStatusBadge,
   TransfersTable, SendTransferDialog, type TFn,
@@ -105,6 +105,62 @@ export default function MonCompte() {
       setSaving(false);
     }
   };
+  // ─── Change password ───────────────────────────────────────────────────────
+  const [pwMode, setPwMode] = useState(false);
+  const [formCurrentPw, setFormCurrentPw] = useState("");
+  const [formNewPw, setFormNewPw] = useState("");
+  const [formConfirmPw, setFormConfirmPw] = useState("");
+  const [pwSaving, setPwSaving] = useState(false);
+
+  const startChangePassword = () => {
+    setFormCurrentPw("");
+    setFormNewPw("");
+    setFormConfirmPw("");
+    setPwMode(true);
+  };
+
+  const savePassword = async () => {
+    if (formNewPw !== formConfirmPw) {
+      toast({
+        title: t("Erreur", "خطأ"),
+        description: t("Les deux nouveaux mots de passe ne correspondent pas.", "كلمتا المرور الجديدتان غير متطابقتين."),
+        variant: "destructive",
+      });
+      return;
+    }
+    if (formNewPw.length < 6) {
+      toast({
+        title: t("Erreur", "خطأ"),
+        description: t("Le nouveau mot de passe doit contenir au moins 6 caractères.", "يجب أن تتكون كلمة المرور الجديدة من 6 أحرف على الأقل."),
+        variant: "destructive",
+      });
+      return;
+    }
+    setPwSaving(true);
+    try {
+      const token = localStorage.getItem("midanic_token");
+      const apiBase = ((import.meta.env.VITE_API_URL as string) ?? "").replace(/\/+$/, "");
+      const res = await fetch(`${apiBase}/api/auth/me/password`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ currentPassword: formCurrentPw, newPassword: formNewPw }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        const msg = res.status === 401
+          ? t("L'ancien mot de passe est incorrect.", "كلمة المرور الحالية غير صحيحة.")
+          : (data.error ?? t("Une erreur est survenue.", "حدث خطأ."));
+        toast({ title: t("Erreur", "خطأ"), description: msg, variant: "destructive" });
+        return;
+      }
+      toast({ title: t("Mot de passe modifié", "تم تغيير كلمة المرور"), description: t("Votre mot de passe a été mis à jour.", "تم تحديث كلمة مرورك بنجاح.") });
+      setPwMode(false);
+    } catch {
+      toast({ title: t("Erreur", "خطأ"), description: t("Erreur réseau", "خطأ في الشبكة"), variant: "destructive" });
+    } finally {
+      setPwSaving(false);
+    }
+  };
   // ──────────────────────────────────────────────────────────────────────────
 
   const refreshAll = () => {
@@ -159,7 +215,7 @@ export default function MonCompte() {
                     <User className="h-5 w-5 text-[#1B3057]" />
                     {t("Profil", "الملف الشخصي")}
                   </span>
-                  {!editMode && (
+                  {!editMode && !pwMode && (
                     <Button
                       size="sm"
                       variant="ghost"
@@ -221,6 +277,73 @@ export default function MonCompte() {
                       </Button>
                     </div>
                   </div>
+                ) : pwMode ? (
+                  /* ── Change password form ──────────────────────────────── */
+                  <div className="space-y-3 pt-1" data-testid="form-change-password">
+                    <div className="space-y-1">
+                      <Label htmlFor="pw-current">{t("Mot de passe actuel", "كلمة المرور الحالية")}</Label>
+                      <Input
+                        id="pw-current"
+                        type="password"
+                        value={formCurrentPw}
+                        onChange={e => setFormCurrentPw(e.target.value)}
+                        disabled={pwSaving}
+                        autoComplete="current-password"
+                        data-testid="input-current-password"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <Label htmlFor="pw-new">{t("Nouveau mot de passe", "كلمة المرور الجديدة")}</Label>
+                      <Input
+                        id="pw-new"
+                        type="password"
+                        value={formNewPw}
+                        onChange={e => setFormNewPw(e.target.value)}
+                        disabled={pwSaving}
+                        autoComplete="new-password"
+                        data-testid="input-new-password"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <Label htmlFor="pw-confirm">{t("Confirmer le nouveau mot de passe", "تأكيد كلمة المرور الجديدة")}</Label>
+                      <Input
+                        id="pw-confirm"
+                        type="password"
+                        value={formConfirmPw}
+                        onChange={e => setFormConfirmPw(e.target.value)}
+                        disabled={pwSaving}
+                        autoComplete="new-password"
+                        data-testid="input-confirm-password"
+                      />
+                    </div>
+                    {formNewPw && formConfirmPw && formNewPw !== formConfirmPw && (
+                      <p className="text-xs text-destructive" data-testid="text-password-mismatch">
+                        {t("Les mots de passe ne correspondent pas.", "كلمتا المرور غير متطابقتين.")}
+                      </p>
+                    )}
+                    <div className="flex gap-2 pt-1">
+                      <Button
+                        size="sm"
+                        className="bg-[#1B3057] hover:bg-[#152544]"
+                        onClick={savePassword}
+                        disabled={pwSaving || !formCurrentPw || !formNewPw || !formConfirmPw || formNewPw !== formConfirmPw}
+                        data-testid="button-save-password"
+                      >
+                        {pwSaving && <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />}
+                        {t("Enregistrer", "حفظ")}
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => setPwMode(false)}
+                        disabled={pwSaving}
+                        data-testid="button-cancel-change-password"
+                      >
+                        <X className="h-3.5 w-3.5 mr-1" />
+                        {t("Annuler", "إلغاء")}
+                      </Button>
+                    </div>
+                  </div>
                 ) : (
                   /* ── Read-only view ────────────────────────────────────── */
                   <>
@@ -244,6 +367,18 @@ export default function MonCompte() {
                         <span className="font-medium text-xs" data-testid="text-account-email">{account.user.email}</span>
                       </div>
                     )}
+                    <div className="pt-2">
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="w-full text-xs"
+                        onClick={startChangePassword}
+                        data-testid="button-change-password"
+                      >
+                        <KeyRound className="h-3.5 w-3.5 mr-1.5" />
+                        {t("Changer le mot de passe", "تغيير كلمة المرور")}
+                      </Button>
+                    </div>
                   </>
                 )}
               </CardContent>

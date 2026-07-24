@@ -78,8 +78,7 @@ export default function MonCompte() {
     setSaving(true);
     try {
       const token = localStorage.getItem("midanic_token");
-      const apiBase = ((import.meta.env.VITE_API_URL as string) ?? "").replace(/\/+$/, "");
-      const res = await fetch(`${apiBase}/api/auth/me`, {
+      const res = await fetch(`/api/auth/me`, {
         method: "PUT",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
         body: JSON.stringify({ name: formName.trim(), email: formEmail.trim() }),
@@ -139,8 +138,7 @@ export default function MonCompte() {
     setPwSaving(true);
     try {
       const token = localStorage.getItem("midanic_token");
-      const apiBase = ((import.meta.env.VITE_API_URL as string) ?? "").replace(/\/+$/, "");
-      const res = await fetch(`${apiBase}/api/auth/me/password`, {
+      const res = await fetch(`/api/auth/me/password`, {
         method: "PUT",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
         body: JSON.stringify({ currentPassword: formCurrentPw, newPassword: formNewPw }),

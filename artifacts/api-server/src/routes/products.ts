@@ -556,11 +556,34 @@ router.put("/products/:id", authenticate, requireStaff, requireStore, requirePer
     } else if ("colorId" in body) {
       body.colorId = null;
     }
+    // Capture old stock before update to compute delta for inventory tracking
+    let oldStock: number | undefined;
+    if (body.stock !== undefined) {
+      const [cur] = await db.select({ stock: schema.productsTable.stock })
+        .from(schema.productsTable)
+        .where(and(eq(schema.productsTable.id, id), eq(schema.productsTable.storeId, storeId)))
+        .limit(1);
+      oldStock = cur?.stock;
+    }
     const [product] = await db.update(schema.productsTable)
       .set(body)
       .where(and(eq(schema.productsTable.id, id), eq(schema.productsTable.storeId, storeId)))
       .returning();
     if (!product) { res.status(404).json({ error: "Not found" }); return; }
+    // Record inventory movement when stock quantity changes
+    if (oldStock !== undefined) {
+      const delta = Number(body.stock) - oldStock;
+      if (delta !== 0) {
+        await db.insert(schema.inventoryMovementsTable).values({
+          storeId,
+          productId: id,
+          type: "adjustment",
+          quantity: delta,
+          reason: "Modification manuelle",
+          userId: req.user!.id,
+        });
+      }
+    }
     if (Array.isArray(images)) {
       await syncProductImages(product.id, images);
       const [fresh] = await db.select().from(schema.productsTable).where(eq(schema.productsTable.id, product.id)).limit(1);

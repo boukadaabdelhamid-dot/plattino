@@ -2404,7 +2404,7 @@ router.post("/erp/inventory/adjust", authenticate, requireAdmin, requireStore, a
     await db.update(schema.productsTable).set({ stock: newStock })
       .where(eq(schema.productsTable.id, productId));
     const [mv] = await db.insert(schema.inventoryMovementsTable).values({
-      storeId, productId, type: "adjustment", quantity, reason,
+      storeId, productId, type: "adjustment", quantity, reason, userId: req.user!.id,
     }).returning();
     res.json(mv);
   } catch (err) { req.log.error(err); res.status(500).json({ error: "Internal server error" }); }

@@ -200,6 +200,7 @@ export const inventoryMovementsTable = pgTable("inventory_movements", {
   quantity: doublePrecision("quantity").notNull(),
   reason: text("reason"),
   reference: text("reference"),
+  userId: integer("user_id").references(() => usersTable.id),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 

@@ -143,7 +143,7 @@ async function fetchPOItems(poId: number): Promise<POItem[]> {
 
 async function putAddToPO(
   poId: number,
-  po: { supplierId: number; paymentMethod: "comptant" | "a_terme" },
+  po: { supplierId: number; paymentMethod: "comptant" | "a_terme"; notes: string | null },
   newItem: { productId: number; quantity: number; unitCost: number },
   existingItems: POItem[],
 ): Promise<{ id: number; itemCount: number }> {
@@ -154,7 +154,12 @@ async function putAddToPO(
   const res = await fetch(`${API_BASE}/api/erp/purchase-orders/${poId}`, {
     method: "PUT",
     headers: { ...authHeaders(), "Content-Type": "application/json" },
-    body: JSON.stringify({ supplierId: po.supplierId, items: allItems, paymentMethod: po.paymentMethod, notes: "" }),
+    body: JSON.stringify({
+      supplierId: po.supplierId,
+      items: allItems,
+      paymentMethod: po.paymentMethod,
+      notes: po.notes ?? "",
+    }),
   });
   if (!res.ok) {
     const data = await res.json() as { error?: string };
@@ -400,7 +405,7 @@ function QuickOrderDrawer({
         const existingItems = await fetchPOItems(poId);
         const result = await putAddToPO(
           poId,
-          { supplierId: selectedPO.supplierId ?? 0, paymentMethod: selectedPO.paymentMethod },
+          { supplierId: selectedPO.supplierId ?? 0, paymentMethod: selectedPO.paymentMethod, notes: selectedPO.notes },
           { productId: product.id, quantity: qty, unitCost: cost },
           existingItems,
         );

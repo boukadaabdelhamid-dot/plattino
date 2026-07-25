@@ -197,6 +197,14 @@ function fmtDate(d: string): string {
   try { return new Date(d).toLocaleDateString("fr-DZ"); } catch { return d; }
 }
 
+/** Format a Date as YYYY-MM-DD using local calendar (not UTC), for date input values. */
+function localDateStr(d: Date): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
 // Stock bar: shows current vs min_stock visually
 function StockBar({ stock, minStock }: { stock: number; minStock: number | null }) {
   if (minStock == null || minStock <= 0) {
@@ -1070,6 +1078,72 @@ export default function SmartPurchase() {
                     {t("Effacer", "مسح")}
                   </button>
                 )}
+              </div>
+              {/* Shortcut buttons */}
+              <div className="flex gap-1.5 flex-wrap">
+                {(
+                  [
+                    {
+                      label: t("Ce mois", "هذا الشهر"),
+                      key: "ce-mois",
+                      range: (): [string, string] => {
+                        const now = new Date();
+                        const from = new Date(now.getFullYear(), now.getMonth(), 1);
+                        const to = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+                        return [localDateStr(from), localDateStr(to)];
+                      },
+                    },
+                    {
+                      label: t("30j", "30 يوم"),
+                      key: "30j",
+                      range: (): [string, string] => {
+                        const to = new Date();
+                        const from = new Date();
+                        from.setDate(from.getDate() - 29);
+                        return [localDateStr(from), localDateStr(to)];
+                      },
+                    },
+                    {
+                      label: t("3 mois", "3 أشهر"),
+                      key: "3mois",
+                      range: (): [string, string] => {
+                        const to = new Date();
+                        const from = new Date();
+                        from.setMonth(from.getMonth() - 3);
+                        return [localDateStr(from), localDateStr(to)];
+                      },
+                    },
+                    {
+                      label: t("Cette année", "هذه السنة"),
+                      key: "annee",
+                      range: (): [string, string] => {
+                        const now = new Date();
+                        return [`${now.getFullYear()}-01-01`, `${now.getFullYear()}-12-31`];
+                      },
+                    },
+                  ] as Array<{ label: string; key: string; range: () => [string, string] }>
+                ).map(({ label, key, range }) => {
+                  const [previewFrom, previewTo] = range();
+                  const isActive = filterDateFrom === previewFrom && filterDateTo === previewTo;
+                  return (
+                    <button
+                      key={key}
+                      type="button"
+                      onClick={() => {
+                        const [f, t2] = range();
+                        setFilterDateFrom(f);
+                        setFilterDateTo(t2);
+                      }}
+                      className={`px-3 py-1.5 rounded-full text-xs font-medium border transition-colors ${
+                        isActive
+                          ? "bg-blue-600 text-white border-blue-600"
+                          : "bg-white text-gray-600 border-gray-200 hover:border-blue-300 hover:text-blue-700"
+                      }`}
+                    >
+                      {label}
+                    </button>
+                  );
+                })}
               </div>
               <div className="grid grid-cols-2 gap-2">
                 <div className="space-y-1">

@@ -4001,6 +4001,7 @@ router.get("/erp/purchases/needed", authenticate, requireStaff, requireStore, re
           p.stock = 0
           OR (p.min_stock IS NOT NULL AND p.stock <= p.min_stock)
         )
+        AND p.excluded_from_purchase = false
         AND NOT EXISTS (
           SELECT 1 FROM purchase_snooze ps
           WHERE  ps.product_id   = p.id
@@ -4074,6 +4075,43 @@ router.post("/erp/purchases/snooze/:productId", authenticate, requireStaff, requ
       VALUES (${productId}, ${storeId}, NOW() + INTERVAL '24 hours')
       ON CONFLICT (product_id, store_id)
       DO UPDATE SET snoozed_until = NOW() + INTERVAL '24 hours'
+    `);
+    res.json({ success: true });
+  } catch (err) { req.log.error(err); res.status(500).json({ error: "Internal server error" }); }
+});
+
+// GET /erp/purchases/exclude/:productId — check if a product is permanently excluded
+router.get("/erp/purchases/exclude/:productId", authenticate, requireStaff, requireStore, requirePermission("purchases", "view"), async (req: AuthRequest, res) => {
+  try {
+    const storeId   = req.currentStoreId!;
+    const productId = pid(req, "productId");
+    const result = await db.execute(sql`
+      SELECT excluded_from_purchase FROM products WHERE id = ${productId} AND store_id = ${storeId} LIMIT 1
+    `);
+    const row = result.rows[0] as { excluded_from_purchase: boolean } | undefined;
+    res.json({ excluded: row?.excluded_from_purchase ?? false });
+  } catch (err) { req.log.error(err); res.status(500).json({ error: "Internal server error" }); }
+});
+
+// POST /erp/purchases/exclude/:productId — permanently hide product from Besoin d'Achats
+router.post("/erp/purchases/exclude/:productId", authenticate, requireStaff, requireStore, requirePermission("purchases", "edit"), async (req: AuthRequest, res) => {
+  try {
+    const storeId   = req.currentStoreId!;
+    const productId = pid(req, "productId");
+    await db.execute(sql`
+      UPDATE products SET excluded_from_purchase = true WHERE id = ${productId} AND store_id = ${storeId}
+    `);
+    res.json({ success: true });
+  } catch (err) { req.log.error(err); res.status(500).json({ error: "Internal server error" }); }
+});
+
+// DELETE /erp/purchases/exclude/:productId — re-include product in Besoin d'Achats
+router.delete("/erp/purchases/exclude/:productId", authenticate, requireStaff, requireStore, requirePermission("purchases", "edit"), async (req: AuthRequest, res) => {
+  try {
+    const storeId   = req.currentStoreId!;
+    const productId = pid(req, "productId");
+    await db.execute(sql`
+      UPDATE products SET excluded_from_purchase = false WHERE id = ${productId} AND store_id = ${storeId}
     `);
     res.json({ success: true });
   } catch (err) { req.log.error(err); res.status(500).json({ error: "Internal server error" }); }

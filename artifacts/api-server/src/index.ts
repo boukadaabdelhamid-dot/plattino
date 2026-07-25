@@ -707,6 +707,7 @@ CREATE TABLE IF NOT EXISTS "purchase_snooze" (
 CREATE UNIQUE INDEX IF NOT EXISTS "purchase_snooze_product_store_uniq" ON "purchase_snooze" ("product_id", "store_id");--> statement-breakpoint
 ALTER TABLE "purchase_snooze" ADD CONSTRAINT "purchase_snooze_product_id_fk" FOREIGN KEY ("product_id") REFERENCES "public"."products"("id") ON DELETE CASCADE;--> statement-breakpoint
 ALTER TABLE "purchase_snooze" ADD CONSTRAINT "purchase_snooze_store_id_fk" FOREIGN KEY ("store_id") REFERENCES "public"."stores"("id") ON DELETE CASCADE;--> statement-breakpoint
+ALTER TABLE "products" ADD COLUMN IF NOT EXISTS "excluded_from_purchase" boolean NOT NULL DEFAULT false;--> statement-breakpoint
 `;
 
 

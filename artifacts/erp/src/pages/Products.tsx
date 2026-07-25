@@ -42,7 +42,7 @@ import {
   Smartphone, DollarSign, LayoutGrid, Image as ImageIcon, Eye, EyeOff,
   Columns3, Printer, Sparkles, MoreVertical, Copy, Info, Boxes,
   ChevronDown, QrCode, Send, Star, ArrowUp, ArrowDown, FileSpreadsheet,
-  History,
+  History, Ban, ShoppingBasket,
 } from "lucide-react";
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
@@ -332,6 +332,18 @@ export default function Products() {
 
   const [dialog, setDialog] = useState<{ open: boolean; editing: Product | null }>({ open: false, editing: null });
   const [dialogError, setDialogError] = useState<string | null>(null);
+  // Excluded-from-purchase state, fetched when edit dialog opens
+  const [productExcluded, setProductExcluded] = useState(false);
+  useEffect(() => {
+    if (!dialog.editing) return;
+    const token = localStorage.getItem("midanic_token");
+    fetch(`${API_BASE}/api/erp/purchases/exclude/${dialog.editing.id}`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    })
+      .then((r) => (r.ok ? r.json() : { excluded: false }))
+      .then((d: { excluded: boolean }) => setProductExcluded(d.excluded))
+      .catch(() => setProductExcluded(false));
+  }, [dialog.editing?.id]);
   const [showBarcodeManager, setShowBarcodeManager] = useState(false);
   const [form, setForm] = useState<ProductForm>(emptyForm);
   const [activeTab, setActiveTab] = useState("general");
@@ -1238,6 +1250,31 @@ export default function Products() {
                 onCheckedChange={(v) => setForm((f) => ({ ...f, isExposed: v }))}
                 label={form.isExposed ? t("🌐 Visible en vitrine", "🌐 مرئي في الواجهة") : t("🚫 Masqué du magasin", "🚫 مخفي من المتجر")}
               />
+              {/* Purchase suggestion toggle — only shown when editing an existing product */}
+              {dialog.editing && (
+                <button
+                  type="button"
+                  title={productExcluded ? t("Réintégrer dans Besoin d'Achats", "إعادة للمقترحات") : t("Exclure de Besoin d'Achats", "إخفاء من المقترحات")}
+                  onClick={() => {
+                    const token = localStorage.getItem("midanic_token");
+                    const method = productExcluded ? "DELETE" : "POST";
+                    fetch(`${API_BASE}/api/erp/purchases/exclude/${dialog.editing!.id}`, {
+                      method,
+                      headers: token ? { Authorization: `Bearer ${token}` } : {},
+                    })
+                      .then((r) => r.ok && setProductExcluded(!productExcluded))
+                      .catch(() => { /* silent */ });
+                  }}
+                  className={`flex items-center gap-1 text-xs px-2 py-1 rounded-lg border transition-colors ${
+                    productExcluded
+                      ? "bg-red-50 text-red-600 border-red-200 hover:bg-red-100"
+                      : "bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100"
+                  }`}
+                >
+                  {productExcluded ? <Ban className="h-3.5 w-3.5" /> : <ShoppingBasket className="h-3.5 w-3.5" />}
+                  {productExcluded ? t("Exclu", "مُخفى") : t("Besoin d'Achats", "مقترح للشراء")}
+                </button>
+              )}
               <Button
                 onClick={handleSave}
                 disabled={createProduct.isPending || updateProduct.isPending || !form.nameEn || !form.price}

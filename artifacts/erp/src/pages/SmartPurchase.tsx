@@ -13,7 +13,7 @@ import {
 import {
   ShoppingBasket, SlidersHorizontal, X, History, CheckCircle2,
   Package, Search, RefreshCw, MapPin, Phone, TrendingUp, ShoppingCart,
-  LayoutGrid, List,
+  LayoutGrid, List, Ban,
 } from "lucide-react";
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -84,6 +84,14 @@ async function postSnooze(productId: number): Promise<void> {
     headers: { ...authHeaders(), "Content-Type": "application/json" },
   });
   if (!res.ok) throw new Error("snooze failed");
+}
+
+async function postExclude(productId: number): Promise<void> {
+  const res = await fetch(`${API_BASE}/api/erp/purchases/exclude/${productId}`, {
+    method: "POST",
+    headers: { ...authHeaders(), "Content-Type": "application/json" },
+  });
+  if (!res.ok) throw new Error("exclude failed");
 }
 
 type FilterOptions = {
@@ -628,11 +636,14 @@ function QuickOrderDrawer({
 
 // ── Needed list row (compact view) ───────────────────────────────────────────
 function NeededListRow({
-  row, lang, sortBy, isSnoozePending, t, onHistory, onOrder, onSnooze,
+  row, lang, sortBy, isSnoozePending, isExcludePending, confirmExclude, t,
+  onHistory, onOrder, onSnooze, onExcludeRequest, onExcludeConfirm, onExcludeCancel,
 }: {
   row: NeededRow; lang: string; sortBy: SortBy; isSnoozePending: boolean;
+  isExcludePending: boolean; confirmExclude: number | null;
   t: (fr: string, ar: string) => string;
   onHistory: () => void; onOrder: () => void; onSnooze: () => void;
+  onExcludeRequest: () => void; onExcludeConfirm: () => void; onExcludeCancel: () => void;
 }) {
   const name = lang === "ar" && row.designation_ar ? row.designation_ar : row.designation;
   const famille = lang === "ar" && row.famille_ar ? row.famille_ar : row.famille;
@@ -707,6 +718,26 @@ function NeededListRow({
             aria-label={t("Commander", "اطلب")}>
             <ShoppingCart className="h-4 w-4" />
           </button>
+          {/* Exclude button — two-tap confirm */}
+          {confirmExclude === row.id ? (
+            <>
+              <button type="button" onClick={onExcludeConfirm} disabled={isExcludePending}
+                className="px-2.5 py-2 text-[11px] font-semibold text-white bg-red-600 hover:bg-red-700 transition-colors disabled:opacity-60"
+                aria-label={t("Confirmer exclusion", "تأكيد الإخفاء")}>
+                {isExcludePending ? "…" : t("Oui", "نعم")}
+              </button>
+              <button type="button" onClick={onExcludeCancel}
+                className="px-2 py-2 text-[11px] text-slate-500 hover:bg-slate-50 transition-colors">
+                {t("Non", "لا")}
+              </button>
+            </>
+          ) : (
+            <button type="button" onClick={onExcludeRequest}
+              className="px-3 py-2 text-red-400 hover:bg-red-50 hover:text-red-600 active:bg-red-100 transition-colors"
+              aria-label={t("Exclure définitivement", "إخفاء نهائي")}>
+              <Ban className="h-4 w-4" />
+            </button>
+          )}
           <button type="button" disabled={isSnoozePending} onClick={onSnooze}
             className="px-3 py-2 text-emerald-600 hover:bg-emerald-50 active:bg-emerald-100 transition-colors disabled:opacity-60"
             aria-label={t("Tâche achetée", "تمّ")}>
@@ -793,6 +824,21 @@ export default function SmartPurchase() {
     },
     onSettled: (_, __, productId) => {
       setPendingSnooze((s) => { const n = new Set(s); n.delete(productId); return n; });
+      void qc.invalidateQueries({ queryKey: ["smart-purchase-needed"] });
+    },
+  });
+
+  // Permanent exclusion
+  const [pendingExclude, setPendingExclude] = useState<Set<number>>(new Set());
+  const [confirmExclude, setConfirmExclude] = useState<number | null>(null);
+  const excludeMut = useMutation({
+    mutationFn: (productId: number) => postExclude(productId),
+    onMutate: (productId) => {
+      setPendingExclude((s) => new Set(s).add(productId));
+    },
+    onSettled: (_, __, productId) => {
+      setPendingExclude((s) => { const n = new Set(s); n.delete(productId); return n; });
+      setConfirmExclude(null);
       void qc.invalidateQueries({ queryKey: ["smart-purchase-needed"] });
     },
   });
@@ -1151,6 +1197,39 @@ export default function SmartPurchase() {
                   <span className="text-xs font-medium hidden sm:inline">{t("Commander", "اطلب")}</span>
                 </button>
 
+                {/* Exclude button — two-tap confirm */}
+                {confirmExclude === row.id ? (
+                  <>
+                    <button
+                      type="button"
+                      disabled={pendingExclude.has(row.id)}
+                      onClick={() => excludeMut.mutate(row.id)}
+                      className="flex-none flex items-center justify-center px-3 py-4 text-xs font-bold text-white bg-red-600 hover:bg-red-700 transition-colors border-r disabled:opacity-60"
+                      style={{ minHeight: 52 }}
+                    >
+                      {pendingExclude.has(row.id) ? "…" : t("Oui", "نعم")}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setConfirmExclude(null)}
+                      className="flex-none flex items-center justify-center px-3 py-4 text-xs text-slate-500 hover:bg-slate-50 transition-colors border-r"
+                      style={{ minHeight: 52 }}
+                    >
+                      {t("Non", "لا")}
+                    </button>
+                  </>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => setConfirmExclude(row.id)}
+                    className="flex-none flex items-center justify-center gap-1 px-3 py-4 text-sm text-red-400 hover:bg-red-50 hover:text-red-600 active:bg-red-100 transition-colors border-r"
+                    style={{ minHeight: 52 }}
+                    aria-label={t("Exclure définitivement", "إخفاء نهائي")}
+                  >
+                    <Ban className="h-4 w-4" />
+                  </button>
+                )}
+
                 {/* Bought button — full remaining width, thumb-friendly */}
                 <button
                   type="button"
@@ -1175,10 +1254,15 @@ export default function SmartPurchase() {
             lang={lang}
             sortBy={sortBy}
             isSnoozePending={pendingSnooze.has(row.id)}
+            isExcludePending={pendingExclude.has(row.id)}
+            confirmExclude={confirmExclude}
             t={t}
             onHistory={() => setHistoryProduct({ id: row.id, name: lang === "ar" && row.designation_ar ? row.designation_ar : row.designation })}
             onOrder={() => setQuickOrderProduct(row)}
             onSnooze={() => snoozeMut.mutate(row.id)}
+            onExcludeRequest={() => setConfirmExclude(row.id)}
+            onExcludeConfirm={() => excludeMut.mutate(row.id)}
+            onExcludeCancel={() => setConfirmExclude(null)}
           />
         ))}
       </div>

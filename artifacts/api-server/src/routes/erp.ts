@@ -3929,7 +3929,7 @@ router.delete("/erp/staff/:id", authenticate, requireAdmin, async (req: AuthRequ
 router.get("/erp/purchases/needed", authenticate, requireStaff, requireStore, requirePermission("purchases", "view"), async (req: AuthRequest, res) => {
   try {
     const storeId = req.currentStoreId!;
-    const { supplierId, familyId, brandId, supplierCity, search, sortBy } = req.query as Record<string, string | undefined>;
+    const { supplierId, familyId, brandId, supplierCity, search, sortBy, dateFrom, dateTo } = req.query as Record<string, string | undefined>;
     const orderByQty = sortBy === "qty_sold";
 
     const supplierFilter  = supplierId   ? sql` AND last_sup.supplier_id = ${parseInt(supplierId, 10)}`                          : sql``;
@@ -3937,6 +3937,14 @@ router.get("/erp/purchases/needed", authenticate, requireStaff, requireStore, re
     const brandFilter     = brandId      ? sql` AND p.brand_id = ${parseInt(brandId, 10)}`                                       : sql``;
     const cityFilter      = supplierCity ? sql` AND lower(s.address) LIKE ${`%${supplierCity.toLowerCase()}%`}`                  : sql``;
     const searchFilter    = search       ? sql` AND (lower(p.name_en) LIKE ${`%${search.toLowerCase()}%`} OR lower(p.name_ar) LIKE ${`%${search.toLowerCase()}%`} OR lower(COALESCE(p.reference,'')) LIKE ${`%${search.toLowerCase()}%`})` : sql``;
+    // Date range filter applied to the sales aggregation (limits profit & qty to the chosen period)
+    const dateFilter      = (dateFrom && dateTo)
+      ? sql` AND o.created_at BETWEEN ${dateFrom}::timestamp AND (${dateTo}::timestamp + INTERVAL '1 day')`
+      : dateFrom
+        ? sql` AND o.created_at >= ${dateFrom}::timestamp`
+        : dateTo
+          ? sql` AND o.created_at < (${dateTo}::timestamp + INTERVAL '1 day')`
+          : sql``;
 
     const result = await db.execute(sql`
       SELECT
@@ -3985,6 +3993,7 @@ router.get("/erp/purchases/needed", authenticate, requireStaff, requireStore, re
         WHERE  oi.product_id = p.id
           AND  o.store_id    = ${storeId}
           AND  o.status NOT IN ('cancelled', 'draft')
+          ${dateFilter}
       ) ben ON true
       WHERE p.store_id  = ${storeId}
         AND p.is_active  = true

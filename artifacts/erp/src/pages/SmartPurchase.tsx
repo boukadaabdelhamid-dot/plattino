@@ -631,6 +631,8 @@ export default function SmartPurchase() {
   const [filterFamilyId, setFilterFamilyId] = useState<string>("");
   const [filterBrandId, setFilterBrandId] = useState<string>("");
   const [filterCity, setFilterCity] = useState("");
+  const [filterDateFrom, setFilterDateFrom] = useState("");
+  const [filterDateTo, setFilterDateTo] = useState("");
 
   // Drawer state
   const [filtersOpen, setFiltersOpen] = useState(false);
@@ -661,9 +663,11 @@ export default function SmartPurchase() {
     if (filterFamilyId) p.familyId = filterFamilyId;
     if (filterBrandId) p.brandId = filterBrandId;
     if (filterCity) p.supplierCity = filterCity;
+    if (filterDateFrom) p.dateFrom = filterDateFrom;
+    if (filterDateTo) p.dateTo = filterDateTo;
     if (sortBy !== "profit") p.sortBy = sortBy;
     return p;
-  }, [search, filterSupplierId, filterFamilyId, filterBrandId, filterCity, sortBy]);
+  }, [search, filterSupplierId, filterFamilyId, filterBrandId, filterCity, filterDateFrom, filterDateTo, sortBy]);
 
   const { data: rows, isLoading, refetch } = useQuery<NeededRow[]>({
     queryKey: ["smart-purchase-needed", store?.id, queryParams],
@@ -699,6 +703,13 @@ export default function SmartPurchase() {
   }
   if (filterCity) {
     activeFilters.push({ label: filterCity, onRemove: () => setFilterCity("") });
+  }
+  if (filterDateFrom || filterDateTo) {
+    const fmt = (d: string) => { const [, m, day] = d.split("-"); return `${day}/${m}`; };
+    const label = filterDateFrom && filterDateTo
+      ? `${fmt(filterDateFrom)} – ${fmt(filterDateTo)}`
+      : filterDateFrom ? `≥ ${fmt(filterDateFrom)}` : `≤ ${fmt(filterDateTo)}`;
+    activeFilters.push({ label, onRemove: () => { setFilterDateFrom(""); setFilterDateTo(""); } });
   }
 
   const displayRows = rows ?? [];
@@ -802,7 +813,7 @@ export default function SmartPurchase() {
               ))}
               <button
                 className="text-xs text-muted-foreground underline ml-1"
-                onClick={() => { setFilterSupplierId(""); setFilterFamilyId(""); setFilterBrandId(""); setFilterCity(""); }}
+                onClick={() => { setFilterSupplierId(""); setFilterFamilyId(""); setFilterBrandId(""); setFilterCity(""); setFilterDateFrom(""); setFilterDateTo(""); }}
               >
                 {t("Tout effacer", "مسح الكل")}
               </button>
@@ -1044,6 +1055,44 @@ export default function SmartPurchase() {
                 value={filterCity}
                 onChange={(e) => setFilterCity(e.target.value)}
               />
+            </div>
+
+            {/* Date range */}
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <label className="text-sm font-medium">{t("Période de ventes", "فترة المبيعات")}</label>
+                {(filterDateFrom || filterDateTo) && (
+                  <button
+                    type="button"
+                    className="text-xs text-muted-foreground underline"
+                    onClick={() => { setFilterDateFrom(""); setFilterDateTo(""); }}
+                  >
+                    {t("Effacer", "مسح")}
+                  </button>
+                )}
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <div className="space-y-1">
+                  <span className="text-xs text-muted-foreground">{t("Du", "من")}</span>
+                  <input
+                    type="date"
+                    className="w-full h-12 rounded-xl border bg-white px-3 text-sm"
+                    value={filterDateFrom}
+                    max={filterDateTo || undefined}
+                    onChange={(e) => setFilterDateFrom(e.target.value)}
+                  />
+                </div>
+                <div className="space-y-1">
+                  <span className="text-xs text-muted-foreground">{t("Au", "إلى")}</span>
+                  <input
+                    type="date"
+                    className="w-full h-12 rounded-xl border bg-white px-3 text-sm"
+                    value={filterDateTo}
+                    min={filterDateFrom || undefined}
+                    onChange={(e) => setFilterDateTo(e.target.value)}
+                  />
+                </div>
+              </div>
             </div>
 
             <Button

@@ -146,11 +146,23 @@ async function putAddToPO(
   po: { supplierId: number; paymentMethod: "comptant" | "a_terme"; notes: string | null },
   newItem: { productId: number; quantity: number; unitCost: number },
   existingItems: POItem[],
-): Promise<{ id: number; itemCount: number }> {
-  const allItems = [
-    ...existingItems.map(i => ({ productId: i.productId, quantity: Number(i.quantity), unitCost: Number(i.unitCost) })),
-    newItem,
-  ];
+): Promise<{ id: number; itemCount: number; merged: boolean }> {
+  // Merge quantities if the product already exists in the bon
+  let merged = false;
+  const allItems = existingItems.map(i => {
+    if (i.productId === newItem.productId) {
+      merged = true;
+      return {
+        productId: i.productId,
+        quantity: Number(i.quantity) + newItem.quantity,
+        unitCost: newItem.unitCost, // use the newly entered price
+      };
+    }
+    return { productId: i.productId, quantity: Number(i.quantity), unitCost: Number(i.unitCost) };
+  });
+  if (!merged) {
+    allItems.push(newItem);
+  }
   const res = await fetch(`${API_BASE}/api/erp/purchase-orders/${poId}`, {
     method: "PUT",
     headers: { ...authHeaders(), "Content-Type": "application/json" },
@@ -165,7 +177,7 @@ async function putAddToPO(
     const data = await res.json() as { error?: string };
     throw new Error(data.error ?? "Erreur");
   }
-  return { id: poId, itemCount: allItems.length };
+  return { id: poId, itemCount: allItems.length, merged };
 }
 
 function resolveImg(url: string | null | undefined): string | undefined {
@@ -344,7 +356,7 @@ function QuickOrderDrawer({
   const [quantity, setQuantity] = useState("1");
   const [unitCost, setUnitCost] = useState("");
   const [submitting, setSubmitting] = useState(false);
-  const [success, setSuccess] = useState<{ id: number; itemCount: number } | null>(null);
+  const [success, setSuccess] = useState<{ id: number; itemCount: number; merged?: boolean } | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   // Fetch pending (draft) bons
@@ -449,7 +461,9 @@ function QuickOrderDrawer({
               <p className="font-semibold text-gray-800">
                 {mode === "new"
                   ? t("Bon créé avec succès !", "تم إنشاء البون بنجاح!")
-                  : t("Produit ajouté avec succès !", "تمت إضافة المنتج بنجاح!")}
+                  : success?.merged
+                    ? t("Quantité mise à jour !", "تم تحديث الكمية!")
+                    : t("Produit ajouté avec succès !", "تمت إضافة المنتج بنجاح!")}
               </p>
               <p className="text-xs text-muted-foreground font-mono">
                 #{String(success.id).padStart(6, "0")}

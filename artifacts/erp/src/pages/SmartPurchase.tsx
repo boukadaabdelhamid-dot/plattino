@@ -13,6 +13,7 @@ import {
 import {
   ShoppingBasket, SlidersHorizontal, X, History, CheckCircle2,
   Package, Search, RefreshCw, MapPin, Phone, TrendingUp, ShoppingCart,
+  LayoutGrid, List,
 } from "lucide-react";
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -625,6 +626,98 @@ function QuickOrderDrawer({
   );
 }
 
+// ── Needed list row (compact view) ───────────────────────────────────────────
+function NeededListRow({
+  row, lang, sortBy, isSnoozePending, t, onHistory, onOrder, onSnooze,
+}: {
+  row: NeededRow; lang: string; sortBy: SortBy; isSnoozePending: boolean;
+  t: (fr: string, ar: string) => string;
+  onHistory: () => void; onOrder: () => void; onSnooze: () => void;
+}) {
+  const name = lang === "ar" && row.designation_ar ? row.designation_ar : row.designation;
+  const famille = lang === "ar" && row.famille_ar ? row.famille_ar : row.famille;
+  const stock = Number(row.stock);
+  const minStock = row.min_stock != null ? Number(row.min_stock) : null;
+  const stockColor = stock === 0 ? "text-red-600" : "text-amber-600";
+
+  return (
+    <div className="bg-white border rounded-xl overflow-hidden">
+      {/* Top row: icon + name + stock + metric */}
+      <div className="flex items-center gap-2 px-3 py-2">
+        <div className="w-6 h-6 rounded-md bg-slate-100 flex items-center justify-center shrink-0">
+          <Package className="h-3 w-3 text-slate-400" />
+        </div>
+        {/* Name + badges */}
+        <div className="flex-1 min-w-0">
+          <p className="text-sm font-semibold text-slate-800 truncate leading-tight">{name}</p>
+          <div className="flex items-center gap-1 mt-0.5 flex-wrap">
+            {row.reference && (
+              <span className="text-[10px] font-mono text-muted-foreground">{row.reference}</span>
+            )}
+            {famille && (
+              <span className="text-[10px] bg-slate-100 text-slate-600 rounded px-1 py-0">{famille}</span>
+            )}
+            {row.marque && (
+              <span className="text-[10px] bg-slate-100 text-slate-600 rounded px-1 py-0">{row.marque}</span>
+            )}
+          </div>
+        </div>
+        {/* Stock */}
+        <div className="shrink-0 text-right min-w-[44px]">
+          <span className={`text-xs font-bold tabular-nums ${stockColor}`}>{stock.toLocaleString("fr-DZ")}</span>
+          {minStock != null && <span className="text-[10px] text-muted-foreground">/{minStock.toLocaleString("fr-DZ")}</span>}
+          {stock === 0 && <div className="text-[9px] font-semibold text-red-600 leading-tight">RUPTURE</div>}
+        </div>
+        {/* Benefice / qty */}
+        <div className="shrink-0 text-right min-w-[56px]">
+          {sortBy === "qty_sold" ? (
+            <>
+              <p className={`text-xs font-bold tabular-nums ${Number(row.total_qty_sold) > 0 ? "text-blue-700" : "text-slate-400"}`}>
+                {Number(row.total_qty_sold).toLocaleString("fr-DZ")}
+              </p>
+              <p className="text-[10px] text-muted-foreground leading-tight">{t("un.", "و.")}</p>
+            </>
+          ) : (
+            <>
+              <p className={`text-xs font-bold tabular-nums ${Number(row.benefice) > 0 ? "text-emerald-700" : "text-slate-400"}`}>
+                {fmtNum(row.benefice)}
+              </p>
+              <p className="text-[10px] text-muted-foreground leading-tight">DA</p>
+            </>
+          )}
+        </div>
+      </div>
+      {/* Bottom row: supplier + action buttons */}
+      <div className="flex items-center border-t">
+        <div className="flex-1 min-w-0 px-3 py-1.5">
+          {row.supplier_name ? (
+            <p className="text-[11px] text-blue-700 truncate font-medium">{row.supplier_name}</p>
+          ) : (
+            <p className="text-[11px] text-muted-foreground">—</p>
+          )}
+        </div>
+        <div className="flex shrink-0 border-l divide-x">
+          <button type="button" onClick={onHistory}
+            className="px-3 py-2 text-slate-500 hover:bg-slate-50 active:bg-slate-100 transition-colors"
+            aria-label={t("Historique", "التاريخ")}>
+            <History className="h-4 w-4" />
+          </button>
+          <button type="button" onClick={onOrder}
+            className="px-3 py-2 text-blue-600 hover:bg-blue-50 active:bg-blue-100 transition-colors"
+            aria-label={t("Commander", "اطلب")}>
+            <ShoppingCart className="h-4 w-4" />
+          </button>
+          <button type="button" disabled={isSnoozePending} onClick={onSnooze}
+            className="px-3 py-2 text-emerald-600 hover:bg-emerald-50 active:bg-emerald-100 transition-colors disabled:opacity-60"
+            aria-label={t("Tâche achetée", "تمّ")}>
+            <CheckCircle2 className="h-4 w-4" />
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Main page ────────────────────────────────────────────────────────────────
 export default function SmartPurchase() {
   const { lang } = useLang();
@@ -641,6 +734,15 @@ export default function SmartPurchase() {
   const [filterCity, setFilterCity] = useState("");
   const [filterDateFrom, setFilterDateFrom] = useState("");
   const [filterDateTo, setFilterDateTo] = useState("");
+
+  // View mode (cards / list) — persisted in localStorage
+  const [viewMode, setViewMode] = useState<"cards" | "list">(() => {
+    try { return (localStorage.getItem("smart-purchase-view") as "cards" | "list") ?? "cards"; } catch { return "cards"; }
+  });
+  const setViewModePersist = useCallback((mode: "cards" | "list") => {
+    setViewMode(mode);
+    try { localStorage.setItem("smart-purchase-view", mode); } catch { /* noop */ }
+  }, []);
 
   // Drawer state
   const [filtersOpen, setFiltersOpen] = useState(false);
@@ -749,20 +851,40 @@ export default function SmartPurchase() {
               >
                 <RefreshCw className="h-4 w-4" />
               </Button>
-              <Button
-                variant={activeFilters.length > 0 ? "default" : "outline"}
-                size="sm"
-                className={`h-10 gap-1.5 rounded-full px-4 ${activeFilters.length > 0 ? "bg-blue-600 hover:bg-blue-700 text-white" : ""}`}
-                onClick={() => setFiltersOpen(true)}
-              >
-                <SlidersHorizontal className="h-4 w-4" />
-                {t("Filtres", "الفلاتر")}
-                {activeFilters.length > 0 && (
-                  <span className="bg-white text-blue-700 rounded-full px-1.5 py-0 text-[10px] font-bold">
-                    {activeFilters.length}
-                  </span>
-                )}
-              </Button>
+              {/* View mode toggle */}
+              <div className="flex rounded-lg border overflow-hidden h-10">
+                <button type="button"
+                  onClick={() => setViewModePersist("cards")}
+                  className={`px-2.5 flex items-center transition-colors ${viewMode === "cards" ? "bg-slate-800 text-white" : "bg-white text-gray-500 hover:bg-gray-50"}`}
+                  aria-label={t("Vue cartes", "عرض بطاقات")}
+                >
+                  <LayoutGrid className="h-4 w-4" />
+                </button>
+                <button type="button"
+                  onClick={() => setViewModePersist("list")}
+                  className={`px-2.5 flex items-center transition-colors border-l ${viewMode === "list" ? "bg-slate-800 text-white" : "bg-white text-gray-500 hover:bg-gray-50"}`}
+                  aria-label={t("Vue liste", "عرض قائمة")}
+                >
+                  <List className="h-4 w-4" />
+                </button>
+              </div>
+              {/* Filters button — card mode only */}
+              {viewMode === "cards" && (
+                <Button
+                  variant={activeFilters.length > 0 ? "default" : "outline"}
+                  size="sm"
+                  className={`h-10 gap-1.5 rounded-full px-4 ${activeFilters.length > 0 ? "bg-blue-600 hover:bg-blue-700 text-white" : ""}`}
+                  onClick={() => setFiltersOpen(true)}
+                >
+                  <SlidersHorizontal className="h-4 w-4" />
+                  {t("Filtres", "الفلاتر")}
+                  {activeFilters.length > 0 && (
+                    <span className="bg-white text-blue-700 rounded-full px-1.5 py-0 text-[10px] font-bold">
+                      {activeFilters.length}
+                    </span>
+                  )}
+                </Button>
+              )}
             </div>
           </div>
 
@@ -813,8 +935,62 @@ export default function SmartPurchase() {
             )}
           </div>
 
-          {/* Active filter chips */}
-          {activeFilters.length > 0 && (
+          {/* Inline filter bar — list mode only */}
+          {viewMode === "list" && (
+            <div className="flex gap-2 overflow-x-auto pb-0.5" style={{ scrollbarWidth: "none" }}>
+              <select
+                className="shrink-0 h-9 rounded-lg border bg-white px-2 text-xs appearance-none min-w-[120px]"
+                value={filterSupplierId}
+                onChange={(e) => setFilterSupplierId(e.target.value)}
+              >
+                <option value="">{t("Fournisseur", "المورد")}</option>
+                {suppliers.map((s) => <option key={s.id} value={String(s.id)}>{s.name}</option>)}
+              </select>
+              <select
+                className="shrink-0 h-9 rounded-lg border bg-white px-2 text-xs appearance-none min-w-[100px]"
+                value={filterFamilyId}
+                onChange={(e) => setFilterFamilyId(e.target.value)}
+              >
+                <option value="">{t("Famille", "العائلة")}</option>
+                {families.map((f) => <option key={f.id} value={String(f.id)}>{lang === "ar" ? f.nameAr : f.nameFr}</option>)}
+              </select>
+              <select
+                className="shrink-0 h-9 rounded-lg border bg-white px-2 text-xs appearance-none min-w-[100px]"
+                value={filterBrandId}
+                onChange={(e) => setFilterBrandId(e.target.value)}
+              >
+                <option value="">{t("Marque", "الماركة")}</option>
+                {brands.map((b) => <option key={b.id} value={String(b.id)}>{lang === "ar" ? b.nameAr : b.nameFr}</option>)}
+              </select>
+              <input
+                type="date"
+                className="shrink-0 h-9 rounded-lg border bg-white px-2 text-xs min-w-[130px]"
+                value={filterDateFrom}
+                max={filterDateTo || undefined}
+                onChange={(e) => setFilterDateFrom(e.target.value)}
+              />
+              <input
+                type="date"
+                className="shrink-0 h-9 rounded-lg border bg-white px-2 text-xs min-w-[130px]"
+                value={filterDateTo}
+                min={filterDateFrom || undefined}
+                onChange={(e) => setFilterDateTo(e.target.value)}
+              />
+              {(filterSupplierId || filterFamilyId || filterBrandId || filterDateFrom || filterDateTo) && (
+                <button
+                  type="button"
+                  className="shrink-0 h-9 px-2.5 text-xs text-muted-foreground border rounded-lg hover:bg-gray-50 flex items-center gap-1 whitespace-nowrap"
+                  onClick={() => { setFilterSupplierId(""); setFilterFamilyId(""); setFilterBrandId(""); setFilterCity(""); setFilterDateFrom(""); setFilterDateTo(""); }}
+                >
+                  <X className="h-3 w-3" />
+                  {t("Effacer", "مسح")}
+                </button>
+              )}
+            </div>
+          )}
+
+          {/* Active filter chips — card mode only */}
+          {viewMode === "cards" && activeFilters.length > 0 && (
             <div className="flex flex-wrap gap-1.5">
               {activeFilters.map((f) => (
                 <FilterChip key={f.label} label={f.label} onRemove={f.onRemove} />
@@ -854,7 +1030,8 @@ export default function SmartPurchase() {
           </div>
         )}
 
-        {displayRows.map((row) => {
+        {/* ── Cards view ── */}
+        {viewMode === "cards" && displayRows.map((row) => {
           const isSnoozePending = pendingSnooze.has(row.id);
           const imgUrl = resolveImg(row.image_url);
 
@@ -989,6 +1166,21 @@ export default function SmartPurchase() {
             </div>
           );
         })}
+
+        {/* ── List view ── */}
+        {viewMode === "list" && displayRows.map((row) => (
+          <NeededListRow
+            key={row.id}
+            row={row}
+            lang={lang}
+            sortBy={sortBy}
+            isSnoozePending={pendingSnooze.has(row.id)}
+            t={t}
+            onHistory={() => setHistoryProduct({ id: row.id, name: lang === "ar" && row.designation_ar ? row.designation_ar : row.designation })}
+            onOrder={() => setQuickOrderProduct(row)}
+            onSnooze={() => snoozeMut.mutate(row.id)}
+          />
+        ))}
       </div>
 
       {/* ── Filters bottom drawer ── */}

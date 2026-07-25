@@ -4005,6 +4005,32 @@ router.get("/erp/purchases/needed", authenticate, requireStaff, requireStore, re
   } catch (err) { req.log.error(err); res.status(500).json({ error: "Internal server error" }); }
 });
 
+// GET /erp/purchases/filter-options — families, brands & supplier cities (purchases:view, no settings perm needed)
+router.get("/erp/purchases/filter-options", authenticate, requireStaff, requireStore, requirePermission("purchases", "view"), async (req: AuthRequest, res) => {
+  try {
+    const storeId = req.currentStoreId!;
+    const [families, brands, citiesRaw] = await Promise.all([
+      db.select({ id: schema.productFamiliesTable.id, nameFr: schema.productFamiliesTable.nameFr, nameAr: schema.productFamiliesTable.nameAr })
+        .from(schema.productFamiliesTable)
+        .where(eq(schema.productFamiliesTable.storeId, storeId))
+        .orderBy(schema.productFamiliesTable.nameFr),
+      db.select({ id: schema.productBrandsTable.id, nameFr: schema.productBrandsTable.nameFr, nameAr: schema.productBrandsTable.nameAr })
+        .from(schema.productBrandsTable)
+        .where(eq(schema.productBrandsTable.storeId, storeId))
+        .orderBy(schema.productBrandsTable.nameFr),
+      db.selectDistinct({ city: schema.suppliersTable.address })
+        .from(schema.suppliersTable)
+        .where(and(
+          eq(schema.suppliersTable.storeId, storeId),
+          sql`${schema.suppliersTable.address} IS NOT NULL AND TRIM(${schema.suppliersTable.address}) <> ''`,
+        ))
+        .orderBy(schema.suppliersTable.address),
+    ]);
+    const supplierCities = citiesRaw.map(r => r.city).filter((c): c is string => !!c);
+    res.json({ families, brands, supplierCities });
+  } catch (err) { req.log.error(err); res.status(500).json({ error: "Internal server error" }); }
+});
+
 // POST /erp/purchases/snooze/:productId — mark a product as "bought", hide for 24 h
 router.post("/erp/purchases/snooze/:productId", authenticate, requireStaff, requireStore, requirePermission("purchases", "edit"), async (req: AuthRequest, res) => {
   try {

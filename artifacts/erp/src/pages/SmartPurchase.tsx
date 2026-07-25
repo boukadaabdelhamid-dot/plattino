@@ -1,8 +1,8 @@
-import React, { useState, useCallback, useMemo } from "react";
+import React, { useState, useCallback, useMemo, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useLang } from "@/hooks/use-lang";
 import { useCurrentStore } from "@/hooks/use-current-store";
-import { useGetErpSettingsProductsFamilies, useGetErpSettingsProductsBrands, useGetSuppliers } from "@workspace/api-client-react";
+import { useGetSuppliers } from "@workspace/api-client-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -83,6 +83,33 @@ async function postSnooze(productId: number): Promise<void> {
     headers: { ...authHeaders(), "Content-Type": "application/json" },
   });
   if (!res.ok) throw new Error("snooze failed");
+}
+
+type FilterOptions = {
+  families: Array<{ id: number; nameFr: string; nameAr: string }>;
+  brands: Array<{ id: number; nameFr: string; nameAr: string }>;
+  supplierCities: string[];
+};
+
+async function fetchFilterOptions(): Promise<FilterOptions> {
+  const res = await fetch(`${API_BASE}/api/erp/purchases/filter-options`, { headers: authHeaders() });
+  if (!res.ok) throw new Error("filter-options failed");
+  return res.json() as Promise<FilterOptions>;
+}
+
+async function postQuickOrder(body: {
+  supplierId: number; items: Array<{ productId: number; quantity: number; unitCost: number }>; paymentMethod: "comptant" | "a_terme";
+}): Promise<{ id: number }> {
+  const res = await fetch(`${API_BASE}/api/erp/purchase-orders`, {
+    method: "POST",
+    headers: { ...authHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify({ ...body, notes: "" }),
+  });
+  if (!res.ok) {
+    const data = await res.json() as { error?: string };
+    throw new Error(data.error ?? "Erreur");
+  }
+  return res.json() as Promise<{ id: number }>;
 }
 
 function resolveImg(url: string | null | undefined): string | undefined {
@@ -240,6 +267,137 @@ function FilterChip({ label, onRemove }: { label: string; onRemove: () => void }
   );
 }
 
+// ── Quick order drawer ───────────────────────────────────────────────────────
+function QuickOrderDrawer({
+  product, suppliers, onClose, t, lang,
+}: {
+  product: NeededRow | null;
+  suppliers: Array<{ id: number; name: string }>;
+  onClose: () => void;
+  t: (fr: string, ar: string) => string;
+  lang: string;
+}) {
+  const [supplierId, setSupplierId] = useState("");
+  const [quantity, setQuantity] = useState("1");
+  const [unitCost, setUnitCost] = useState("");
+  const [paymentMethod, setPaymentMethod] = useState<"comptant" | "a_terme">("comptant");
+  const [submitting, setSubmitting] = useState(false);
+  const [successId, setSuccessId] = useState<number | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!product) return;
+    setSupplierId(product.supplier_id ? String(product.supplier_id) : "");
+    const needed = product.min_stock != null ? Math.max(1, product.min_stock - product.stock) : 1;
+    setQuantity(String(needed));
+    setUnitCost(product.cost_price ? String(Number(product.cost_price).toFixed(2)) : "");
+    setSuccessId(null);
+    setError(null);
+  }, [product?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const handleSubmit = async () => {
+    if (!product) return;
+    if (!supplierId) { setError(t("Sélectionnez un fournisseur", "اختر موردًا")); return; }
+    const qty = parseInt(quantity, 10);
+    const cost = parseFloat(unitCost);
+    if (!qty || qty <= 0) { setError(t("Quantité invalide", "كمية غير صحيحة")); return; }
+    if (isNaN(cost) || cost <= 0) { setError(t("Prix d'achat invalide", "سعر الشراء غير صحيح")); return; }
+    setSubmitting(true);
+    setError(null);
+    try {
+      const po = await postQuickOrder({ supplierId: parseInt(supplierId, 10), items: [{ productId: product.id, quantity: qty, unitCost: cost }], paymentMethod });
+      setSuccessId(po.id);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : t("Erreur inattendue", "خطأ غير متوقع"));
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const productName = product ? (lang === "ar" && product.designation_ar ? product.designation_ar : product.designation) : "";
+
+  return (
+    <Drawer open={product != null} onOpenChange={(open) => { if (!open) onClose(); }}>
+      <DrawerContent className="max-h-[90vh] flex flex-col">
+        <DrawerHeader className="border-b pb-3 shrink-0">
+          <DrawerTitle className="flex items-center gap-2 text-base font-semibold">
+            <ShoppingCart className="h-4 w-4 text-blue-600" />
+            {t("Créer un bon de commande", "إنشاء بون شراء")}
+          </DrawerTitle>
+          <p className="text-sm text-muted-foreground truncate mt-0.5">{productName}</p>
+          <DrawerClose className="absolute right-4 top-4" onClick={onClose}>
+            <X className="h-5 w-5 text-muted-foreground" />
+          </DrawerClose>
+        </DrawerHeader>
+
+        <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
+          {successId != null ? (
+            <div className="flex flex-col items-center py-8 gap-3 text-center">
+              <div className="w-14 h-14 rounded-full bg-emerald-100 flex items-center justify-center">
+                <CheckCircle2 className="h-7 w-7 text-emerald-600" />
+              </div>
+              <p className="font-semibold text-gray-800">{t("Bon créé avec succès !", "تم إنشاء البون بنجاح!")}</p>
+              <p className="text-xs text-muted-foreground font-mono">#{String(successId).padStart(6, "0")}</p>
+              <Button variant="outline" size="sm" className="mt-2 rounded-xl" onClick={onClose}>
+                {t("Fermer", "إغلاق")}
+              </Button>
+            </div>
+          ) : (
+            <>
+              <div className="space-y-1.5">
+                <label className="text-sm font-medium">{t("Fournisseur", "المورد")} *</label>
+                <select
+                  className="w-full h-12 rounded-xl border bg-white px-3 text-sm appearance-none"
+                  value={supplierId}
+                  onChange={(e) => setSupplierId(e.target.value)}
+                >
+                  <option value="">{t("Sélectionner…", "اختر موردًا…")}</option>
+                  {suppliers.map((s) => (
+                    <option key={s.id} value={String(s.id)}>{s.name}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-sm font-medium">{t("Quantité", "الكمية")} *</label>
+                <Input type="number" min="1" step="1" className="h-12 rounded-xl"
+                  value={quantity} onChange={(e) => setQuantity(e.target.value)} />
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-sm font-medium">{t("Prix d'achat unitaire (DA)", "سعر الشراء الوحدوي (دج)")} *</label>
+                <Input type="number" min="0" step="0.01" placeholder="0.00" className="h-12 rounded-xl"
+                  value={unitCost} onChange={(e) => setUnitCost(e.target.value)} />
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-sm font-medium">{t("Mode de paiement", "طريقة الدفع")}</label>
+                <div className="flex rounded-xl border overflow-hidden">
+                  <button type="button" onClick={() => setPaymentMethod("comptant")}
+                    className={`flex-1 py-3 text-sm font-medium transition-colors ${paymentMethod === "comptant" ? "bg-emerald-600 text-white" : "bg-white text-gray-600 hover:bg-gray-50"}`}>
+                    {t("Comptant", "نقداً")}
+                  </button>
+                  <button type="button" onClick={() => setPaymentMethod("a_terme")}
+                    className={`flex-1 py-3 text-sm font-medium transition-colors border-l ${paymentMethod === "a_terme" ? "bg-blue-600 text-white" : "bg-white text-gray-600 hover:bg-gray-50"}`}>
+                    {t("À terme", "آجل")}
+                  </button>
+                </div>
+              </div>
+
+              {error && <p className="text-sm text-red-600 bg-red-50 rounded-xl px-3 py-2">{error}</p>}
+
+              <Button disabled={submitting} onClick={() => void handleSubmit()}
+                className="w-full h-12 rounded-xl text-base bg-blue-600 hover:bg-blue-700 text-white">
+                {submitting ? t("Création…", "جارٍ الإنشاء…") : t("Créer le bon", "إنشاء البون")}
+              </Button>
+            </>
+          )}
+        </div>
+      </DrawerContent>
+    </Drawer>
+  );
+}
+
 // ── Main page ────────────────────────────────────────────────────────────────
 export default function SmartPurchase() {
   const { lang } = useLang();
@@ -261,14 +419,19 @@ export default function SmartPurchase() {
 
   // Snooze pending set (for immediate UI feedback)
   const [pendingSnooze, setPendingSnooze] = useState<Set<number>>(new Set());
+  // Quick order
+  const [quickOrderProduct, setQuickOrderProduct] = useState<NeededRow | null>(null);
 
-  // Attribute lists for filter selects
-  const { data: familiesData } = useGetErpSettingsProductsFamilies();
-  const { data: brandsData } = useGetErpSettingsProductsBrands();
+  // Attribute lists for filter selects — uses purchases:view, not settings:view
+  const { data: filterOpts } = useQuery<FilterOptions>({
+    queryKey: ["purchase-filter-options"],
+    queryFn: fetchFilterOptions,
+    staleTime: 60_000,
+  });
   const { data: suppliersData } = useGetSuppliers({ limit: 9999 });
 
-  const families = useMemo(() => (familiesData?.items ?? []) as Array<{ id: number; nameFr: string; nameAr: string }>, [familiesData]);
-  const brands = useMemo(() => (brandsData?.items ?? []) as Array<{ id: number; nameFr: string; nameAr: string }>, [brandsData]);
+  const families = useMemo(() => filterOpts?.families ?? [], [filterOpts]);
+  const brands   = useMemo(() => filterOpts?.brands   ?? [], [filterOpts]);
   const suppliers = useMemo(() => (suppliersData?.data ?? []) as Array<{ id: number; name: string }>, [suppliersData]);
 
   // Build query params
@@ -561,6 +724,18 @@ export default function SmartPurchase() {
                   <span className="text-xs font-medium hidden sm:inline">{t("Prix hist.", "الأسعار")}</span>
                 </button>
 
+                {/* Commander button */}
+                <button
+                  type="button"
+                  className="flex-none flex items-center justify-center gap-1.5 px-4 py-4 text-sm text-blue-600 hover:bg-blue-50 active:bg-blue-100 transition-colors border-r"
+                  style={{ minHeight: 52 }}
+                  onClick={() => setQuickOrderProduct(row)}
+                  aria-label={t("Commander", "إنشاء طلب شراء")}
+                >
+                  <ShoppingCart className="h-4 w-4" />
+                  <span className="text-xs font-medium hidden sm:inline">{t("Commander", "اطلب")}</span>
+                </button>
+
                 {/* Bought button — full remaining width, thumb-friendly */}
                 <button
                   type="button"
@@ -678,6 +853,15 @@ export default function SmartPurchase() {
           />
         </DrawerContent>
       </Drawer>
+
+      {/* ── Quick order drawer ── */}
+      <QuickOrderDrawer
+        product={quickOrderProduct}
+        suppliers={suppliers}
+        onClose={() => setQuickOrderProduct(null)}
+        t={t}
+        lang={lang}
+      />
     </div>
   );
 }

@@ -47,6 +47,7 @@ import WebStoreSettings from "@/pages/WebStoreSettings";
 import SmartPurchase from "@/pages/SmartPurchase";
 import SaleOrders from "@/pages/SaleOrders";
 import Retours from "@/pages/Retours";
+import Alertes from "@/pages/Alertes";
 
 function is401(error: unknown): boolean {
   return (
@@ -183,6 +184,9 @@ function Router() {
       </Route>
       <Route path="/transfers">
         <ProtectedRoute component={Transfers} section="inventory" />
+      </Route>
+      <Route path="/alerts">
+        <ProtectedRoute component={Alertes} section="inventory" />
       </Route>
       <Route path="/accounting">
         <ProtectedRoute component={Accounting} section="accounting" />

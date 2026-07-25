@@ -4496,4 +4496,89 @@ router.delete("/erp/sale-orders/:id", authenticate, requireStaff, requireStore, 
   } catch (err) { req.log.error(err); res.status(500).json({ error: "Internal server error" }); }
 });
 
+// ─── Smart Alerts ────────────────────────────────────────────────────────────
+
+// GET /erp/alerts/cross-store-missing
+// Products available in sibling stores (stock > 0) but absent or stock=0 here.
+// Matches by reference first, barcode as fallback (same logic as Besoin d'Achats).
+router.get("/erp/alerts/cross-store-missing", authenticate, requireStaff, requireStore, requirePermission("inventory", "view"), async (req: AuthRequest, res) => {
+  try {
+    const storeId = req.currentStoreId!;
+    const result = await db.execute(sql`
+      SELECT DISTINCT ON (
+        COALESCE(NULLIF(src.reference, ''), src.barcode)
+      )
+        src.id                                    AS source_product_id,
+        src.name_en,
+        src.name_ar,
+        src.image_url,
+        src.reference,
+        src.barcode,
+        CAST(src.stock AS numeric)               AS source_stock,
+        src.store_id                             AS source_store_id,
+        st.name_en                               AS source_store_name_en,
+        st.name_ar                               AS source_store_name_ar,
+        COALESCE(CAST(dst.stock AS numeric), 0)  AS local_stock
+      FROM   products src
+      JOIN   stores   st  ON st.id  = src.store_id
+      LEFT JOIN products dst ON (
+        dst.store_id = ${storeId}
+        AND (
+          (src.reference IS NOT NULL AND src.reference <> '' AND dst.reference = src.reference)
+          OR (
+            (src.reference IS NULL OR src.reference = '')
+            AND src.barcode IS NOT NULL AND src.barcode <> ''
+            AND dst.barcode = src.barcode
+          )
+        )
+      )
+      WHERE src.store_id <> ${storeId}
+        AND (src.is_active IS NULL OR src.is_active = true)
+        AND src.stock > 0
+        AND (dst.id IS NULL OR dst.stock = 0)
+        AND (
+          (src.reference IS NOT NULL AND src.reference <> '')
+          OR (src.barcode IS NOT NULL AND src.barcode <> '')
+        )
+      ORDER BY
+        COALESCE(NULLIF(src.reference, ''), src.barcode),
+        src.stock DESC
+    `);
+    res.json(result.rows);
+  } catch (err) { req.log.error(err); res.status(500).json({ error: "Internal server error" }); }
+});
+
+// GET /erp/alerts/count — lightweight badge count (one number per alert type)
+router.get("/erp/alerts/count", authenticate, requireStaff, requireStore, requirePermission("inventory", "view"), async (req: AuthRequest, res) => {
+  try {
+    const storeId = req.currentStoreId!;
+    const result = await db.execute(sql`
+      SELECT COUNT(DISTINCT COALESCE(NULLIF(src.reference, ''), src.barcode))
+             AS cross_store_missing
+      FROM   products src
+      LEFT JOIN products dst ON (
+        dst.store_id = ${storeId}
+        AND (
+          (src.reference IS NOT NULL AND src.reference <> '' AND dst.reference = src.reference)
+          OR (
+            (src.reference IS NULL OR src.reference = '')
+            AND src.barcode IS NOT NULL AND src.barcode <> ''
+            AND dst.barcode = src.barcode
+          )
+        )
+      )
+      WHERE src.store_id <> ${storeId}
+        AND (src.is_active IS NULL OR src.is_active = true)
+        AND src.stock > 0
+        AND (dst.id IS NULL OR dst.stock = 0)
+        AND (
+          (src.reference IS NOT NULL AND src.reference <> '')
+          OR (src.barcode IS NOT NULL AND src.barcode <> '')
+        )
+    `);
+    const row = result.rows[0] as { cross_store_missing: string };
+    res.json({ crossStoreMissing: Number(row.cross_store_missing) });
+  } catch (err) { req.log.error(err); res.status(500).json({ error: "Internal server error" }); }
+});
+
 export default router;

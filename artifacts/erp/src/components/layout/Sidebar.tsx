@@ -7,7 +7,7 @@ import {
   ChevronLeft, ChevronRight, Store as StoreIcon, Check,
   ArrowLeftRight, Bell, Volume2, VolumeX, Settings,
   ChevronDown, Layers, User, BellRing, Languages, HardDrive, Shield,
-  TrendingUp, KeyRound, Globe, RotateCcw, Receipt,
+  TrendingUp, KeyRound, Globe, RotateCcw, Receipt, AlertTriangle,
 } from "lucide-react";
 import logoPath from "@assets/logo_des_13_midanic_1777739613232.jpeg";
 import { useAuth } from "@/hooks/use-auth";
@@ -17,7 +17,7 @@ import {
   useSelectStore, useGetAdminOrders, getGetAdminOrdersQueryKey,
   GetAdminOrdersChannel,
 } from "@workspace/api-client-react";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { isChimeMuted, setChimeMuted, playNewOrderChime } from "@/lib/chime";
@@ -32,8 +32,8 @@ type NavItem = {
   adminOnly?: boolean;
   /** Permission section required for non-admin access (view action). */
   section?: PermSection;
-  /** Optional badge key for live counters (e.g. pending online orders). */
-  badge?: "online-orders-pending";
+  /** Optional badge key for live counters (e.g. pending online orders, alerts). */
+  badge?: "online-orders-pending" | "alerts-count";
   /** Extra action (beyond "view") required to show this item for non-admins. */
   permAction?: import("@/hooks/use-permissions").PermAction;
 };
@@ -74,6 +74,7 @@ const navEntries: NavEntry[] = [
   { href: "/purchase-orders", icon: FileText, labelEn: "Achats", labelAr: "المشتريات", section: "purchases" },
   { href: "/inventory", icon: BarChart2, labelEn: "Stock", labelAr: "المخزون", section: "inventory" },
   { href: "/transfers", icon: ArrowLeftRight, labelEn: "Transferts", labelAr: "التحويلات", section: "inventory" },
+  { href: "/alerts", icon: AlertTriangle, labelEn: "Alertes", labelAr: "التنبيهات", badge: "alerts-count", section: "inventory" },
   { href: "/customers", icon: UserCheck, labelEn: "Clients", labelAr: "العملاء", section: "customers" },
   { href: "/suppliers", icon: Truck, labelEn: "Fournisseurs", labelAr: "الموردون", section: "suppliers" },
   { href: "/employees", icon: Users, labelEn: "Employés", labelAr: "الموظفون", section: "employees" },
@@ -207,6 +208,8 @@ function StoreSwitcher({ collapsed }: { collapsed: boolean }) {
   );
 }
 
+const _SIDEBAR_API = (import.meta.env.VITE_API_URL as string | undefined) ?? "";
+
 /**
  * Live count of pending online orders for the current store. Reuses the
  * same `useGetAdminOrders({ channel: "online" })` query as the inbox page
@@ -222,6 +225,29 @@ function useOnlineOrdersPendingCount(): number {
   );
   if (!data || !Array.isArray(data)) return 0;
   return data.filter((o) => o.status === "pending").length;
+}
+
+/**
+ * Badge count for smart alerts (cross-store missing products).
+ * Polls GET /erp/alerts/count every 5 minutes.
+ */
+function useAlertsBadgeCount(): number {
+  const { currentStoreId } = useStoreContext();
+  const { data } = useQuery<{ crossStoreMissing: number }>({
+    queryKey: ["alerts-count", currentStoreId],
+    queryFn: async () => {
+      const token = localStorage.getItem("midanic_token");
+      const res = await fetch(`${_SIDEBAR_API}/api/erp/alerts/count`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      if (!res.ok) return { crossStoreMissing: 0 };
+      return res.json() as Promise<{ crossStoreMissing: number }>;
+    },
+    enabled: !!currentStoreId,
+    staleTime: 60_000,
+    refetchInterval: 5 * 60_000,
+  });
+  return data?.crossStoreMissing ?? 0;
 }
 
 export function Sidebar() {
@@ -242,6 +268,7 @@ export function Sidebar() {
     return true;
   });
   const onlineOrdersPending = useOnlineOrdersPendingCount();
+  const alertsCount = useAlertsBadgeCount();
   const [open, setOpen] = useState(false);
   const [collapsed, setCollapsed] = useState<boolean>(() => {
     if (typeof window === "undefined") return false;
@@ -395,7 +422,9 @@ export function Sidebar() {
 
           const { href, icon: Icon, labelEn, labelAr, badge } = entry;
           const active = location === href || location.startsWith(href + "/");
-          const badgeCount = badge === "online-orders-pending" ? onlineOrdersPending : 0;
+          const badgeCount = badge === "online-orders-pending" ? onlineOrdersPending
+            : badge === "alerts-count" ? alertsCount
+            : 0;
           return (
             <Link key={href} href={href} onClick={() => setOpen(false)}>
               <div

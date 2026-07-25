@@ -1,13 +1,16 @@
-import React, { useState } from "react";
+import React, { useState, useMemo } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Link } from "wouter";
 import { useLang } from "@/hooks/use-lang";
+import { useMe } from "@/hooks/use-me";
+import { useStoreContext } from "@/hooks/use-store";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { useGetErpStoresAll } from "@workspace/api-client-react";
+import { CreateTransferDialog, type LineDraft, type ProductLite } from "@/pages/Transfers";
 import {
   AlertTriangle, Package, ArrowLeftRight, RefreshCw,
-  Store as StoreIcon, Clock, TrendingDown,
+  Store as StoreIcon, Clock, TrendingDown, Check,
 } from "lucide-react";
 
 const API_BASE = (import.meta.env.VITE_API_URL as string | undefined) ?? "";
@@ -43,6 +46,12 @@ type SlowMoverRow = {
   stock: number;
   last_sold_at: string | null;
   days_since_last_sale: number | null;
+};
+
+type DialogConfig = {
+  storeId: string;
+  lines: LineDraft[];
+  pickedProducts: Record<number, ProductLite>;
 };
 
 const DAY_OPTIONS = [30, 60, 90, 180] as const;
@@ -90,13 +99,38 @@ function CardSkeletons() {
   );
 }
 
+// ── Helper: build a ProductLite from a cross-store alert row ─────────────────
+function rowToProductLite(row: CrossStoreMissingRow): ProductLite {
+  return {
+    id: row.source_product_id,
+    nameEn: row.name_en,
+    nameAr: row.name_ar,
+    reference: row.reference,
+    barcode: row.barcode,
+    stock: Number(row.source_stock),
+  };
+}
+
 // ── Main page ────────────────────────────────────────────────────────────────
 export default function Alertes() {
   const { lang } = useLang();
   const t = (fr: string, ar: string) => (lang === "ar" ? ar : fr);
-  const [slowDays, setSlowDays] = useState<Days>(30);
+  const { isAdmin } = useMe();
+  const { currentStoreId } = useStoreContext();
   const qc = useQueryClient();
 
+  // ── Day filter for slow-movers ──
+  const [slowDays, setSlowDays] = useState<Days>(30);
+
+  // ── Selection state ──
+  const [selected, setSelected] = useState<Set<number>>(new Set());
+
+  // ── Dialog state ──
+  const [dialogOpen, setDialogOpen] = useState(false);
+  const [dialogKey, setDialogKey] = useState(0);
+  const [dialogConfig, setDialogConfig] = useState<DialogConfig | null>(null);
+
+  // ── Queries ──
   const crossQuery = useQuery<CrossStoreMissingRow[]>({
     queryKey: ["alerts-cross-store-missing"],
     queryFn: fetchCrossStoreMissing,
@@ -109,6 +143,15 @@ export default function Alertes() {
     staleTime: 60_000,
   });
 
+  // Stores list for the transfer dialog
+  const { data: allStores } = useGetErpStoresAll();
+  const otherStores = useMemo(
+    () =>
+      ((allStores ?? []) as Array<{ id: number; nameEn: string; nameAr: string; isActive?: boolean }>)
+        .filter((s) => s.id !== currentStoreId && s.isActive !== false),
+    [allStores, currentStoreId],
+  );
+
   const isRefetching = crossQuery.isRefetching || slowQuery.isRefetching;
   const refetchAll = () => {
     void crossQuery.refetch();
@@ -116,8 +159,54 @@ export default function Alertes() {
     void qc.invalidateQueries({ queryKey: ["alerts-count"] });
   };
 
+  // ── Multi-store check: are all selected items from the same source store? ──
+  const multiStoreConflict = useMemo(() => {
+    if (selected.size === 0) return false;
+    const rows = (crossQuery.data ?? []).filter((r) => selected.has(r.source_product_id));
+    const storeIds = new Set(rows.map((r) => r.source_store_id));
+    return storeIds.size > 1;
+  }, [selected, crossQuery.data]);
+
+  // ── Toggle card selection ──
+  const toggleSelect = (id: number) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  // ── Open dialog for a single product ──
+  const openForProduct = (row: CrossStoreMissingRow) => {
+    setDialogConfig({
+      storeId: String(row.source_store_id),
+      lines: [{ sourceProductId: String(row.source_product_id), quantity: "1" }],
+      pickedProducts: { [row.source_product_id]: rowToProductLite(row) },
+    });
+    setDialogKey((k) => k + 1);
+    setDialogOpen(true);
+  };
+
+  // ── Open dialog for all selected products (same store) ──
+  const openForSelected = () => {
+    if (multiStoreConflict) return;
+    const rows = (crossQuery.data ?? []).filter((r) => selected.has(r.source_product_id));
+    if (rows.length === 0) return;
+    const storeId = String(rows[0]!.source_store_id);
+    const pickedProducts: Record<number, ProductLite> = {};
+    const lines: LineDraft[] = [];
+    for (const row of rows) {
+      pickedProducts[row.source_product_id] = rowToProductLite(row);
+      lines.push({ sourceProductId: String(row.source_product_id), quantity: "1" });
+    }
+    setDialogConfig({ storeId, lines, pickedProducts });
+    setDialogKey((k) => k + 1);
+    setDialogOpen(true);
+  };
+
   return (
-    <div className="p-4 max-w-4xl mx-auto space-y-8">
+    <div className="p-4 max-w-4xl mx-auto space-y-8 pb-28">
       {/* ── Header ─────────────────────────────────────────────────────── */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
@@ -167,8 +256,8 @@ export default function Alertes() {
         </div>
         <p className="text-xs text-muted-foreground">
           {t(
-            "Ces produits ont du stock dans d'autres magasins mais sont absents ou épuisés ici. Demandez un transfert pour les récupérer rapidement.",
-            "هذه المنتجات متوفرة في متاجر أخرى لكنها غائبة أو نافدة هنا. اطلب نقلاً للحصول عليها بسرعة.",
+            "Sélectionnez un ou plusieurs produits, puis demandez un transfert depuis le magasin source.",
+            "اختر منتجاً أو أكثر ثم اطلب نقلاً من المتجر المصدر.",
           )}
         </p>
 
@@ -196,11 +285,33 @@ export default function Alertes() {
                 lang === "ar"
                   ? row.source_store_name_ar
                   : row.source_store_name_en;
+              const isSelected = selected.has(row.source_product_id);
               return (
                 <div
                   key={row.source_product_id}
-                  className="bg-white border rounded-xl p-3 shadow-sm flex gap-3 hover:border-blue-200 transition-colors"
+                  onClick={() => toggleSelect(row.source_product_id)}
+                  className={`relative bg-white border rounded-xl p-3 shadow-sm flex gap-3 cursor-pointer transition-all ${
+                    isSelected
+                      ? "border-blue-400 ring-1 ring-blue-200 bg-blue-50/40"
+                      : "hover:border-blue-200"
+                  }`}
                 >
+                  {/* Checkbox top-right */}
+                  <div className="absolute top-2.5 right-2.5 z-10">
+                    <div
+                      className={`w-4 h-4 rounded border-2 flex items-center justify-center transition-colors ${
+                        isSelected
+                          ? "bg-blue-600 border-blue-600"
+                          : "border-gray-300 bg-white"
+                      }`}
+                    >
+                      {isSelected && (
+                        <Check className="h-2.5 w-2.5 text-white" strokeWidth={3} />
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Image */}
                   <div className="w-14 h-14 rounded-lg bg-slate-100 flex items-center justify-center shrink-0 overflow-hidden border">
                     {row.image_url ? (
                       <img
@@ -212,7 +323,9 @@ export default function Alertes() {
                       <Package className="h-6 w-6 text-slate-400" />
                     )}
                   </div>
-                  <div className="flex-1 min-w-0">
+
+                  {/* Info — pr-6 so text doesn't overlap checkbox */}
+                  <div className="flex-1 min-w-0 pr-6">
                     <p className="font-semibold text-sm truncate">{name}</p>
                     {(row.reference || row.barcode) && (
                       <p className="text-[11px] font-mono text-muted-foreground truncate">
@@ -233,15 +346,16 @@ export default function Alertes() {
                         </span>
                       )}
                     </div>
-                    <Link href="/transfers">
-                      <button
-                        type="button"
-                        className="mt-2 inline-flex items-center gap-1 text-[11px] font-semibold text-blue-600 hover:text-blue-800 transition-colors"
-                      >
-                        <ArrowLeftRight className="h-3 w-3" />
-                        {t("Demander un transfert →", "← طلب نقل")}
-                      </button>
-                    </Link>
+
+                    {/* Single-product transfer button — stops propagation so it doesn't toggle checkbox */}
+                    <button
+                      type="button"
+                      onClick={(e) => { e.stopPropagation(); openForProduct(row); }}
+                      className="mt-2 inline-flex items-center gap-1 text-[11px] font-semibold text-blue-600 hover:text-blue-800 transition-colors"
+                    >
+                      <ArrowLeftRight className="h-3 w-3" />
+                      {t("Demander un transfert →", "← طلب نقل")}
+                    </button>
                   </div>
                 </div>
               );
@@ -255,7 +369,6 @@ export default function Alertes() {
 
       {/* ── Section 2 : bضاعة راكدة ─────────────────────────────────────── */}
       <section className="space-y-3">
-        {/* Section header + day filter */}
         <div className="flex items-start justify-between gap-3 flex-wrap">
           <div className="flex items-center gap-2">
             <TrendingDown className="h-4 w-4 text-orange-500" />
@@ -345,11 +458,9 @@ export default function Alertes() {
                       </p>
                     )}
                     <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
-                      {/* Stock badge */}
                       <span className="text-[11px] font-semibold text-slate-700 bg-slate-100 border border-slate-200 rounded px-1.5 py-0.5">
                         {t("Stock", "مخزون")}: {Number(row.stock).toLocaleString("fr-DZ")}
                       </span>
-                      {/* Days indicator */}
                       <span
                         className={`inline-flex items-center gap-1 text-[11px] font-semibold rounded px-1.5 py-0.5 border ${
                           neverSold
@@ -361,7 +472,6 @@ export default function Alertes() {
                         {daysLabel}
                       </span>
                     </div>
-                    {/* Last sale date */}
                     <p className="text-[11px] text-muted-foreground mt-1">
                       {neverSold
                         ? t("Aucune vente enregistrée", "لا يوجد سجل بيع")
@@ -374,6 +484,60 @@ export default function Alertes() {
           </div>
         )}
       </section>
+
+      {/* ── Floating action bar — appears when products are selected ────── */}
+      {selected.size > 0 && (
+        <div className="fixed bottom-5 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2 bg-slate-900 text-white rounded-2xl shadow-2xl px-4 py-2.5 max-w-[90vw]">
+          {multiStoreConflict ? (
+            <span className="text-[11px] text-amber-300 flex items-center gap-1.5 shrink-0">
+              <AlertTriangle className="h-3.5 w-3.5" />
+              {t("Magasins différents — choisissez un seul", "متاجر مختلفة — اختر متجراً واحداً")}
+            </span>
+          ) : (
+            <>
+              <span className="text-sm font-medium whitespace-nowrap">
+                {selected.size} {t("article(s) sélectionné(s)", "صنف/أصناف")}
+              </span>
+              <Button
+                size="sm"
+                className="bg-blue-500 hover:bg-blue-400 text-white rounded-xl text-xs h-7 px-3"
+                onClick={openForSelected}
+              >
+                <ArrowLeftRight className="h-3.5 w-3.5 mr-1" />
+                {t("Demander le transfert", "طلب النقل")}
+              </Button>
+            </>
+          )}
+          <button
+            type="button"
+            onClick={() => setSelected(new Set())}
+            className="text-slate-400 hover:text-white ml-1 text-sm leading-none"
+            aria-label="Annuler la sélection"
+          >
+            ✕
+          </button>
+        </div>
+      )}
+
+      {/* ── Transfer dialog — keyed to remount with fresh initial state ── */}
+      <CreateTransferDialog
+        key={dialogKey}
+        open={dialogOpen}
+        onOpenChange={(o) => {
+          setDialogOpen(o);
+          if (!o) setSelected(new Set()); // clear selection after dialog closes
+        }}
+        otherStores={otherStores}
+        isAdmin={!!isAdmin}
+        onCreated={() => {
+          void qc.invalidateQueries({ queryKey: ["alerts-count"] });
+          void qc.invalidateQueries({ queryKey: ["alerts-cross-store-missing"] });
+        }}
+        initialDirection="in"
+        initialStoreId={dialogConfig?.storeId}
+        initialLines={dialogConfig?.lines}
+        initialPickedProducts={dialogConfig?.pickedProducts}
+      />
     </div>
   );
 }

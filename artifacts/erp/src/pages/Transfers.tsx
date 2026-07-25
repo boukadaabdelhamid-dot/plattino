@@ -62,9 +62,9 @@ function StatusBadge({ status }: { status: string }) {
   );
 }
 
-type LineDraft = { sourceProductId: string; quantity: string };
+export type LineDraft = { sourceProductId: string; quantity: string };
 
-type ProductLite = {
+export type ProductLite = {
   id: number;
   nameEn: string;
   nameAr: string;
@@ -410,27 +410,36 @@ function ProductSearchBar({ products: staticProducts, disabled, onPick, tr, tota
 }
 
 // ─── Create dialog ────────────────────────────────────────────────
-function CreateTransferDialog({
+export function CreateTransferDialog({
   open, onOpenChange, otherStores, isAdmin, onCreated,
+  initialDirection, initialStoreId, initialLines, initialPickedProducts,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   otherStores: Array<{ id: number; nameEn: string; nameAr: string }>;
   isAdmin: boolean;
   onCreated: () => void;
+  /** Pre-select direction on open (default "out") */
+  initialDirection?: "out" | "in";
+  /** Pre-select the source/destination store on open */
+  initialStoreId?: string;
+  /** Pre-fill the items list — use with a fresh `key` prop on each open */
+  initialLines?: LineDraft[];
+  /** Pre-cached product objects matching initialLines entries */
+  initialPickedProducts?: Record<number, ProductLite>;
 }) {
   const { lang } = useLang();
   const tr: TrFn = (fr, ar) => lang === "ar" ? ar : fr;
-  const [direction, setDirection] = useState<"out" | "in">("out");
-  const [otherStoreId, setOtherStoreId] = useState("");
+  const [direction, setDirection] = useState<"out" | "in">(initialDirection ?? "out");
+  const [otherStoreId, setOtherStoreId] = useState(initialStoreId ?? "");
   const [mode, setMode] = useState<"request" | "send">("request");
   const [notes, setNotes] = useState("");
-  const [lines, setLines] = useState<LineDraft[]>([]);
+  const [lines, setLines] = useState<LineDraft[]>(initialLines ?? []);
   const { data: productsRes } = useGetProducts({ limit: 500 });
   const products = (productsRes?.products ?? []) as ProductLite[];
   // Cache products picked via server-side search so line-item display works
   // even for items beyond the 500-item local list.
-  const [pickedProducts, setPickedProducts] = useState<Record<number, ProductLite>>({});
+  const [pickedProducts, setPickedProducts] = useState<Record<number, ProductLite>>(initialPickedProducts ?? {});
   const create = useCreateErpTransfer();
 
   const { data: inboundData } = useQuery({
@@ -465,7 +474,11 @@ function CreateTransferDialog({
     if (direction === "in" && mode === "send") setMode("request");
   }, [direction, mode]);
 
+  // Skip on mount so pre-filled initialLines are preserved when the dialog
+  // is keyed to remount with new data (the key prop resets isMounted).
+  const _isMounted = React.useRef(false);
   React.useEffect(() => {
+    if (!_isMounted.current) { _isMounted.current = true; return; }
     setLines([]);
   }, [direction, otherStoreId]);
 

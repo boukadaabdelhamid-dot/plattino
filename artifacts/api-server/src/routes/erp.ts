@@ -4011,10 +4011,15 @@ router.get("/erp/purchases/needed", authenticate, requireStaff, requireStore, re
           SELECT 1 FROM products p_other
           WHERE  p_other.store_id  != ${storeId}
             AND  p_other.is_active  = true
-            AND  p.reference IS NOT NULL
-            AND  p.reference       != ''
-            AND  p_other.reference  = p.reference
             AND  p_other.stock      > 0
+            AND  (
+              (p.reference IS NOT NULL AND p.reference != ''
+                AND p_other.reference = p.reference)
+              OR
+              (COALESCE(p.reference, '') = ''
+                AND p.barcode IS NOT NULL AND p.barcode != ''
+                AND p_other.barcode = p.barcode)
+            )
         )
         ${familyFilter}
         ${brandFilter}

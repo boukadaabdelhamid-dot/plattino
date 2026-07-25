@@ -2020,6 +2020,8 @@ router.post("/erp/purchase-annexe-charges", authenticate, requireStaff, requireS
     const totalValue = items.reduce((s, it) => s + parseFloat(it.unitCost) * it.quantity, 0);
     if (totalValue === 0) { res.status(400).json({ error: "Total value of items is zero — cannot distribute charges" }); return; }
 
+    const actorUserId = req.user!.id;
+
     const result = await db.transaction(async (tx) => {
       const today = rawDate ?? new Date().toISOString().slice(0, 10);
       const [charge] = await tx.insert(schema.purchaseAnnexeChargesTable).values({
@@ -2052,6 +2054,21 @@ router.post("/erp/purchase-annexe-charges", authenticate, requireStaff, requireS
           await recalcProductCump(tx, productId, storeId);
         }
       }
+
+      // Debit the acting user's caisse for the charge amount
+      const payingCaisse = await ensureCaisse(null, actorUserId, tx);
+      const { oldBalance: caisseOld, newBalance: caisseNew } = await applyCaisseDelta(tx, payingCaisse.id, -totalAmount);
+      await tx.insert(schema.caisseMovementsTable).values({
+        caisseId: payingCaisse.id,
+        type: "debit",
+        amount: totalAmount.toFixed(2),
+        reason: "purchase_payment",
+        actorUserId,
+        notes: `Charge annexe: ${description.trim()}`,
+        balanceBefore: caisseOld.toFixed(2),
+        balanceAfter: caisseNew.toFixed(2),
+      });
+
       return charge;
     });
 

@@ -3,7 +3,7 @@ import {
   useGetErpAccountMe, useGetErpCaisseTransfers,
   useAcceptErpCaisseTransfer, useRejectErpCaisseTransfer, useCancelErpCaisseTransfer,
   getGetErpAccountMeQueryKey, getGetErpCaisseTransfersQueryKey, getGetErpCaissesQueryKey,
-  getGetMeQueryKey,
+  getGetMeQueryKey, customFetch, ApiError,
 } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useMe } from "@/hooks/use-me";
@@ -77,20 +77,10 @@ export default function MonCompte() {
   const saveProfile = async () => {
     setSaving(true);
     try {
-      const token = localStorage.getItem("midanic_token");
-      const res = await fetch(`/api/auth/me`, {
+      await customFetch("/api/auth/me", {
         method: "PUT",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
         body: JSON.stringify({ name: formName.trim(), email: formEmail.trim() }),
       });
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        const msg = res.status === 409
-          ? t("Cette adresse email est déjà utilisée.", "البريد الإلكتروني مستخدم من حساب آخر.")
-          : (data.error ?? t("Une erreur est survenue.", "حدث خطأ."));
-        toast({ title: t("Erreur", "خطأ"), description: msg, variant: "destructive" });
-        return;
-      }
       toast({ title: t("Profil mis à jour", "تم تحديث الملف الشخصي") });
       // Invalidate BOTH queries so name/email refresh everywhere:
       //   - getGetMeQueryKey  → useMe() → Sidebar, caisse dialogs, etc.
@@ -98,8 +88,13 @@ export default function MonCompte() {
       qc.invalidateQueries({ queryKey: getGetMeQueryKey() });
       qc.invalidateQueries({ queryKey: getGetErpAccountMeQueryKey() });
       setEditMode(false);
-    } catch {
-      toast({ title: t("Erreur", "خطأ"), description: t("Erreur réseau", "خطأ في الشبكة"), variant: "destructive" });
+    } catch (err) {
+      const msg = err instanceof ApiError && err.status === 409
+        ? t("Cette adresse email est déjà utilisée.", "البريد الإلكتروني مستخدم من حساب آخر.")
+        : (err instanceof ApiError
+            ? ((err.data as { error?: string })?.error ?? t("Une erreur est survenue.", "حدث خطأ."))
+            : t("Erreur réseau", "خطأ في الشبكة"));
+      toast({ title: t("Erreur", "خطأ"), description: msg, variant: "destructive" });
     } finally {
       setSaving(false);
     }
@@ -137,24 +132,19 @@ export default function MonCompte() {
     }
     setPwSaving(true);
     try {
-      const token = localStorage.getItem("midanic_token");
-      const res = await fetch(`/api/auth/me/password`, {
+      await customFetch("/api/auth/me/password", {
         method: "PUT",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
         body: JSON.stringify({ currentPassword: formCurrentPw, newPassword: formNewPw }),
       });
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        const msg = res.status === 401
-          ? t("L'ancien mot de passe est incorrect.", "كلمة المرور الحالية غير صحيحة.")
-          : (data.error ?? t("Une erreur est survenue.", "حدث خطأ."));
-        toast({ title: t("Erreur", "خطأ"), description: msg, variant: "destructive" });
-        return;
-      }
       toast({ title: t("Mot de passe modifié", "تم تغيير كلمة المرور"), description: t("Votre mot de passe a été mis à jour.", "تم تحديث كلمة مرورك بنجاح.") });
       setPwMode(false);
-    } catch {
-      toast({ title: t("Erreur", "خطأ"), description: t("Erreur réseau", "خطأ في الشبكة"), variant: "destructive" });
+    } catch (err) {
+      const msg = err instanceof ApiError && err.status === 401
+        ? t("L'ancien mot de passe est incorrect.", "كلمة المرور الحالية غير صحيحة.")
+        : (err instanceof ApiError
+            ? ((err.data as { error?: string })?.error ?? t("Une erreur est survenue.", "حدث خطأ."))
+            : t("Erreur réseau", "خطأ في الشبكة"));
+      toast({ title: t("Erreur", "خطأ"), description: msg, variant: "destructive" });
     } finally {
       setPwSaving(false);
     }

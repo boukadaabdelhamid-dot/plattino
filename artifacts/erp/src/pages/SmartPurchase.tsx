@@ -325,11 +325,12 @@ function FilterChip({ label, onRemove }: { label: string; onRemove: () => void }
 
 // ── Quick order drawer ───────────────────────────────────────────────────────
 function QuickOrderDrawer({
-  product, suppliers, onClose, t, lang,
+  product, suppliers, onClose, onOrdered, t, lang,
 }: {
   product: NeededRow | null;
   suppliers: Array<{ id: number; name: string }>;
   onClose: () => void;
+  onOrdered: (productId: number) => void;
   t: (fr: string, ar: string) => string;
   lang: string;
 }) {
@@ -397,6 +398,7 @@ function QuickOrderDrawer({
           paymentMethod,
         });
         setSuccess({ id: po.id, itemCount: 1 });
+        onOrdered(product.id);
       } else {
         if (!selectedPoId) { setError(t("Sélectionnez un bon existant", "اختر بوناً موجوداً")); setSubmitting(false); return; }
         const poId = parseInt(selectedPoId, 10);
@@ -410,6 +412,7 @@ function QuickOrderDrawer({
           existingItems,
         );
         setSuccess(result);
+        onOrdered(product.id);
       }
     } catch (e) {
       setError(e instanceof Error ? e.message : t("Erreur inattendue", "خطأ غير متوقع"));
@@ -1061,6 +1064,7 @@ export default function SmartPurchase() {
         product={quickOrderProduct}
         suppliers={suppliers}
         onClose={() => setQuickOrderProduct(null)}
+        onOrdered={(id) => snoozeMut.mutate(id)}
         t={t}
         lang={lang}
       />

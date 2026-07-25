@@ -12,7 +12,7 @@ import {
 import {
   LayoutDashboard, ShoppingCart, TrendingUp, Users,
   UserCog, Package, Wallet, Truck, AlertCircle, Loader2,
-  Eye, ChevronUp, ChevronDown, ChevronsUpDown, Building2,
+  Eye, ChevronUp, ChevronDown, ChevronsUpDown, Building2, RefreshCw,
 } from "lucide-react";
 
 type TFn = (fr: string, ar: string) => string;
@@ -93,7 +93,7 @@ function KpiCardSkeleton() {
 }
 
 // ─── Shared fetch hook ─────────────────────────────────────────────
-function useFetch<T>(path: string) {
+function useFetch<T>(path: string, refreshKey = 0) {
   const [data, setData] = useState<T | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -114,12 +114,13 @@ function useFetch<T>(path: string) {
       .then(setData)
       .catch((e: unknown) => setError(e instanceof Error ? e.message : "Erreur"))
       .finally(() => setLoading(false));
-  }, [path]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [path, refreshKey]);
 
   return { data, loading, error };
 }
 
-function useFetchList<T>(path: string) {
+function useFetchList<T>(path: string, refreshKey = 0) {
   const [rows, setRows] = useState<T[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -140,7 +141,8 @@ function useFetchList<T>(path: string) {
       .then(setRows)
       .catch((e: unknown) => setError(e instanceof Error ? e.message : "Erreur"))
       .finally(() => setLoading(false));
-  }, [path]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [path, refreshKey]);
 
   return { rows, loading, error };
 }
@@ -364,14 +366,24 @@ function SupplierDebtsModal({ open, onClose, rows, loading, error, currency, t }
 
 // ─── Général tab ──────────────────────────────────────────────────
 function GeneralTab({ t, currency, lang, storeId }: { t: TFn; currency: string; lang: string; storeId?: string }) {
-  const { data, loading: isLoading, error: genError } = useFetch<{ stockValue: number; productsWithoutCost: number }>(buildPath("/api/erp/dashboard/general", storeId));
+  const [refreshKey, setRefreshKey] = useState(0);
+  const refresh = () => setRefreshKey(k => k + 1);
+
+  // Auto-refresh when the browser tab becomes visible again
+  useEffect(() => {
+    const onVisible = () => { if (document.visibilityState === "visible") setRefreshKey(k => k + 1); };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => document.removeEventListener("visibilitychange", onVisible);
+  }, []);
+
+  const { data, loading: isLoading, error: genError } = useFetch<{ stockValue: number; productsWithoutCost: number }>(buildPath("/api/erp/dashboard/general", storeId), refreshKey);
   const [stockDetailOpen, setStockDetailOpen] = useState(false);
   const [clientReceivablesOpen, setClientReceivablesOpen] = useState(false);
   const [supplierDebtsOpen, setSupplierDebtsOpen] = useState(false);
 
-  const { rows: clientRows, loading: clientLoading, error: clientError } = useFetchList<ClientRow>(buildPath("/api/erp/dashboard/client-receivables", storeId));
-  const { rows: supplierRows, loading: supplierLoading, error: supplierError } = useFetchList<SupplierRow>(buildPath("/api/erp/dashboard/supplier-debts", storeId));
-  const { data: caissesData, loading: caissesLoading } = useFetch<CaissesData>(buildPath("/api/erp/dashboard/caisses", storeId));
+  const { rows: clientRows, loading: clientLoading, error: clientError } = useFetchList<ClientRow>(buildPath("/api/erp/dashboard/client-receivables", storeId), refreshKey);
+  const { rows: supplierRows, loading: supplierLoading, error: supplierError } = useFetchList<SupplierRow>(buildPath("/api/erp/dashboard/supplier-debts", storeId), refreshKey);
+  const { data: caissesData, loading: caissesLoading } = useFetch<CaissesData>(buildPath("/api/erp/dashboard/caisses", storeId), refreshKey);
 
   const clientTotal = clientRows.reduce((s, r) => s + Number(r.balance ?? 0), 0);
   const supplierTotal = supplierRows.reduce((s, r) => s + Number(r.balance ?? 0), 0);
@@ -385,9 +397,22 @@ function GeneralTab({ t, currency, lang, storeId }: { t: TFn; currency: string; 
   const totalActifs    = stockValue + caissesTotal + clientTotal - supplierDebtsAbs;
   const actifLoading   = caissesLoading || clientLoading || supplierLoading;
 
+  const anyLoading = isLoading || caissesLoading || clientLoading || supplierLoading;
+
   return (
     <>
       <div className="space-y-4">
+        <div className="flex justify-end">
+          <button
+            onClick={refresh}
+            disabled={anyLoading}
+            className="inline-flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground disabled:opacity-40 transition-colors"
+            title={t("Rafraîchir les données", "تحديث البيانات")}
+          >
+            <RefreshCw className={`h-3.5 w-3.5 ${anyLoading ? "animate-spin" : ""}`} />
+            {t("Rafraîchir", "تحديث")}
+          </button>
+        </div>
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
           <KpiCard icon={Package} labelFr="Stock courant" labelAr="قيمة المخزون" value={fmtNum(data.stockValue, currency)} t={t} onClick={() => setStockDetailOpen(true)} warning={data.productsWithoutCost} warningTipFr={`${data.productsWithoutCost} produit(s) sans prix de revient — la valeur du stock peut être sous-estimée`} warningTipAr={`${data.productsWithoutCost} منتج بدون سعر تكلفة — قد تكون قيمة المخزون أقل من الواقع`} />
           <KpiCard icon={Wallet} labelFr="Trésorerie totale" labelAr="إجمالي الصناديق" value={caissesLoading ? "…" : fmtNum(caissesData?.total, currency)} t={t} />

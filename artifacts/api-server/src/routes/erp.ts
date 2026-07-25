@@ -1678,18 +1678,22 @@ async function recalcProductCump(tx: DbLike, productId: number, storeId: number)
 router.get("/erp/purchase-orders", authenticate, requireStaff, requireStore, requirePermission("purchases", "view"), async (req: AuthRequest, res) => {
   try {
     const storeId = req.currentStoreId!;
-    const { page = "1", limit = "10" } = req.query as Record<string, string>;
+    const { page = "1", limit = "10", status } = req.query as Record<string, string>;
     const pageNum  = Math.max(1, parseInt(page)  || 1);
     const limitNum = Math.min(500, Math.max(1, parseInt(limit) || 10));
     const offset   = (pageNum - 1) * limitNum;
 
+    const baseWhere = status
+      ? and(eq(schema.purchaseOrdersTable.storeId, storeId), eq(schema.purchaseOrdersTable.status, status))
+      : eq(schema.purchaseOrdersTable.storeId, storeId);
+
     const [{ count }] = await db
       .select({ count: sql<number>`count(*)` })
       .from(schema.purchaseOrdersTable)
-      .where(eq(schema.purchaseOrdersTable.storeId, storeId));
+      .where(baseWhere);
 
     const pos = await db.select().from(schema.purchaseOrdersTable)
-      .where(eq(schema.purchaseOrdersTable.storeId, storeId))
+      .where(baseWhere)
       .orderBy(desc(schema.purchaseOrdersTable.createdAt))
       .limit(limitNum).offset(offset);
 

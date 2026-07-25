@@ -112,6 +112,57 @@ async function postQuickOrder(body: {
   return res.json() as Promise<{ id: number }>;
 }
 
+type DraftPO = {
+  id: number;
+  supplierId: number | null;
+  paymentMethod: "comptant" | "a_terme";
+  notes: string | null;
+  status: string;
+  totalAmount: string;
+  createdAt: string;
+};
+
+type POItem = {
+  productId: number;
+  quantity: number;
+  unitCost: string | number;
+};
+
+async function fetchDraftPOs(): Promise<DraftPO[]> {
+  const res = await fetch(`${API_BASE}/api/erp/purchase-orders?status=pending&limit=500`, { headers: authHeaders() });
+  if (!res.ok) throw new Error("fetch draft POs failed");
+  const json = await res.json() as { data: DraftPO[] };
+  return json.data ?? [];
+}
+
+async function fetchPOItems(poId: number): Promise<POItem[]> {
+  const res = await fetch(`${API_BASE}/api/erp/purchase-orders/${poId}/items`, { headers: authHeaders() });
+  if (!res.ok) throw new Error("fetch PO items failed");
+  return res.json() as Promise<POItem[]>;
+}
+
+async function putAddToPO(
+  poId: number,
+  po: { supplierId: number; paymentMethod: "comptant" | "a_terme" },
+  newItem: { productId: number; quantity: number; unitCost: number },
+  existingItems: POItem[],
+): Promise<{ id: number; itemCount: number }> {
+  const allItems = [
+    ...existingItems.map(i => ({ productId: i.productId, quantity: Number(i.quantity), unitCost: Number(i.unitCost) })),
+    newItem,
+  ];
+  const res = await fetch(`${API_BASE}/api/erp/purchase-orders/${poId}`, {
+    method: "PUT",
+    headers: { ...authHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify({ supplierId: po.supplierId, items: allItems, paymentMethod: po.paymentMethod, notes: "" }),
+  });
+  if (!res.ok) {
+    const data = await res.json() as { error?: string };
+    throw new Error(data.error ?? "Erreur");
+  }
+  return { id: poId, itemCount: allItems.length };
+}
+
 function resolveImg(url: string | null | undefined): string | undefined {
   if (!url) return undefined;
   if (url.startsWith("/")) return `${API_BASE}${url}`;
@@ -277,36 +328,84 @@ function QuickOrderDrawer({
   t: (fr: string, ar: string) => string;
   lang: string;
 }) {
+  const [mode, setMode] = useState<"new" | "existing">("new");
+  // New-bon state
   const [supplierId, setSupplierId] = useState("");
+  const [paymentMethod, setPaymentMethod] = useState<"comptant" | "a_terme">("comptant");
+  // Existing-bon state
+  const [selectedPoId, setSelectedPoId] = useState("");
+  // Shared
   const [quantity, setQuantity] = useState("1");
   const [unitCost, setUnitCost] = useState("");
-  const [paymentMethod, setPaymentMethod] = useState<"comptant" | "a_terme">("comptant");
   const [submitting, setSubmitting] = useState(false);
-  const [successId, setSuccessId] = useState<number | null>(null);
+  const [success, setSuccess] = useState<{ id: number; itemCount: number } | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  // Fetch pending (draft) bons
+  const { data: draftPOs = [] } = useQuery<DraftPO[]>({
+    queryKey: ["draft-purchase-orders"],
+    queryFn: fetchDraftPOs,
+    enabled: product != null,
+    staleTime: 30_000,
+  });
+
+  // Sort: preferred supplier (from product) first
+  const sortedDraftPOs = useMemo(() => {
+    const preferred = product?.supplier_id ?? null;
+    return [...draftPOs].sort((a, b) => {
+      const aMatch = a.supplierId === preferred ? 0 : 1;
+      const bMatch = b.supplierId === preferred ? 0 : 1;
+      return aMatch - bMatch;
+    });
+  }, [draftPOs, product?.supplier_id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const hasDraftPOs = sortedDraftPOs.length > 0;
+
+  // Reset when product changes
   useEffect(() => {
     if (!product) return;
     setSupplierId(product.supplier_id ? String(product.supplier_id) : "");
     const needed = product.min_stock != null ? Math.max(1, product.min_stock - product.stock) : 1;
     setQuantity(String(needed));
     setUnitCost(product.cost_price ? String(Number(product.cost_price).toFixed(2)) : "");
-    setSuccessId(null);
+    setSuccess(null);
     setError(null);
+    setMode("new");
+    setSelectedPoId("");
   }, [product?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleSubmit = async () => {
     if (!product) return;
-    if (!supplierId) { setError(t("Sélectionnez un fournisseur", "اختر موردًا")); return; }
     const qty = parseInt(quantity, 10);
     const cost = parseFloat(unitCost);
     if (!qty || qty <= 0) { setError(t("Quantité invalide", "كمية غير صحيحة")); return; }
     if (isNaN(cost) || cost <= 0) { setError(t("Prix d'achat invalide", "سعر الشراء غير صحيح")); return; }
+
     setSubmitting(true);
     setError(null);
     try {
-      const po = await postQuickOrder({ supplierId: parseInt(supplierId, 10), items: [{ productId: product.id, quantity: qty, unitCost: cost }], paymentMethod });
-      setSuccessId(po.id);
+      if (mode === "new") {
+        if (!supplierId) { setError(t("Sélectionnez un fournisseur", "اختر موردًا")); setSubmitting(false); return; }
+        const po = await postQuickOrder({
+          supplierId: parseInt(supplierId, 10),
+          items: [{ productId: product.id, quantity: qty, unitCost: cost }],
+          paymentMethod,
+        });
+        setSuccess({ id: po.id, itemCount: 1 });
+      } else {
+        if (!selectedPoId) { setError(t("Sélectionnez un bon existant", "اختر بوناً موجوداً")); setSubmitting(false); return; }
+        const poId = parseInt(selectedPoId, 10);
+        const selectedPO = draftPOs.find(p => p.id === poId);
+        if (!selectedPO) { setError(t("Bon introuvable", "البون غير موجود")); setSubmitting(false); return; }
+        const existingItems = await fetchPOItems(poId);
+        const result = await putAddToPO(
+          poId,
+          { supplierId: selectedPO.supplierId ?? 0, paymentMethod: selectedPO.paymentMethod },
+          { productId: product.id, quantity: qty, unitCost: cost },
+          existingItems,
+        );
+        setSuccess(result);
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : t("Erreur inattendue", "خطأ غير متوقع"));
     } finally {
@@ -314,7 +413,9 @@ function QuickOrderDrawer({
     }
   };
 
-  const productName = product ? (lang === "ar" && product.designation_ar ? product.designation_ar : product.designation) : "";
+  const productName = product
+    ? (lang === "ar" && product.designation_ar ? product.designation_ar : product.designation)
+    : "";
 
   return (
     <Drawer open={product != null} onOpenChange={(open) => { if (!open) onClose(); }}>
@@ -322,7 +423,7 @@ function QuickOrderDrawer({
         <DrawerHeader className="border-b pb-3 shrink-0">
           <DrawerTitle className="flex items-center gap-2 text-base font-semibold">
             <ShoppingCart className="h-4 w-4 text-blue-600" />
-            {t("Créer un bon de commande", "إنشاء بون شراء")}
+            {t("Bon de commande", "بون شراء")}
           </DrawerTitle>
           <p className="text-sm text-muted-foreground truncate mt-0.5">{productName}</p>
           <DrawerClose className="absolute right-4 top-4" onClick={onClose}>
@@ -331,64 +432,160 @@ function QuickOrderDrawer({
         </DrawerHeader>
 
         <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
-          {successId != null ? (
+          {success != null ? (
+            /* ── Success state ── */
             <div className="flex flex-col items-center py-8 gap-3 text-center">
               <div className="w-14 h-14 rounded-full bg-emerald-100 flex items-center justify-center">
                 <CheckCircle2 className="h-7 w-7 text-emerald-600" />
               </div>
-              <p className="font-semibold text-gray-800">{t("Bon créé avec succès !", "تم إنشاء البون بنجاح!")}</p>
-              <p className="text-xs text-muted-foreground font-mono">#{String(successId).padStart(6, "0")}</p>
+              <p className="font-semibold text-gray-800">
+                {mode === "new"
+                  ? t("Bon créé avec succès !", "تم إنشاء البون بنجاح!")
+                  : t("Produit ajouté avec succès !", "تمت إضافة المنتج بنجاح!")}
+              </p>
+              <p className="text-xs text-muted-foreground font-mono">
+                #{String(success.id).padStart(6, "0")}
+                {" · "}
+                {success.itemCount} {t("article(s)", "صنف(أصناف)")}
+              </p>
               <Button variant="outline" size="sm" className="mt-2 rounded-xl" onClick={onClose}>
                 {t("Fermer", "إغلاق")}
               </Button>
             </div>
           ) : (
             <>
-              <div className="space-y-1.5">
-                <label className="text-sm font-medium">{t("Fournisseur", "المورد")} *</label>
-                <select
-                  className="w-full h-12 rounded-xl border bg-white px-3 text-sm appearance-none"
-                  value={supplierId}
-                  onChange={(e) => setSupplierId(e.target.value)}
+              {/* ── Mode toggle ── */}
+              <div className="flex rounded-xl border overflow-hidden">
+                <button
+                  type="button"
+                  onClick={() => { setMode("new"); setSelectedPoId(""); setError(null); }}
+                  className={`flex-1 py-3 text-sm font-medium transition-colors ${
+                    mode === "new" ? "bg-blue-600 text-white" : "bg-white text-gray-600 hover:bg-gray-50"
+                  }`}
                 >
-                  <option value="">{t("Sélectionner…", "اختر موردًا…")}</option>
-                  {suppliers.map((s) => (
-                    <option key={s.id} value={String(s.id)}>{s.name}</option>
-                  ))}
-                </select>
+                  {t("Nouveau bon", "بون جديد")}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => { setMode("existing"); setError(null); }}
+                  disabled={!hasDraftPOs}
+                  className={`flex-1 py-3 text-sm font-medium transition-colors border-l disabled:opacity-40 ${
+                    mode === "existing" ? "bg-slate-700 text-white" : "bg-white text-gray-600 hover:bg-gray-50"
+                  }`}
+                >
+                  {t("Bon existant", "بون موجود")}
+                  {hasDraftPOs && (
+                    <span className={`ml-1.5 text-xs px-1.5 py-0.5 rounded-full ${
+                      mode === "existing" ? "bg-white/20" : "bg-slate-100 text-slate-600"
+                    }`}>
+                      {sortedDraftPOs.length}
+                    </span>
+                  )}
+                </button>
               </div>
 
+              {/* ── Supplier (new) / PO select (existing) ── */}
+              {mode === "new" ? (
+                <div className="space-y-1.5">
+                  <label className="text-sm font-medium">{t("Fournisseur", "المورد")} *</label>
+                  <select
+                    className="w-full h-12 rounded-xl border bg-white px-3 text-sm appearance-none"
+                    value={supplierId}
+                    onChange={(e) => setSupplierId(e.target.value)}
+                  >
+                    <option value="">{t("Sélectionner…", "اختر موردًا…")}</option>
+                    {suppliers.map((s) => (
+                      <option key={s.id} value={String(s.id)}>{s.name}</option>
+                    ))}
+                  </select>
+                </div>
+              ) : (
+                <div className="space-y-1.5">
+                  <label className="text-sm font-medium">{t("Bon de commande", "بون الشراء")} *</label>
+                  <select
+                    className="w-full h-12 rounded-xl border bg-white px-3 text-sm appearance-none"
+                    value={selectedPoId}
+                    onChange={(e) => setSelectedPoId(e.target.value)}
+                  >
+                    <option value="">{t("Sélectionner un bon…", "اختر بوناً…")}</option>
+                    {sortedDraftPOs.map((po) => {
+                      const supplierName = suppliers.find(s => s.id === po.supplierId)?.name
+                        ?? (po.supplierId ? `#${po.supplierId}` : t("Sans fournisseur", "بدون مورد"));
+                      const isPreferred = po.supplierId === product?.supplier_id;
+                      return (
+                        <option key={po.id} value={String(po.id)}>
+                          {isPreferred ? "★ " : ""}#{String(po.id).padStart(6, "0")} — {supplierName}
+                        </option>
+                      );
+                    })}
+                  </select>
+                  {/* Selected PO summary */}
+                  {selectedPoId && (() => {
+                    const po = draftPOs.find(p => p.id === parseInt(selectedPoId, 10));
+                    if (!po) return null;
+                    const supplierName = suppliers.find(s => s.id === po.supplierId)?.name ?? "—";
+                    return (
+                      <p className="text-xs text-muted-foreground px-1">
+                        {supplierName}
+                        {" · "}
+                        {po.paymentMethod === "comptant" ? t("Comptant", "نقداً") : t("À terme", "آجل")}
+                        {" · "}
+                        {Number(po.totalAmount).toLocaleString("fr-DZ", { minimumFractionDigits: 2 })} DA
+                      </p>
+                    );
+                  })()}
+                </div>
+              )}
+
+              {/* ── Quantity ── */}
               <div className="space-y-1.5">
                 <label className="text-sm font-medium">{t("Quantité", "الكمية")} *</label>
                 <Input type="number" min="1" step="1" className="h-12 rounded-xl"
                   value={quantity} onChange={(e) => setQuantity(e.target.value)} />
               </div>
 
+              {/* ── Unit cost ── */}
               <div className="space-y-1.5">
-                <label className="text-sm font-medium">{t("Prix d'achat unitaire (DA)", "سعر الشراء الوحدوي (دج)")} *</label>
+                <label className="text-sm font-medium">
+                  {t("Prix d'achat unitaire (DA)", "سعر الشراء الوحدوي (دج)")} *
+                </label>
                 <Input type="number" min="0" step="0.01" placeholder="0.00" className="h-12 rounded-xl"
                   value={unitCost} onChange={(e) => setUnitCost(e.target.value)} />
               </div>
 
-              <div className="space-y-1.5">
-                <label className="text-sm font-medium">{t("Mode de paiement", "طريقة الدفع")}</label>
-                <div className="flex rounded-xl border overflow-hidden">
-                  <button type="button" onClick={() => setPaymentMethod("comptant")}
-                    className={`flex-1 py-3 text-sm font-medium transition-colors ${paymentMethod === "comptant" ? "bg-emerald-600 text-white" : "bg-white text-gray-600 hover:bg-gray-50"}`}>
-                    {t("Comptant", "نقداً")}
-                  </button>
-                  <button type="button" onClick={() => setPaymentMethod("a_terme")}
-                    className={`flex-1 py-3 text-sm font-medium transition-colors border-l ${paymentMethod === "a_terme" ? "bg-blue-600 text-white" : "bg-white text-gray-600 hover:bg-gray-50"}`}>
-                    {t("À terme", "آجل")}
-                  </button>
+              {/* ── Payment method (new only — existing PO keeps its own) ── */}
+              {mode === "new" && (
+                <div className="space-y-1.5">
+                  <label className="text-sm font-medium">{t("Mode de paiement", "طريقة الدفع")}</label>
+                  <div className="flex rounded-xl border overflow-hidden">
+                    <button type="button" onClick={() => setPaymentMethod("comptant")}
+                      className={`flex-1 py-3 text-sm font-medium transition-colors ${
+                        paymentMethod === "comptant" ? "bg-emerald-600 text-white" : "bg-white text-gray-600 hover:bg-gray-50"
+                      }`}>
+                      {t("Comptant", "نقداً")}
+                    </button>
+                    <button type="button" onClick={() => setPaymentMethod("a_terme")}
+                      className={`flex-1 py-3 text-sm font-medium transition-colors border-l ${
+                        paymentMethod === "a_terme" ? "bg-blue-600 text-white" : "bg-white text-gray-600 hover:bg-gray-50"
+                      }`}>
+                      {t("À terme", "آجل")}
+                    </button>
+                  </div>
                 </div>
-              </div>
+              )}
 
-              {error && <p className="text-sm text-red-600 bg-red-50 rounded-xl px-3 py-2">{error}</p>}
+              {error && (
+                <p className="text-sm text-red-600 bg-red-50 rounded-xl px-3 py-2">{error}</p>
+              )}
 
-              <Button disabled={submitting} onClick={() => void handleSubmit()}
-                className="w-full h-12 rounded-xl text-base bg-blue-600 hover:bg-blue-700 text-white">
-                {submitting ? t("Création…", "جارٍ الإنشاء…") : t("Créer le bon", "إنشاء البون")}
+              <Button
+                disabled={submitting}
+                onClick={() => void handleSubmit()}
+                className="w-full h-12 rounded-xl text-base bg-blue-600 hover:bg-blue-700 text-white"
+              >
+                {submitting
+                  ? (mode === "new" ? t("Création…", "جارٍ الإنشاء…") : t("Ajout…", "جارٍ الإضافة…"))
+                  : (mode === "new" ? t("Créer le bon", "إنشاء البون") : t("Ajouter au bon", "إضافة للبون"))}
               </Button>
             </>
           )}

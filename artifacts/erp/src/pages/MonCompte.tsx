@@ -15,7 +15,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
-import { User, Wallet, Send, Inbox, Building2, CheckCircle2, XCircle, Store as StoreIcon, Pencil, X, Loader2, KeyRound } from "lucide-react";
+import { User, Wallet, Send, Inbox, Building2, CheckCircle2, XCircle, Store as StoreIcon, Pencil, X, Loader2, KeyRound, Eye, EyeOff } from "lucide-react";
 import {
   fmtAmount, errMsg, personLabel, makeCaisseLabel, makeTransferStatusBadge,
   TransfersTable, SendTransferDialog, type TFn,
@@ -105,11 +105,17 @@ export default function MonCompte() {
   const [formNewPw, setFormNewPw] = useState("");
   const [formConfirmPw, setFormConfirmPw] = useState("");
   const [pwSaving, setPwSaving] = useState(false);
+  const [showCurrentPw, setShowCurrentPw] = useState(false);
+  const [showNewPw, setShowNewPw] = useState(false);
+  const [showConfirmPw, setShowConfirmPw] = useState(false);
 
   const startChangePassword = () => {
     setFormCurrentPw("");
     setFormNewPw("");
     setFormConfirmPw("");
+    setShowCurrentPw(false);
+    setShowNewPw(false);
+    setShowConfirmPw(false);
     setPwMode(true);
   };
 
@@ -270,39 +276,81 @@ export default function MonCompte() {
                   <div className="space-y-3 pt-1" data-testid="form-change-password">
                     <div className="space-y-1">
                       <Label htmlFor="pw-current">{t("Mot de passe actuel", "كلمة المرور الحالية")}</Label>
-                      <Input
-                        id="pw-current"
-                        type="password"
-                        value={formCurrentPw}
-                        onChange={e => setFormCurrentPw(e.target.value)}
-                        disabled={pwSaving}
-                        autoComplete="current-password"
-                        data-testid="input-current-password"
-                      />
+                      <div className="relative">
+                        <Input
+                          id="pw-current"
+                          type={showCurrentPw ? "text" : "password"}
+                          value={formCurrentPw}
+                          onChange={e => setFormCurrentPw(e.target.value)}
+                          disabled={pwSaving}
+                          autoComplete="current-password"
+                          data-testid="input-current-password"
+                          className={lang === "ar" ? "pl-10" : "pr-10"}
+                        />
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          className={`absolute top-0 h-full px-3 text-muted-foreground hover:text-foreground ${lang === "ar" ? "left-0" : "right-0"}`}
+                          onClick={() => setShowCurrentPw(v => !v)}
+                          tabIndex={-1}
+                          data-testid="toggle-current-password"
+                        >
+                          {showCurrentPw ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                        </Button>
+                      </div>
                     </div>
                     <div className="space-y-1">
                       <Label htmlFor="pw-new">{t("Nouveau mot de passe", "كلمة المرور الجديدة")}</Label>
-                      <Input
-                        id="pw-new"
-                        type="password"
-                        value={formNewPw}
-                        onChange={e => setFormNewPw(e.target.value)}
-                        disabled={pwSaving}
-                        autoComplete="new-password"
-                        data-testid="input-new-password"
-                      />
+                      <div className="relative">
+                        <Input
+                          id="pw-new"
+                          type={showNewPw ? "text" : "password"}
+                          value={formNewPw}
+                          onChange={e => setFormNewPw(e.target.value)}
+                          disabled={pwSaving}
+                          autoComplete="new-password"
+                          data-testid="input-new-password"
+                          className={lang === "ar" ? "pl-10" : "pr-10"}
+                        />
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          className={`absolute top-0 h-full px-3 text-muted-foreground hover:text-foreground ${lang === "ar" ? "left-0" : "right-0"}`}
+                          onClick={() => setShowNewPw(v => !v)}
+                          tabIndex={-1}
+                          data-testid="toggle-new-password"
+                        >
+                          {showNewPw ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                        </Button>
+                      </div>
                     </div>
                     <div className="space-y-1">
                       <Label htmlFor="pw-confirm">{t("Confirmer le nouveau mot de passe", "تأكيد كلمة المرور الجديدة")}</Label>
-                      <Input
-                        id="pw-confirm"
-                        type="password"
-                        value={formConfirmPw}
-                        onChange={e => setFormConfirmPw(e.target.value)}
-                        disabled={pwSaving}
-                        autoComplete="new-password"
-                        data-testid="input-confirm-password"
-                      />
+                      <div className="relative">
+                        <Input
+                          id="pw-confirm"
+                          type={showConfirmPw ? "text" : "password"}
+                          value={formConfirmPw}
+                          onChange={e => setFormConfirmPw(e.target.value)}
+                          disabled={pwSaving}
+                          autoComplete="new-password"
+                          data-testid="input-confirm-password"
+                          className={lang === "ar" ? "pl-10" : "pr-10"}
+                        />
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          className={`absolute top-0 h-full px-3 text-muted-foreground hover:text-foreground ${lang === "ar" ? "left-0" : "right-0"}`}
+                          onClick={() => setShowConfirmPw(v => !v)}
+                          tabIndex={-1}
+                          data-testid="toggle-confirm-password"
+                        >
+                          {showConfirmPw ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                        </Button>
+                      </div>
                     </div>
                     {formNewPw && formConfirmPw && formNewPw !== formConfirmPw && (
                       <p className="text-xs text-destructive" data-testid="text-password-mismatch">

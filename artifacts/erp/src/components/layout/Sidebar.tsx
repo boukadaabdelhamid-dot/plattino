@@ -228,26 +228,26 @@ function useOnlineOrdersPendingCount(): number {
 }
 
 /**
- * Badge count for smart alerts (cross-store missing products).
+ * Badge count for smart alerts — sum of cross-store missing + slow movers.
  * Polls GET /erp/alerts/count every 5 minutes.
  */
 function useAlertsBadgeCount(): number {
   const { currentStoreId } = useStoreContext();
-  const { data } = useQuery<{ crossStoreMissing: number }>({
+  const { data } = useQuery<{ crossStoreMissing: number; slowMovers: number }>({
     queryKey: ["alerts-count", currentStoreId],
     queryFn: async () => {
       const token = localStorage.getItem("midanic_token");
       const res = await fetch(`${_SIDEBAR_API}/api/erp/alerts/count`, {
         headers: token ? { Authorization: `Bearer ${token}` } : {},
       });
-      if (!res.ok) return { crossStoreMissing: 0 };
-      return res.json() as Promise<{ crossStoreMissing: number }>;
+      if (!res.ok) return { crossStoreMissing: 0, slowMovers: 0 };
+      return res.json() as Promise<{ crossStoreMissing: number; slowMovers: number }>;
     },
     enabled: !!currentStoreId,
     staleTime: 60_000,
     refetchInterval: 5 * 60_000,
   });
-  return data?.crossStoreMissing ?? 0;
+  return (data?.crossStoreMissing ?? 0) + (data?.slowMovers ?? 0);
 }
 
 export function Sidebar() {

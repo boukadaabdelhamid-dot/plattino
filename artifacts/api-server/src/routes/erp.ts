@@ -4548,36 +4548,101 @@ router.get("/erp/alerts/cross-store-missing", authenticate, requireStaff, requir
   } catch (err) { req.log.error(err); res.status(500).json({ error: "Internal server error" }); }
 });
 
-// GET /erp/alerts/count — lightweight badge count (one number per alert type)
+// GET /erp/alerts/slow-movers?days=30
+// Products with stock > 0 that have not appeared in a completed sale in the last N days
+// (or have never been sold at all). Ordered: never-sold first, then oldest-last-sale first.
+router.get("/erp/alerts/slow-movers", authenticate, requireStaff, requireStore, requirePermission("inventory", "view"), async (req: AuthRequest, res) => {
+  try {
+    const storeId = req.currentStoreId!;
+    const rawDays = parseInt((req.query["days"] as string | undefined) ?? "30", 10);
+    const days = Number.isFinite(rawDays) && rawDays > 0 ? rawDays : 30;
+
+    const result = await db.execute(sql`
+      SELECT
+        p.id,
+        p.name_en,
+        p.name_ar,
+        p.image_url,
+        p.reference,
+        p.barcode,
+        CAST(p.stock AS numeric)                                AS stock,
+        MAX(o.created_at)                                       AS last_sold_at,
+        EXTRACT(DAY FROM NOW() - MAX(o.created_at))::int        AS days_since_last_sale
+      FROM products p
+      LEFT JOIN order_items oi ON oi.product_id = p.id
+      LEFT JOIN orders o
+             ON o.id       = oi.order_id
+            AND o.store_id = ${storeId}
+            AND o.status  NOT IN ('cancelled', 'draft')
+      WHERE p.store_id = ${storeId}
+        AND p.stock    > 0
+        AND (p.is_active IS NULL OR p.is_active = true)
+      GROUP BY p.id, p.name_en, p.name_ar, p.image_url,
+               p.reference, p.barcode, p.stock
+      HAVING MAX(o.created_at) IS NULL
+          OR MAX(o.created_at) < NOW() - (${days} * INTERVAL '1 day')
+      ORDER BY MAX(o.created_at) ASC NULLS FIRST,
+               CAST(p.stock AS numeric) DESC
+    `);
+    res.json(result.rows);
+  } catch (err) { req.log.error(err); res.status(500).json({ error: "Internal server error" }); }
+});
+
+// GET /erp/alerts/count — lightweight badge count (sum of all alert types)
+// Uses a fixed 30-day window for slow-movers in the badge (detail page can filter further).
 router.get("/erp/alerts/count", authenticate, requireStaff, requireStore, requirePermission("inventory", "view"), async (req: AuthRequest, res) => {
   try {
     const storeId = req.currentStoreId!;
-    const result = await db.execute(sql`
-      SELECT COUNT(DISTINCT COALESCE(NULLIF(src.reference, ''), src.barcode))
-             AS cross_store_missing
-      FROM   products src
-      LEFT JOIN products dst ON (
-        dst.store_id = ${storeId}
-        AND (
-          (src.reference IS NOT NULL AND src.reference <> '' AND dst.reference = src.reference)
-          OR (
-            (src.reference IS NULL OR src.reference = '')
-            AND src.barcode IS NOT NULL AND src.barcode <> ''
-            AND dst.barcode = src.barcode
+
+    const [crossResult, slowResult] = await Promise.all([
+      db.execute(sql`
+        SELECT COUNT(DISTINCT COALESCE(NULLIF(src.reference, ''), src.barcode))
+               AS cross_store_missing
+        FROM   products src
+        LEFT JOIN products dst ON (
+          dst.store_id = ${storeId}
+          AND (
+            (src.reference IS NOT NULL AND src.reference <> '' AND dst.reference = src.reference)
+            OR (
+              (src.reference IS NULL OR src.reference = '')
+              AND src.barcode IS NOT NULL AND src.barcode <> ''
+              AND dst.barcode = src.barcode
+            )
           )
         )
-      )
-      WHERE src.store_id <> ${storeId}
-        AND (src.is_active IS NULL OR src.is_active = true)
-        AND src.stock > 0
-        AND (dst.id IS NULL OR dst.stock = 0)
-        AND (
-          (src.reference IS NOT NULL AND src.reference <> '')
-          OR (src.barcode IS NOT NULL AND src.barcode <> '')
-        )
-    `);
-    const row = result.rows[0] as { cross_store_missing: string };
-    res.json({ crossStoreMissing: Number(row.cross_store_missing) });
+        WHERE src.store_id <> ${storeId}
+          AND (src.is_active IS NULL OR src.is_active = true)
+          AND src.stock > 0
+          AND (dst.id IS NULL OR dst.stock = 0)
+          AND (
+            (src.reference IS NOT NULL AND src.reference <> '')
+            OR (src.barcode IS NOT NULL AND src.barcode <> '')
+          )
+      `),
+      db.execute(sql`
+        SELECT COUNT(*) AS slow_movers
+        FROM products p
+        WHERE p.store_id = ${storeId}
+          AND p.stock    > 0
+          AND (p.is_active IS NULL OR p.is_active = true)
+          AND NOT EXISTS (
+            SELECT 1
+            FROM   order_items oi
+            JOIN   orders o ON o.id = oi.order_id
+                          AND o.store_id = ${storeId}
+                          AND o.status NOT IN ('cancelled', 'draft')
+            WHERE  oi.product_id  = p.id
+              AND  o.created_at  >= NOW() - INTERVAL '30 days'
+          )
+      `),
+    ]);
+
+    const crossRow = crossResult.rows[0] as { cross_store_missing: string };
+    const slowRow  = slowResult.rows[0]  as { slow_movers: string };
+    res.json({
+      crossStoreMissing: Number(crossRow.cross_store_missing),
+      slowMovers:        Number(slowRow.slow_movers),
+    });
   } catch (err) { req.log.error(err); res.status(500).json({ error: "Internal server error" }); }
 });
 

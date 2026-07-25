@@ -1,13 +1,18 @@
 import React from "react";
 import { useLocation } from "wouter";
+import { useQuery } from "@tanstack/react-query";
 import { useLang } from "@/hooks/use-lang";
 import { useMe } from "@/hooks/use-me";
 import { usePermissions, type PermSection } from "@/hooks/use-permissions";
+import { useStoreContext } from "@/hooks/use-store";
 import {
   Package, ShoppingCart, FileText, Wallet,
   UserCheck, Truck, Users, LayoutDashboard,
   Activity, BarChart2, Clock, Calendar, CreditCard, ShoppingBasket,
+  AlertTriangle, CheckCircle,
 } from "lucide-react";
+
+const _API = (import.meta.env.VITE_API_URL as string | undefined) ?? "";
 
 type HomeModule = {
   labelFr: string;
@@ -35,6 +40,24 @@ const modules: HomeModule[] = [
   { labelFr: "Comptabilité",    labelAr: "المحاسبة",      href: "/accounting",      icon: CreditCard,      color: "bg-fuchsia-500", section: "accounting" },
 ];
 
+function useAlertsCount(enabled: boolean) {
+  const { currentStoreId } = useStoreContext();
+  return useQuery<{ crossStoreMissing: number; slowMovers: number }>({
+    queryKey: ["alerts-count", currentStoreId],
+    queryFn: async () => {
+      const token = localStorage.getItem("midanic_token");
+      const res = await fetch(`${_API}/api/erp/alerts/count`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      if (!res.ok) return { crossStoreMissing: 0, slowMovers: 0 };
+      return res.json() as Promise<{ crossStoreMissing: number; slowMovers: number }>;
+    },
+    enabled: enabled && !!currentStoreId,
+    staleTime: 60_000,
+    refetchInterval: 5 * 60_000,
+  });
+}
+
 export default function Home() {
   const [, navigate] = useLocation();
   const { lang } = useLang();
@@ -42,13 +65,76 @@ export default function Home() {
   const { can } = usePermissions();
   const t = (fr: string, ar: string) => lang === "ar" ? ar : fr;
 
+  const canViewAlerts = isAdmin || can("inventory", "view");
+  const { data: alertsData } = useAlertsCount(canViewAlerts);
+
   const visibleModules = isAdmin
     ? modules
     : modules.filter((m) => can(m.section, "view"));
 
+  const missing = alertsData?.crossStoreMissing ?? 0;
+  const slow    = alertsData?.slowMovers ?? 0;
+  const total   = missing + slow;
+  const hasAlerts = total > 0;
+
   return (
     <div className="min-h-screen bg-white">
-      <div className="px-6 py-10 sm:py-14 max-w-5xl mx-auto">
+      <div className="px-6 py-10 sm:py-14 max-w-5xl mx-auto space-y-10">
+
+        {/* Alerts summary card — visible to anyone who can view inventory */}
+        {canViewAlerts && alertsData !== undefined && (
+          <button
+            onClick={() => navigate("/alerts")}
+            className={`w-full flex items-center gap-4 rounded-2xl border px-5 py-4 text-left transition-colors focus:outline-none
+              ${hasAlerts
+                ? "border-orange-200 bg-orange-50 hover:bg-orange-100"
+                : "border-emerald-200 bg-emerald-50 hover:bg-emerald-100"
+              }`}
+          >
+            <div
+              className={`flex-shrink-0 w-11 h-11 rounded-full flex items-center justify-center
+                ${hasAlerts ? "bg-orange-500" : "bg-emerald-500"}`}
+            >
+              {hasAlerts
+                ? <AlertTriangle className="h-5 w-5 text-white" strokeWidth={2} />
+                : <CheckCircle   className="h-5 w-5 text-white" strokeWidth={2} />
+              }
+            </div>
+
+            <div className="flex-1 min-w-0">
+              <p className={`font-semibold text-sm ${hasAlerts ? "text-orange-800" : "text-emerald-800"}`}>
+                {t("Alertes stock", "تنبيهات المخزون")}
+              </p>
+              {hasAlerts ? (
+                <p className="text-xs text-orange-700 mt-0.5">
+                  {missing > 0 && (
+                    <span>
+                      {missing}&nbsp;{t("produit(s) absent(s)", missing === 1 ? "منتج غائب" : "منتجات غائبة")}
+                    </span>
+                  )}
+                  {missing > 0 && slow > 0 && <span className="mx-1.5">·</span>}
+                  {slow > 0 && (
+                    <span>
+                      {slow}&nbsp;{t("article(s) invendu(s)", slow === 1 ? "منتج راكد" : "منتجات راكدة")}
+                    </span>
+                  )}
+                </p>
+              ) : (
+                <p className="text-xs text-emerald-700 mt-0.5">
+                  {t("Aucune alerte en cours", "لا توجد تنبيهات حالياً")}
+                </p>
+              )}
+            </div>
+
+            {hasAlerts && (
+              <span className="flex-shrink-0 bg-orange-500 text-white text-xs font-bold rounded-full min-w-[1.5rem] h-6 px-2 flex items-center justify-center">
+                {total}
+              </span>
+            )}
+          </button>
+        )}
+
+        {/* Module grid */}
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-x-8 gap-y-10">
           {visibleModules.map(({ labelFr, labelAr, href, icon: Icon, color }) => (
             <button

@@ -1,6 +1,6 @@
 import { db, schema } from "./lib/db";
 import bcrypt from "bcryptjs";
-import { eq } from "drizzle-orm";
+import { eq, asc } from "drizzle-orm";
 
 /**
  * bootstrap() — Production-safe initialisation.
@@ -34,19 +34,33 @@ export async function bootstrap() {
   if (!principal) throw new Error("Failed to ensure principal store.");
 
   // ── 2. Compte Administrateur ──────────────────────────────────────────────
-  const adminHash = await bcrypt.hash("admin1234", 10);
-  await db.insert(schema.usersTable).values({
-    name: "Midanic Admin",
-    email: "admin@midanic.com",
-    passwordHash: adminHash,
-    role: "admin",
-    preferredLang: "ar",
-  }).onConflictDoNothing();
+  // Look up by ROLE, not by the hardcoded email — if the admin ever changes
+  // their email the old address vanishes from the DB, causing a duplicate
+  // admin row to be inserted on every subsequent server restart.
+  // We insert the default account only when NO admin exists at all (first boot).
+  const [existingAdmin] = await db
+    .select({ id: schema.usersTable.id })
+    .from(schema.usersTable)
+    .where(eq(schema.usersTable.role, "admin"))
+    .orderBy(asc(schema.usersTable.id))
+    .limit(1);
+
+  if (!existingAdmin) {
+    const adminHash = await bcrypt.hash("admin1234", 10);
+    await db.insert(schema.usersTable).values({
+      name: "Midanic Admin",
+      email: "admin@midanic.com",
+      passwordHash: adminHash,
+      role: "admin",
+      preferredLang: "ar",
+    }).onConflictDoNothing();
+  }
 
   const [adminUser] = await db
     .select({ id: schema.usersTable.id })
     .from(schema.usersTable)
-    .where(eq(schema.usersTable.email, "admin@midanic.com"))
+    .where(eq(schema.usersTable.role, "admin"))
+    .orderBy(asc(schema.usersTable.id))
     .limit(1);
 
   if (adminUser) {

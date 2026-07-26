@@ -852,6 +852,39 @@ async function runAttributeUniqueIndexMigration() {
   }
 }
 
+async function runStaffEmployeeBackfill() {
+  // For every admin/employee user that has no linked employee record, create one.
+  // Idempotent: ON CONFLICT DO NOTHING makes repeated runs safe.
+  try {
+    const today = new Date().toISOString().split("T")[0];
+    const result = await pool.query(
+      `INSERT INTO employees (store_id, user_id, name, email, phone, position, salary, status, hire_date)
+       SELECT
+         (SELECT us.store_id FROM user_stores us WHERE us.user_id = u.id ORDER BY us.store_id LIMIT 1),
+         u.id,
+         u.name,
+         u.email,
+         u.phone,
+         CASE WHEN u.role = 'admin' THEN 'مسؤول' ELSE 'موظف' END,
+         0,
+         'active',
+         $1::date
+       FROM users u
+       LEFT JOIN employees e ON e.user_id = u.id
+       WHERE u.role IN ('admin', 'employee')
+         AND e.id IS NULL
+         AND EXISTS (SELECT 1 FROM user_stores us WHERE us.user_id = u.id)
+       ON CONFLICT DO NOTHING`,
+      [today],
+    );
+    if (result.rowCount && result.rowCount > 0) {
+      logger.info({ count: result.rowCount }, "staff-employee-backfill: linked staff users to employee records");
+    }
+  } catch (err) {
+    logger.warn({ err }, "staff-employee-backfill: skipped (non-fatal)");
+  }
+}
+
 async function runWebSettingsMigration() {
   try {
     await pool.query(`
@@ -891,6 +924,8 @@ server.listen(port, async () => {
   await runAttributeUniqueIndexMigration();
   await runWebSettingsMigration();
   await runBootstrap();
+  // Backfill runs after bootstrap so the initial admin account (created there) is also linked.
+  await runStaffEmployeeBackfill();
 });
 
 server.on("error", (err) => {

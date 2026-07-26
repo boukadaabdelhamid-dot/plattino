@@ -3848,6 +3848,24 @@ router.post("/erp/staff", authenticate, requireAdmin, async (req, res) => {
         .onConflictDoNothing();
     }
 
+    // Auto-create an employee record so this user appears in the HR/Employees page immediately.
+    // Uses the first assigned store; position defaults to role name. Salary starts at 0.
+    const empStoreId = targetStoreIds[0];
+    if (empStoreId) {
+      const today = new Date().toISOString().split("T")[0];
+      await db.insert(schema.employeesTable).values({
+        storeId: empStoreId,
+        userId: user.id,
+        name: user.name,
+        email: user.email ?? null,
+        phone: user.phone ?? null,
+        position: wantedRole === "admin" ? "مسؤول" : "موظف",
+        salary: "0",
+        status: "active",
+        hireDate: today,
+      }).onConflictDoNothing();
+    }
+
     res.status(201).json({
       id: user.id, name: user.name, email: user.email,
       role: user.role, phone: user.phone, created_at: user.createdAt,
@@ -3955,6 +3973,8 @@ router.delete("/erp/staff/:id", authenticate, requireAdmin, async (req: AuthRequ
     const [user] = await db.select().from(schema.usersTable).where(eq(schema.usersTable.id, targetId)).limit(1);
     if (!user) { res.status(404).json({ error: "Not found" }); return; }
     if (user.role === "customer") { res.status(400).json({ error: "Not a staff account" }); return; }
+    // Deleting the user row automatically sets employees.user_id = NULL (FK ON DELETE SET NULL),
+    // preserving HR history (attendance, leaves, salary). No explicit employee delete needed.
     await db.delete(schema.usersTable).where(eq(schema.usersTable.id, targetId));
     res.json({ success: true });
   } catch (err) { req.log.error(err); res.status(500).json({ error: "Internal server error" }); }

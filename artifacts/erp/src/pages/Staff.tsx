@@ -17,6 +17,8 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Shield, UserPlus, Trash2, Crown, User, Key, Eye, EyeOff, ArrowUpDown } from "lucide-react";
 
+const API_BASE = (import.meta.env.VITE_API_URL as string | undefined) ?? "";
+
 export default function Staff() {
   const qc = useQueryClient();
   const { lang } = useLang();
@@ -87,7 +89,7 @@ export default function Staff() {
     setRoleError(null);
     try {
       const token = localStorage.getItem("midanic_token");
-      const resp = await fetch(`/api/erp/staff/${roleTarget.id}/role`, {
+      const resp = await fetch(`${API_BASE}/api/erp/staff/${roleTarget.id}/role`, {
         method: "PUT",
         headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
         body: JSON.stringify({ role: newRole }),
@@ -98,9 +100,15 @@ export default function Staff() {
         return;
       }
       await qc.invalidateQueries({ queryKey: getGetErpStaffQueryKey() });
-      toast({ title: newRole === "admin"
-        ? t(`${roleTarget.name} est maintenant Admin`, `${roleTarget.name} أصبح مسؤولاً`)
-        : t(`${roleTarget.name} est maintenant Employé`, `${roleTarget.name} أصبح موظفاً`) });
+      toast({
+        title: newRole === "admin"
+          ? t(`${roleTarget.name} est maintenant Admin`, `${roleTarget.name} أصبح مسؤولاً`)
+          : t(`${roleTarget.name} est maintenant Employé`, `${roleTarget.name} أصبح موظفاً`),
+        description: t(
+          "L'utilisateur doit se reconnecter pour que les nouvelles permissions prennent effet.",
+          "يجب على المستخدم إعادة تسجيل الدخول لتفعيل الصلاحيات الجديدة.",
+        ),
+      });
       closeRoleDialog();
     } catch {
       setRoleError(t("Erreur réseau", "خطأ في الشبكة"));

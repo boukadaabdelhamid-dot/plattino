@@ -983,7 +983,7 @@ router.get("/erp/pos/drafts", authenticate, requireStaff, requireStore, requireP
 });
 
 // DELETE /erp/pos/drafts/:id — discard a draft and its items
-router.delete("/erp/pos/drafts/:id", authenticate, requireStaff, requireStore, requirePermission("caisse", "delete"), async (req: AuthRequest, res) => {
+router.delete("/erp/pos/drafts/:id", authenticate, requireStaff, requireStore, requirePermission("caisse", "create"), async (req: AuthRequest, res) => {
   try {
     const storeId = req.currentStoreId!;
     const draftId = pid(req, "id");

@@ -102,6 +102,8 @@ export default function Pos() {
   const [paymentOpen, setPaymentOpen] = useState(false);
   const [emptyState, setEmptyState] = useState(false);
   const [draftsOpen, setDraftsOpen] = useState(false);
+  // ID of the draft currently loaded into the cart. Deleted only after payment succeeds.
+  const [activeDraftId, setActiveDraftId] = useState<number | null>(null);
 
   const codeRef = useRef<HTMLInputElement>(null);
   const editLineRef = useRef(editLine);
@@ -179,6 +181,20 @@ export default function Pos() {
   function resetSale() {
     setLines([]); setVersement(0); setClient(null);
     setEmptyState(false); setCode(""); setQtyStr("1");
+    setActiveDraftId(null);
+  }
+
+  /** Delete the active draft from the server (called only after payment succeeds). */
+  async function discardActiveDraft(id: number) {
+    const token = localStorage.getItem("midanic_token");
+    try {
+      await fetch(`${apiBase}/api/erp/pos/drafts/${id}`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${token ?? ""}` },
+      });
+    } catch {
+      // Non-critical: draft will simply remain in the list until manually deleted.
+    }
   }
 
   async function saveDraft() {
@@ -207,7 +223,7 @@ export default function Pos() {
     }
   }
 
-  function handleLoadDraft(items: { productId: number; quantity: number; unitPrice: string; nameEn?: string | null; nameAr?: string | null }[]) {
+  function handleLoadDraft(items: { productId: number; quantity: number; unitPrice: string; nameEn?: string | null; nameAr?: string | null }[], draftId: number) {
     const newLines: CartLine[] = items.map((item) => ({
       productId: item.productId,
       designation: (item.nameEn || item.nameAr || `Produit #${item.productId}`).toUpperCase(),
@@ -217,6 +233,7 @@ export default function Pos() {
       reduction: 0,
     }));
     setLines(newLines);
+    setActiveDraftId(draftId);
     setEmptyState(false);
     setCode("");
   }
@@ -307,6 +324,9 @@ export default function Pos() {
                 void qc.invalidateQueries({ queryKey: getGetTransactionsQueryKey() });
                 // Refresh customer list so the updated credit balance shows.
                 void qc.invalidateQueries({ queryKey: getGetErpCustomersQueryKey() });
+                // Delete the loaded draft now that the sale is confirmed.
+                const draftToDelete = activeDraftId;
+                if (draftToDelete !== null) void discardActiveDraft(draftToDelete);
                 setPaymentOpen(false);
                 if (opts.impression) {
                   const data: InvoiceData = {

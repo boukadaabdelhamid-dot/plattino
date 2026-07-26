@@ -31,7 +31,7 @@ export function DraftsDialog({
   open: boolean;
   onOpenChange: (o: boolean) => void;
   apiBase: string;
-  onLoad: (items: DraftItem[]) => void;
+  onLoad: (items: DraftItem[], draftId: number) => void;
 }) {
   const { lang } = useLang();
   const t = (fr: string, ar: string) => lang === "ar" ? ar : fr;
@@ -61,19 +61,27 @@ export function DraftsDialog({
   async function handleDelete(id: number) {
     setDeleting(id);
     try {
-      await fetch(`${apiBase}/api/erp/pos/drafts/${id}`, {
+      const r = await fetch(`${apiBase}/api/erp/pos/drafts/${id}`, {
         method: "DELETE",
         headers: { Authorization: `Bearer ${tok()}` },
       });
+      if (!r.ok) {
+        const body = await r.json().catch(() => ({})) as { error?: string };
+        alert(body.error ?? `Erreur lors de la suppression du bon (${r.status})`);
+        return;
+      }
       setDrafts((prev) => prev.filter((d) => d.id !== id));
+    } catch {
+      alert("Erreur réseau lors de la suppression du bon.");
     } finally {
       setDeleting(null);
     }
   }
 
   function handleLoad(draft: Draft) {
-    onLoad(draft.items);
-    void handleDelete(draft.id);
+    // Pass draftId so Pos.tsx can delete it only after the sale is confirmed.
+    // Do NOT delete the draft here — if the page closes before payment, it must survive.
+    onLoad(draft.items, draft.id);
     onOpenChange(false);
   }
 

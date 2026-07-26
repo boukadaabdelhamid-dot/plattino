@@ -4593,22 +4593,23 @@ router.get("/erp/alerts/slow-movers", authenticate, requireStaff, requireStore, 
                  CAST(p.stock AS numeric) DESC
       `),
       db.execute(sql`
-        SELECT COALESCE(SUM(CAST(stock AS numeric) * CAST(price AS numeric)), 0)
+        SELECT COALESCE(SUM(CAST(stock AS numeric) * CAST(cost_price AS numeric)), 0)
                AS total_inventory_value
         FROM products
         WHERE store_id    = ${storeId}
           AND (is_active IS NULL OR is_active = true)
           AND stock > 0
+          AND cost_price  > 0
       `),
     ]);
 
-    type SlowRow = { stock: string; selling_price: string | null };
+    type SlowRow = { stock: string; cost_price: string | null };
     const items = itemsResult.rows as SlowRow[];
     const totalValue = Number(
       (totalResult.rows[0] as { total_inventory_value: string }).total_inventory_value,
     );
     const slowValue = items.reduce(
-      (sum, r) => sum + Number(r.stock) * Number(r.selling_price ?? 0),
+      (sum, r) => sum + Number(r.stock) * Number(r.cost_price ?? 0),
       0,
     );
     const pctOfTotal = totalValue > 0

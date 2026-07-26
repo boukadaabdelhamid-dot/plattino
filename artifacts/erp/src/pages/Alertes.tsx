@@ -227,8 +227,8 @@ export default function Alertes() {
     if (sortBy === "value") {
       return [...items].sort(
         (a, b) =>
-          Number(b.stock) * Number(b.selling_price ?? 0) -
-          Number(a.stock) * Number(a.selling_price ?? 0),
+          Number(b.stock) * Number(b.cost_price ?? 0) -
+          Number(a.stock) * Number(a.cost_price ?? 0),
       );
     }
     if (sortBy === "stock") {
@@ -329,7 +329,7 @@ export default function Alertes() {
           item.id === row.id ? { ...item, selling_price: newPrice } : item,
         );
         const slowValue = newItems.reduce(
-          (sum, r) => sum + Number(r.stock) * Number(r.selling_price ?? 0), 0,
+          (sum, r) => sum + Number(r.stock) * Number(r.cost_price ?? 0), 0,
         );
         const pctOfTotal = old.stats.totalValue > 0
           ? Math.round((slowValue / old.stats.totalValue) * 1000) / 10 : 0;
@@ -573,7 +573,7 @@ export default function Alertes() {
               const name = lang === "ar" && row.name_ar ? row.name_ar : row.name_en;
               const neverSold = row.last_sold_at === null;
               const severity = getSeverity(row.days_since_last_sale, neverSold);
-              const cardValue = Number(row.stock) * Number(row.selling_price ?? 0);
+              const cardValue = Number(row.stock) * Number(row.cost_price ?? 0);
               const isEditingPrice = editingPriceId === row.id;
               const isSaving = savingPriceId === row.id;
               const daysLabel = neverSold

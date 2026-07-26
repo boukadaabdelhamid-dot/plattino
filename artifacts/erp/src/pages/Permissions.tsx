@@ -5,6 +5,7 @@ import {
   Printer, CreditCard, Tag, TrendingUp, Globe, Package,
   Image as ImageIcon, Copy, Send, Upload, QrCode, History,
   LayoutGrid, Check, Cloud, Columns3, Store, User, Building2, Receipt,
+  ShoppingCart,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
@@ -342,6 +343,44 @@ export default function Permissions() {
                   </Badge>
                 </div>
                 <Progress value={pct} className="h-1.5" />
+              </div>
+
+              {/* Quick access presets */}
+              <div className="px-4 py-2 border-b flex items-center gap-2 flex-wrap">
+                <ShoppingCart className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                <span className="text-xs text-muted-foreground font-medium mr-1">
+                  {t("Accès rapide POS :", "صلاحيات POS السريعة:")}
+                </span>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="text-xs h-7 px-2 gap-1.5 text-green-700 border-green-300 hover:bg-green-50 dark:text-green-400 dark:border-green-700 dark:hover:bg-green-950"
+                  onClick={() =>
+                    setPermMap((prev) => {
+                      const next = new Map(prev);
+                      ["orders:view", "caisse:view", "caisse:create"].forEach((k) => next.set(k, true));
+                      return next;
+                    })
+                  }
+                >
+                  <Unlock className="h-3 w-3" />
+                  {t("Accorder accès POS", "منح صلاحيات POS")}
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="text-xs h-7 px-2 gap-1.5 text-red-700 border-red-300 hover:bg-red-50 dark:text-red-400 dark:border-red-700 dark:hover:bg-red-950"
+                  onClick={() =>
+                    setPermMap((prev) => {
+                      const next = new Map(prev);
+                      ["orders:view", "caisse:view", "caisse:create"].forEach((k) => next.set(k, false));
+                      return next;
+                    })
+                  }
+                >
+                  <Lock className="h-3 w-3" />
+                  {t("Révoquer accès POS", "إلغاء صلاحيات POS")}
+                </Button>
               </div>
 
               {/* Accordion */}

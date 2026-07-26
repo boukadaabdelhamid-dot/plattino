@@ -1358,7 +1358,7 @@ router.post("/admin/retours", authenticate, requireStaff, requireStore, requireP
       clientUserId?: number;
       reason?: string;
       retourType?: string;
-      items: { productId: number; quantity: number }[];
+      items: { productId: number; quantity: number; unitPrice?: number }[];
     };
 
     if (!Array.isArray(items) || items.length === 0) {
@@ -1501,14 +1501,28 @@ router.post("/admin/retours", authenticate, requireStaff, requireStore, requireP
           .limit(1);
         if (!product) throw Object.assign(new Error(`Product ${item.productId} not found in this store`), { status: 400 });
 
+        // Validate client-supplied unitPrice strictly; fall back to product.price when omitted.
+        let resolvedUnitPrice: string;
+        if (item.unitPrice != null) {
+          const up = Number(item.unitPrice);
+          if (!Number.isFinite(up) || up < 0 || up > 9_999_999) {
+            throw Object.assign(
+              new Error(`unitPrice for product ${item.productId} must be a finite non-negative number ≤ 9 999 999`),
+              { status: 400 },
+            );
+          }
+          resolvedUnitPrice = up.toFixed(2);
+        } else {
+          resolvedUnitPrice = product.price;
+        }
         const [retourItem] = await tx.insert(schema.bonRetourItemsTable).values({
           bonRetourId: bonRetour.id,
           productId: item.productId,
           quantity: item.quantity,
-          unitPrice: product.price,
+          unitPrice: resolvedUnitPrice,
         }).returning();
         retourItems.push(retourItem);
-        retourTotal += item.quantity * parseFloat(product.price);
+        retourTotal += item.quantity * parseFloat(resolvedUnitPrice);
 
         await tx.update(schema.productsTable)
           .set({ stock: sql`${schema.productsTable.stock} + ${item.quantity}` })

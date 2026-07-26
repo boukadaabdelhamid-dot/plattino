@@ -556,7 +556,7 @@ function NouveauRetourDialog({ open, onOpenChange, onCreated }: {
           clientUserId: (selectedCustomer && selectedCustomer.id !== 0) ? selectedCustomer.id : undefined,
           reason: reason.trim() || undefined,
           retourType,
-          items: lines.map((l) => ({ productId: l.productId, quantity: l.qty })),
+          items: lines.map((l) => ({ productId: l.productId, quantity: l.qty, unitPrice: l.pu })),
         },
       },
       {

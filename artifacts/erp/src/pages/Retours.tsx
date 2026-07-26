@@ -537,6 +537,10 @@ function NouveauRetourDialog({ open, onOpenChange, onCreated }: {
     if (qty < 1) return;
     setLines((prev) => prev.map((l) => l.productId === productId ? { ...l, qty } : l));
   };
+  const setPu = (productId: number, pu: number) => {
+    if (pu < 0) return;
+    setLines((prev) => prev.map((l) => l.productId === productId ? { ...l, pu } : l));
+  };
 
   const total = lines.reduce((s, l) => s + l.pu * l.qty, 0);
 
@@ -823,8 +827,18 @@ function NouveauRetourDialog({ open, onOpenChange, onCreated }: {
                                 className="h-7 w-16 text-center text-sm mx-auto"
                               />
                             </TableCell>
-                            <TableCell className="text-right text-sm text-muted-foreground">
-                              {line.pu.toFixed(2)} {currency}
+                            <TableCell className="text-right">
+                              <div className="flex items-center justify-end gap-1">
+                                <Input
+                                  type="number"
+                                  min={0}
+                                  step="0.01"
+                                  value={line.pu}
+                                  onChange={(e) => setPu(line.productId, parseFloat(e.target.value) || 0)}
+                                  className="h-7 w-24 text-right text-sm"
+                                />
+                                <span className="text-xs text-muted-foreground shrink-0">{currency}</span>
+                              </div>
                             </TableCell>
                             <TableCell className="text-right text-sm font-semibold">
                               {(line.pu * line.qty).toFixed(2)} {currency}

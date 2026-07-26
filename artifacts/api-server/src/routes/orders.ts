@@ -915,7 +915,7 @@ router.get("/admin/analytics", authenticate, requireAdmin, requireStore, async (
 // accounting transactions, caisse credit and WebSocket broadcasts.
 
 // POST /erp/pos/drafts — save current POS cart as a draft
-router.post("/erp/pos/drafts", authenticate, requireStaff, requireStore, requirePermission("caisse", "create"), async (req: AuthRequest, res) => {
+router.post("/erp/pos/drafts", authenticate, requireStaff, requireStore, requirePermission("caisse", "view"), async (req: AuthRequest, res) => {
   try {
     const storeId = req.currentStoreId!;
     const sellerUserId = req.user!.id;
@@ -983,7 +983,7 @@ router.get("/erp/pos/drafts", authenticate, requireStaff, requireStore, requireP
 });
 
 // DELETE /erp/pos/drafts/:id — discard a draft and its items
-router.delete("/erp/pos/drafts/:id", authenticate, requireStaff, requireStore, requirePermission("caisse", "create"), async (req: AuthRequest, res) => {
+router.delete("/erp/pos/drafts/:id", authenticate, requireStaff, requireStore, requirePermission("caisse", "view"), async (req: AuthRequest, res) => {
   try {
     const storeId = req.currentStoreId!;
     const draftId = pid(req, "id");

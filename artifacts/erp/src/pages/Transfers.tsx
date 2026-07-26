@@ -474,13 +474,27 @@ export function CreateTransferDialog({
     if (direction === "in" && mode === "send") setMode("request");
   }, [direction, mode]);
 
-  // Skip on mount so pre-filled initialLines are preserved when the dialog
-  // is keyed to remount with new data (the key prop resets isMounted).
-  const _isMounted = React.useRef(false);
+  // Whether this dialog instance was opened with pre-filled lines (e.g. slow-mover quick-transfer).
+  const _hadInitialLines = React.useRef((initialLines?.length ?? 0) > 0);
+
+  // Direction change → always reset lines (after mount).
+  const _dirMounted = React.useRef(false);
   React.useEffect(() => {
-    if (!_isMounted.current) { _isMounted.current = true; return; }
+    if (!_dirMounted.current) { _dirMounted.current = true; return; }
     setLines([]);
-  }, [direction, otherStoreId]);
+    setPickedProducts({});
+  }, [direction]);
+
+  // Store change → only reset if dialog was NOT opened with pre-filled lines.
+  // When pre-filled (slow-mover or multi-select quick-transfer), the user is
+  // just choosing a destination — the product selection must be preserved.
+  const _storeMounted = React.useRef(false);
+  React.useEffect(() => {
+    if (!_storeMounted.current) { _storeMounted.current = true; return; }
+    if (_hadInitialLines.current) return;
+    setLines([]);
+    setPickedProducts({});
+  }, [otherStoreId]);
 
   const matchableProducts = useMemo(
     () => products.filter((p) => productKey(p) !== null),

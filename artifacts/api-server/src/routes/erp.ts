@@ -4550,41 +4550,80 @@ router.get("/erp/alerts/cross-store-missing", authenticate, requireStaff, requir
 
 // GET /erp/alerts/slow-movers?days=30
 // Products with stock > 0 that have not appeared in a completed sale in the last N days
-// (or have never been sold at all). Ordered: never-sold first, then oldest-last-sale first.
+// (or have never been sold at all).
+// Returns { items: [...], stats: { count, slowValue, totalValue, pctOfTotal } }
 router.get("/erp/alerts/slow-movers", authenticate, requireStaff, requireStore, requirePermission("inventory", "view"), async (req: AuthRequest, res) => {
   try {
     const storeId = req.currentStoreId!;
     const rawDays = parseInt((req.query["days"] as string | undefined) ?? "30", 10);
     const days = Number.isFinite(rawDays) && rawDays > 0 ? rawDays : 30;
 
-    const result = await db.execute(sql`
-      SELECT
-        p.id,
-        p.name_en,
-        p.name_ar,
-        p.image_url,
-        p.reference,
-        p.barcode,
-        CAST(p.stock AS numeric)                                AS stock,
-        MAX(o.created_at)                                       AS last_sold_at,
-        EXTRACT(DAY FROM NOW() - MAX(o.created_at))::int        AS days_since_last_sale
-      FROM products p
-      LEFT JOIN order_items oi ON oi.product_id = p.id
-      LEFT JOIN orders o
-             ON o.id       = oi.order_id
-            AND o.store_id = ${storeId}
-            AND o.status  NOT IN ('cancelled', 'draft')
-      WHERE p.store_id = ${storeId}
-        AND p.stock    > 0
-        AND (p.is_active IS NULL OR p.is_active = true)
-      GROUP BY p.id, p.name_en, p.name_ar, p.image_url,
-               p.reference, p.barcode, p.stock
-      HAVING MAX(o.created_at) IS NULL
-          OR MAX(o.created_at) < NOW() - (${days} * INTERVAL '1 day')
-      ORDER BY MAX(o.created_at) ASC NULLS FIRST,
-               CAST(p.stock AS numeric) DESC
-    `);
-    res.json(result.rows);
+    const [itemsResult, totalResult] = await Promise.all([
+      db.execute(sql`
+        SELECT
+          p.id,
+          p.name_en,
+          p.name_ar,
+          p.image_url,
+          p.reference,
+          p.barcode,
+          CAST(p.stock AS numeric)                                  AS stock,
+          CAST(p.price AS numeric)                                  AS selling_price,
+          CAST(p.cost_price AS numeric)                             AS cost_price,
+          c.name_en                                                 AS category_name_en,
+          c.name_ar                                                 AS category_name_ar,
+          MAX(o.created_at)                                         AS last_sold_at,
+          EXTRACT(DAY FROM NOW() - MAX(o.created_at))::int          AS days_since_last_sale
+        FROM products p
+        LEFT JOIN categories c ON c.id = p.category_id AND c.store_id = ${storeId}
+        LEFT JOIN order_items oi ON oi.product_id = p.id
+        LEFT JOIN orders o
+               ON o.id       = oi.order_id
+              AND o.store_id = ${storeId}
+              AND o.status  NOT IN ('cancelled', 'draft')
+        WHERE p.store_id = ${storeId}
+          AND p.stock    > 0
+          AND (p.is_active IS NULL OR p.is_active = true)
+        GROUP BY p.id, p.name_en, p.name_ar, p.image_url,
+                 p.reference, p.barcode, p.stock, p.price, p.cost_price,
+                 c.name_en, c.name_ar
+        HAVING MAX(o.created_at) IS NULL
+            OR MAX(o.created_at) < NOW() - (${days} * INTERVAL '1 day')
+        ORDER BY MAX(o.created_at) ASC NULLS FIRST,
+                 CAST(p.stock AS numeric) DESC
+      `),
+      db.execute(sql`
+        SELECT COALESCE(SUM(CAST(stock AS numeric) * CAST(price AS numeric)), 0)
+               AS total_inventory_value
+        FROM products
+        WHERE store_id    = ${storeId}
+          AND (is_active IS NULL OR is_active = true)
+          AND stock > 0
+      `),
+    ]);
+
+    type SlowRow = { stock: string; selling_price: string | null };
+    const items = itemsResult.rows as SlowRow[];
+    const totalValue = Number(
+      (totalResult.rows[0] as { total_inventory_value: string }).total_inventory_value,
+    );
+    const slowValue = items.reduce(
+      (sum, r) => sum + Number(r.stock) * Number(r.selling_price ?? 0),
+      0,
+    );
+    const pctOfTotal = totalValue > 0
+      ? Math.round((slowValue / totalValue) * 1000) / 10
+      : 0;
+
+    res.json({
+      items,
+      stats: {
+        count:      items.length,
+        slowValue:  Math.round(slowValue),
+        totalValue: Math.round(totalValue),
+        pctOfTotal,
+      },
+    });
   } catch (err) { req.log.error(err); res.status(500).json({ error: "Internal server error" }); }
 });
 

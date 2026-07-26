@@ -6,11 +6,13 @@ import { useStoreContext } from "@/hooks/use-store";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { useGetErpStoresAll } from "@workspace/api-client-react";
 import { CreateTransferDialog, type LineDraft, type ProductLite } from "@/pages/Transfers";
 import {
   AlertTriangle, Package, ArrowLeftRight, RefreshCw,
   Store as StoreIcon, Clock, TrendingDown, Check,
+  Pencil, X, Save, Send, ArrowUpDown,
 } from "lucide-react";
 
 const API_BASE = (import.meta.env.VITE_API_URL as string | undefined) ?? "";
@@ -44,11 +46,19 @@ type SlowMoverRow = {
   reference: string | null;
   barcode: string | null;
   stock: number;
+  selling_price: number | null;
+  cost_price: number | null;
+  category_name_en: string | null;
+  category_name_ar: string | null;
   last_sold_at: string | null;
   days_since_last_sale: number | null;
 };
 
+type SlowStats = { count: number; slowValue: number; totalValue: number; pctOfTotal: number };
+type SlowMoversResponse = { items: SlowMoverRow[]; stats: SlowStats };
+
 type DialogConfig = {
+  direction: "in" | "out";
   storeId: string;
   lines: LineDraft[];
   pickedProducts: Record<number, ProductLite>;
@@ -56,6 +66,36 @@ type DialogConfig = {
 
 const DAY_OPTIONS = [30, 60, 90, 180] as const;
 type Days = (typeof DAY_OPTIONS)[number];
+type SortBy = "days" | "value" | "stock";
+
+// ── Severity helpers ─────────────────────────────────────────────────────────
+
+type Severity = "low" | "medium" | "high" | "critical" | "never";
+
+function getSeverity(days: number | null, neverSold: boolean): Severity {
+  if (neverSold) return "never";
+  if (days === null) return "low";
+  if (days >= 180) return "critical";
+  if (days >= 90) return "high";
+  if (days >= 60) return "medium";
+  return "low";
+}
+
+const SEVERITY_CARD: Record<Severity, string> = {
+  never:    "border-l-4 border-l-red-500 bg-red-50/40",
+  critical: "border-l-4 border-l-red-400 bg-red-50/20",
+  high:     "border-l-4 border-l-orange-400 bg-orange-50/20",
+  medium:   "border-l-4 border-l-amber-400 bg-amber-50/15",
+  low:      "border-l-4 border-l-yellow-300 bg-yellow-50/10",
+};
+
+const SEVERITY_BADGE: Record<Severity, string> = {
+  never:    "bg-red-100 text-red-800 border-red-300",
+  critical: "bg-red-50 text-red-700 border-red-200",
+  high:     "bg-orange-50 text-orange-700 border-orange-200",
+  medium:   "bg-amber-50 text-amber-700 border-amber-200",
+  low:      "bg-yellow-50 text-yellow-700 border-yellow-200",
+};
 
 // ── Fetch helpers ────────────────────────────────────────────────────────────
 
@@ -67,13 +107,13 @@ async function fetchCrossStoreMissing(): Promise<CrossStoreMissingRow[]> {
   return res.json() as Promise<CrossStoreMissingRow[]>;
 }
 
-async function fetchSlowMovers(days: Days): Promise<SlowMoverRow[]> {
+async function fetchSlowMovers(days: Days): Promise<SlowMoversResponse> {
   const res = await fetch(
     `${API_BASE}/api/erp/alerts/slow-movers?days=${days}`,
     { headers: authHeaders() },
   );
   if (!res.ok) throw new Error("fetch failed");
-  return res.json() as Promise<SlowMoverRow[]>;
+  return res.json() as Promise<SlowMoversResponse>;
 }
 
 function resolveImg(url: string | null | undefined): string | undefined {
@@ -84,22 +124,27 @@ function resolveImg(url: string | null | undefined): string | undefined {
 
 function formatDate(iso: string | null): string {
   if (!iso) return "—";
-  const d = new Date(iso);
-  return d.toLocaleDateString("fr-DZ", { day: "2-digit", month: "short", year: "numeric" });
+  return new Date(iso).toLocaleDateString("fr-DZ", {
+    day: "2-digit", month: "short", year: "numeric",
+  });
 }
 
-// ── Shared skeleton row ───────────────────────────────────────────────────────
+function formatPrice(n: number): string {
+  return `${Math.round(n).toLocaleString("fr-DZ")} دج`;
+}
+
+// ── Skeleton cards ────────────────────────────────────────────────────────────
 function CardSkeletons() {
   return (
     <div className="grid gap-3 sm:grid-cols-2">
       {[1, 2, 3, 4].map((i) => (
-        <Skeleton key={i} className="h-[108px] rounded-xl" />
+        <Skeleton key={i} className="h-[120px] rounded-xl" />
       ))}
     </div>
   );
 }
 
-// ── Helper: build a ProductLite from a cross-store alert row ─────────────────
+// ── ProductLite builders ──────────────────────────────────────────────────────
 function rowToProductLite(row: CrossStoreMissingRow): ProductLite {
   return {
     id: row.source_product_id,
@@ -111,6 +156,17 @@ function rowToProductLite(row: CrossStoreMissingRow): ProductLite {
   };
 }
 
+function slowRowToProductLite(row: SlowMoverRow): ProductLite {
+  return {
+    id: row.id,
+    nameEn: row.name_en,
+    nameAr: row.name_ar,
+    reference: row.reference,
+    barcode: row.barcode,
+    stock: Number(row.stock),
+  };
+}
+
 // ── Main page ────────────────────────────────────────────────────────────────
 export default function Alertes() {
   const { lang } = useLang();
@@ -119,13 +175,20 @@ export default function Alertes() {
   const { currentStoreId } = useStoreContext();
   const qc = useQueryClient();
 
-  // ── Day filter for slow-movers ──
+  // Filter + sort
   const [slowDays, setSlowDays] = useState<Days>(30);
+  const [sortBy, setSortBy] = useState<SortBy>("days");
 
-  // ── Selection state ──
+  // Cross-store multi-select
   const [selected, setSelected] = useState<Set<number>>(new Set());
 
-  // ── Dialog state ──
+  // Inline price editing
+  const [editingPriceId, setEditingPriceId] = useState<number | null>(null);
+  const [editingPriceVal, setEditingPriceVal] = useState("");
+  const [savingPriceId, setSavingPriceId] = useState<number | null>(null);
+  const [priceError, setPriceError] = useState<string | null>(null);
+
+  // Transfer dialog
   const [dialogOpen, setDialogOpen] = useState(false);
   const [dialogKey, setDialogKey] = useState(0);
   const [dialogConfig, setDialogConfig] = useState<DialogConfig | null>(null);
@@ -137,13 +200,12 @@ export default function Alertes() {
     staleTime: 60_000,
   });
 
-  const slowQuery = useQuery<SlowMoverRow[]>({
+  const slowQuery = useQuery<SlowMoversResponse>({
     queryKey: ["alerts-slow-movers", slowDays],
     queryFn: () => fetchSlowMovers(slowDays),
     staleTime: 60_000,
   });
 
-  // Stores list for the transfer dialog
   const { data: allStores } = useGetErpStoresAll();
   const otherStores = useMemo(
     () =>
@@ -159,40 +221,58 @@ export default function Alertes() {
     void qc.invalidateQueries({ queryKey: ["alerts-count"] });
   };
 
-  // ── Multi-store check: are all selected items from the same source store? ──
+  // Client-side sort (server always returns "days" order)
+  const sortedSlowItems = useMemo(() => {
+    const items = slowQuery.data?.items ?? [];
+    if (sortBy === "value") {
+      return [...items].sort(
+        (a, b) =>
+          Number(b.stock) * Number(b.selling_price ?? 0) -
+          Number(a.stock) * Number(a.selling_price ?? 0),
+      );
+    }
+    if (sortBy === "stock") {
+      return [...items].sort((a, b) => Number(b.stock) - Number(a.stock));
+    }
+    return items;
+  }, [slowQuery.data, sortBy]);
+
+  const slowStats = slowQuery.data?.stats;
+
+  // Multi-store conflict guard
   const multiStoreConflict = useMemo(() => {
     if (selected.size === 0) return false;
     const rows = (crossQuery.data ?? []).filter((r) => selected.has(r.source_product_id));
-    const storeIds = new Set(rows.map((r) => r.source_store_id));
-    return storeIds.size > 1;
+    return new Set(rows.map((r) => r.source_store_id)).size > 1;
   }, [selected, crossQuery.data]);
 
-  // ── Toggle card selection ──
-  const toggleSelect = (id: number) => {
+  const toggleSelect = (id: number) =>
     setSelected((prev) => {
       const next = new Set(prev);
       if (next.has(id)) next.delete(id);
       else next.add(id);
       return next;
     });
-  };
 
-  // ── Open dialog for a single product ──
-  const openForProduct = (row: CrossStoreMissingRow) => {
-    setDialogConfig({
-      storeId: String(row.source_store_id),
-      lines: [{ sourceProductId: String(row.source_product_id), quantity: "1" }],
-      pickedProducts: { [row.source_product_id]: rowToProductLite(row) },
-    });
+  // ── Dialog helpers ──
+  const openDialog = (cfg: DialogConfig) => {
+    setDialogConfig(cfg);
     setDialogKey((k) => k + 1);
     setDialogOpen(true);
   };
 
-  // ── Open dialog for all selected products (same store) ──
+  const openForProduct = (row: CrossStoreMissingRow) =>
+    openDialog({
+      direction: "in",
+      storeId: String(row.source_store_id),
+      lines: [{ sourceProductId: String(row.source_product_id), quantity: "1" }],
+      pickedProducts: { [row.source_product_id]: rowToProductLite(row) },
+    });
+
   const openForSelected = () => {
     if (multiStoreConflict) return;
     const rows = (crossQuery.data ?? []).filter((r) => selected.has(r.source_product_id));
-    if (rows.length === 0) return;
+    if (!rows.length) return;
     const storeId = String(rows[0]!.source_store_id);
     const pickedProducts: Record<number, ProductLite> = {};
     const lines: LineDraft[] = [];
@@ -200,13 +280,74 @@ export default function Alertes() {
       pickedProducts[row.source_product_id] = rowToProductLite(row);
       lines.push({ sourceProductId: String(row.source_product_id), quantity: "1" });
     }
-    setDialogConfig({ storeId, lines, pickedProducts });
-    setDialogKey((k) => k + 1);
-    setDialogOpen(true);
+    openDialog({ direction: "in", storeId, lines, pickedProducts });
+  };
+
+  const openForSlowMoverTransfer = (row: SlowMoverRow) =>
+    openDialog({
+      direction: "out",
+      storeId: "",
+      lines: [{ sourceProductId: String(row.id), quantity: "1" }],
+      pickedProducts: { [row.id]: slowRowToProductLite(row) },
+    });
+
+  // ── Inline price save ──
+  const startEditPrice = (row: SlowMoverRow) => {
+    setEditingPriceId(row.id);
+    setEditingPriceVal(row.selling_price != null ? String(row.selling_price) : "");
+    setPriceError(null);
+  };
+  const cancelEditPrice = () => {
+    setEditingPriceId(null);
+    setEditingPriceVal("");
+    setPriceError(null);
+  };
+
+  const savePrice = async (row: SlowMoverRow) => {
+    const newPrice = parseFloat(editingPriceVal.replace(",", "."));
+    if (isNaN(newPrice) || newPrice <= 0) {
+      setPriceError(t("Prix invalide", "سعر غير صالح"));
+      return;
+    }
+    setSavingPriceId(row.id);
+    setPriceError(null);
+    try {
+      const resp = await fetch(`${API_BASE}/api/products/${row.id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json", ...authHeaders() },
+        body: JSON.stringify({ price: newPrice }),
+      });
+      if (!resp.ok) {
+        const err = (await resp.json().catch(() => ({}))) as { error?: string };
+        setPriceError(err.error ?? t("Erreur lors de la sauvegarde", "خطأ أثناء الحفظ"));
+        return;
+      }
+      // Patch cache immediately without full refetch
+      qc.setQueryData<SlowMoversResponse>(["alerts-slow-movers", slowDays], (old) => {
+        if (!old) return old;
+        const newItems = old.items.map((item) =>
+          item.id === row.id ? { ...item, selling_price: newPrice } : item,
+        );
+        const slowValue = newItems.reduce(
+          (sum, r) => sum + Number(r.stock) * Number(r.selling_price ?? 0), 0,
+        );
+        const pctOfTotal = old.stats.totalValue > 0
+          ? Math.round((slowValue / old.stats.totalValue) * 1000) / 10 : 0;
+        return {
+          items: newItems,
+          stats: { ...old.stats, slowValue: Math.round(slowValue), pctOfTotal },
+        };
+      });
+      setEditingPriceId(null);
+      setEditingPriceVal("");
+    } finally {
+      setSavingPriceId(null);
+    }
   };
 
   return (
     <div className="p-4 max-w-4xl mx-auto space-y-8 pb-28">
+
       {/* ── Header ─────────────────────────────────────────────────────── */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
@@ -214,23 +355,13 @@ export default function Alertes() {
             <AlertTriangle className="h-5 w-5 text-amber-600" />
           </div>
           <div>
-            <h1 className="text-xl font-bold">
-              {t("Alertes Intelligentes", "التنبيهات الذكية")}
-            </h1>
+            <h1 className="text-xl font-bold">{t("Alertes Intelligentes", "التنبيهات الذكية")}</h1>
             <p className="text-sm text-muted-foreground">
-              {t(
-                "Transferts inter-magasins · Bضاعة راكدة",
-                "نقل بين المتاجر · بضاعة راكدة",
-              )}
+              {t("Transferts inter-magasins · Bضاعة راكدة", "نقل بين المتاجر · بضاعة راكدة")}
             </p>
           </div>
         </div>
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={refetchAll}
-          disabled={isRefetching}
-        >
+        <Button variant="outline" size="sm" onClick={refetchAll} disabled={isRefetching}>
           <RefreshCw className={`h-4 w-4 ${isRefetching ? "animate-spin" : ""}`} />
         </Button>
       </div>
@@ -240,16 +371,10 @@ export default function Alertes() {
         <div className="flex items-center gap-2">
           <StoreIcon className="h-4 w-4 text-blue-500" />
           <h2 className="font-semibold text-sm">
-            {t(
-              "Produits disponibles dans d'autres magasins",
-              "منتجات متوفرة في متاجر أخرى",
-            )}
+            {t("Produits disponibles dans d'autres magasins", "منتجات متوفرة في متاجر أخرى")}
           </h2>
           {crossQuery.data && crossQuery.data.length > 0 && (
-            <Badge
-              variant="secondary"
-              className="ml-1 bg-blue-100 text-blue-700 border-blue-200"
-            >
+            <Badge variant="secondary" className="ml-1 bg-blue-100 text-blue-700 border-blue-200">
               {crossQuery.data.length}
             </Badge>
           )}
@@ -263,68 +388,39 @@ export default function Alertes() {
 
         {crossQuery.isLoading && <CardSkeletons />}
 
-        {!crossQuery.isLoading &&
-          (!crossQuery.data || crossQuery.data.length === 0) && (
-            <div className="rounded-xl border bg-muted/30 p-8 text-center">
-              <Package className="h-9 w-9 text-muted-foreground mx-auto mb-2 opacity-40" />
-              <p className="text-sm text-muted-foreground">
-                {t(
-                  "Aucun produit manquant — votre stock est complet ✓",
-                  "لا توجد منتجات ناقصة — مخزونك مكتمل ✓",
-                )}
-              </p>
-            </div>
-          )}
+        {!crossQuery.isLoading && (!crossQuery.data || crossQuery.data.length === 0) && (
+          <div className="rounded-xl border bg-muted/30 p-8 text-center">
+            <Package className="h-9 w-9 text-muted-foreground mx-auto mb-2 opacity-40" />
+            <p className="text-sm text-muted-foreground">
+              {t("Aucun produit manquant — votre stock est complet ✓", "لا توجد منتجات ناقصة — مخزونك مكتمل ✓")}
+            </p>
+          </div>
+        )}
 
         {crossQuery.data && crossQuery.data.length > 0 && (
           <div className="grid gap-3 sm:grid-cols-2">
             {crossQuery.data.map((row) => {
-              const name =
-                lang === "ar" && row.name_ar ? row.name_ar : row.name_en;
-              const storeName =
-                lang === "ar"
-                  ? row.source_store_name_ar
-                  : row.source_store_name_en;
+              const name = lang === "ar" && row.name_ar ? row.name_ar : row.name_en;
+              const storeName = lang === "ar" ? row.source_store_name_ar : row.source_store_name_en;
               const isSelected = selected.has(row.source_product_id);
               return (
                 <div
                   key={row.source_product_id}
                   onClick={() => toggleSelect(row.source_product_id)}
                   className={`relative bg-white border rounded-xl p-3 shadow-sm flex gap-3 cursor-pointer transition-all ${
-                    isSelected
-                      ? "border-blue-400 ring-1 ring-blue-200 bg-blue-50/40"
-                      : "hover:border-blue-200"
+                    isSelected ? "border-blue-400 ring-1 ring-blue-200 bg-blue-50/40" : "hover:border-blue-200"
                   }`}
                 >
-                  {/* Checkbox top-right */}
                   <div className="absolute top-2.5 right-2.5 z-10">
-                    <div
-                      className={`w-4 h-4 rounded border-2 flex items-center justify-center transition-colors ${
-                        isSelected
-                          ? "bg-blue-600 border-blue-600"
-                          : "border-gray-300 bg-white"
-                      }`}
-                    >
-                      {isSelected && (
-                        <Check className="h-2.5 w-2.5 text-white" strokeWidth={3} />
-                      )}
+                    <div className={`w-4 h-4 rounded border-2 flex items-center justify-center transition-colors ${isSelected ? "bg-blue-600 border-blue-600" : "border-gray-300 bg-white"}`}>
+                      {isSelected && <Check className="h-2.5 w-2.5 text-white" strokeWidth={3} />}
                     </div>
                   </div>
-
-                  {/* Image */}
                   <div className="w-14 h-14 rounded-lg bg-slate-100 flex items-center justify-center shrink-0 overflow-hidden border">
-                    {row.image_url ? (
-                      <img
-                        src={resolveImg(row.image_url)}
-                        alt={name}
-                        className="w-full h-full object-cover"
-                      />
-                    ) : (
-                      <Package className="h-6 w-6 text-slate-400" />
-                    )}
+                    {row.image_url
+                      ? <img src={resolveImg(row.image_url)} alt={name} className="w-full h-full object-cover" />
+                      : <Package className="h-6 w-6 text-slate-400" />}
                   </div>
-
-                  {/* Info — pr-6 so text doesn't overlap checkbox */}
                   <div className="flex-1 min-w-0 pr-6">
                     <p className="font-semibold text-sm truncate">{name}</p>
                     {(row.reference || row.barcode) && (
@@ -346,8 +442,6 @@ export default function Alertes() {
                         </span>
                       )}
                     </div>
-
-                    {/* Single-product transfer button — stops propagation so it doesn't toggle checkbox */}
                     <button
                       type="button"
                       onClick={(e) => { e.stopPropagation(); openForProduct(row); }}
@@ -364,27 +458,24 @@ export default function Alertes() {
         )}
       </section>
 
-      {/* ── Divider ─────────────────────────────────────────────────────── */}
       <div className="border-t" />
 
-      {/* ── Section 2 : bضاعة راكدة ─────────────────────────────────────── */}
+      {/* ── Section 2 : بضاعة راكدة ──────────────────────────────────────── */}
       <section className="space-y-3">
+
+        {/* Header + day filter */}
         <div className="flex items-start justify-between gap-3 flex-wrap">
           <div className="flex items-center gap-2">
             <TrendingDown className="h-4 w-4 text-orange-500" />
             <h2 className="font-semibold text-sm">
               {t("Bضاعة راكدة — Produits invendus", "بضاعة راكدة — منتجات لم تُباع")}
             </h2>
-            {slowQuery.data && slowQuery.data.length > 0 && (
-              <Badge
-                variant="secondary"
-                className="ml-1 bg-orange-100 text-orange-700 border-orange-200"
-              >
-                {slowQuery.data.length}
+            {slowStats && slowStats.count > 0 && (
+              <Badge variant="secondary" className="ml-1 bg-orange-100 text-orange-700 border-orange-200">
+                {slowStats.count}
               </Badge>
             )}
           </div>
-          {/* Day filter pills */}
           <div className="flex items-center gap-1.5">
             {DAY_OPTIONS.map((d) => (
               <button
@@ -403,6 +494,58 @@ export default function Alertes() {
           </div>
         </div>
 
+        {/* ── 3 stat cards ── */}
+        {slowStats && slowStats.count > 0 && !slowQuery.isLoading && (
+          <div className="grid grid-cols-3 gap-2">
+            <div className="bg-orange-50 border border-orange-200 rounded-xl p-3 text-center">
+              <div className="text-2xl font-bold text-orange-700">{slowStats.count}</div>
+              <div className="text-[10px] text-orange-600 font-medium mt-0.5">
+                {t("Produits ralenties", "منتج راكد")}
+              </div>
+            </div>
+            <div className="bg-red-50 border border-red-200 rounded-xl p-3 text-center">
+              <div className="text-sm font-bold text-red-700 leading-tight">
+                {formatPrice(slowStats.slowValue)}
+              </div>
+              <div className="text-[10px] text-red-600 font-medium mt-0.5">
+                {t("Valeur immobilisée", "قيمة متوقفة")}
+              </div>
+            </div>
+            <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-center">
+              <div className="text-2xl font-bold text-amber-700">{slowStats.pctOfTotal}%</div>
+              <div className="text-[10px] text-amber-600 font-medium mt-0.5">
+                {t("Du stock total", "من المخزون الكلي")}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ── Sort bar ── */}
+        {sortedSlowItems.length > 0 && (
+          <div className="flex items-center gap-1.5">
+            <ArrowUpDown className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+            <span className="text-[11px] text-muted-foreground">{t("Trier :", "ترتيب:")}</span>
+            {([
+              ["days",  t("Ancienneté", "الأقدم")],
+              ["value", t("Valeur",     "القيمة")],
+              ["stock", t("Stock",      "المخزون")],
+            ] as [SortBy, string][]).map(([key, label]) => (
+              <button
+                key={key}
+                type="button"
+                onClick={() => setSortBy(key)}
+                className={`text-[11px] font-semibold px-2 py-0.5 rounded border transition-colors ${
+                  sortBy === key
+                    ? "bg-slate-800 text-white border-slate-800"
+                    : "bg-white text-muted-foreground border-border hover:border-slate-400"
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        )}
+
         <p className="text-xs text-muted-foreground">
           {t(
             `Produits en stock qui n'ont pas été vendus depuis plus de ${slowDays} jours. Envisagez une promotion ou un transfert.`,
@@ -412,71 +555,144 @@ export default function Alertes() {
 
         {slowQuery.isLoading && <CardSkeletons />}
 
-        {!slowQuery.isLoading &&
-          (!slowQuery.data || slowQuery.data.length === 0) && (
-            <div className="rounded-xl border bg-muted/30 p-8 text-center">
-              <TrendingDown className="h-9 w-9 text-muted-foreground mx-auto mb-2 opacity-40" />
-              <p className="text-sm text-muted-foreground">
-                {t(
-                  `Aucun produit invendu depuis ${slowDays} jours ✓`,
-                  `لا توجد بضاعة راكدة خلال ${slowDays} يوماً ✓`,
-                )}
-              </p>
-            </div>
-          )}
+        {!slowQuery.isLoading && sortedSlowItems.length === 0 && (
+          <div className="rounded-xl border bg-muted/30 p-8 text-center">
+            <TrendingDown className="h-9 w-9 text-muted-foreground mx-auto mb-2 opacity-40" />
+            <p className="text-sm text-muted-foreground">
+              {t(
+                `Aucun produit invendu depuis ${slowDays} jours ✓`,
+                `لا توجد بضاعة راكدة خلال ${slowDays} يوماً ✓`,
+              )}
+            </p>
+          </div>
+        )}
 
-        {slowQuery.data && slowQuery.data.length > 0 && (
+        {sortedSlowItems.length > 0 && (
           <div className="grid gap-3 sm:grid-cols-2">
-            {slowQuery.data.map((row) => {
-              const name =
-                lang === "ar" && row.name_ar ? row.name_ar : row.name_en;
+            {sortedSlowItems.map((row) => {
+              const name = lang === "ar" && row.name_ar ? row.name_ar : row.name_en;
               const neverSold = row.last_sold_at === null;
+              const severity = getSeverity(row.days_since_last_sale, neverSold);
+              const cardValue = Number(row.stock) * Number(row.selling_price ?? 0);
+              const isEditingPrice = editingPriceId === row.id;
+              const isSaving = savingPriceId === row.id;
               const daysLabel = neverSold
-                ? t("Jamais vendu", "لم يُباع قط")
+                ? t("Jamais vendu ⚠️", "لم يُباع قط ⚠️")
                 : `${row.days_since_last_sale ?? "?"} ${t("jours", "يوم")}`;
+              const catName = lang === "ar"
+                ? (row.category_name_ar ?? row.category_name_en)
+                : row.category_name_en;
+
               return (
                 <div
                   key={row.id}
-                  className="bg-white border rounded-xl p-3 shadow-sm flex gap-3 hover:border-orange-200 transition-colors"
+                  className={`bg-white border rounded-xl p-3 shadow-sm flex gap-3 transition-colors ${SEVERITY_CARD[severity]}`}
                 >
+                  {/* Image */}
                   <div className="w-14 h-14 rounded-lg bg-slate-100 flex items-center justify-center shrink-0 overflow-hidden border">
-                    {row.image_url ? (
-                      <img
-                        src={resolveImg(row.image_url)}
-                        alt={name}
-                        className="w-full h-full object-cover"
-                      />
-                    ) : (
-                      <Package className="h-6 w-6 text-slate-400" />
-                    )}
+                    {row.image_url
+                      ? <img src={resolveImg(row.image_url)} alt={name} className="w-full h-full object-cover" />
+                      : <Package className="h-6 w-6 text-slate-400" />}
                   </div>
+
+                  {/* Info */}
                   <div className="flex-1 min-w-0">
                     <p className="font-semibold text-sm truncate">{name}</p>
-                    {(row.reference || row.barcode) && (
-                      <p className="text-[11px] font-mono text-muted-foreground truncate">
-                        {row.reference ?? row.barcode}
-                      </p>
-                    )}
+                    <div className="flex items-center gap-1.5 flex-wrap mt-0.5">
+                      {(row.reference || row.barcode) && (
+                        <p className="text-[11px] font-mono text-muted-foreground">
+                          {row.reference ?? row.barcode}
+                        </p>
+                      )}
+                      {catName && (
+                        <span className="text-[10px] text-slate-500 bg-slate-100 rounded px-1.5 py-0.5 border border-slate-200 truncate max-w-[110px]">
+                          {catName}
+                        </span>
+                      )}
+                    </div>
+
+                    {/* Badges */}
                     <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
                       <span className="text-[11px] font-semibold text-slate-700 bg-slate-100 border border-slate-200 rounded px-1.5 py-0.5">
                         {t("Stock", "مخزون")}: {Number(row.stock).toLocaleString("fr-DZ")}
                       </span>
-                      <span
-                        className={`inline-flex items-center gap-1 text-[11px] font-semibold rounded px-1.5 py-0.5 border ${
-                          neverSold
-                            ? "bg-red-50 text-red-700 border-red-200"
-                            : "bg-orange-50 text-orange-700 border-orange-200"
-                        }`}
-                      >
+                      <span className={`inline-flex items-center gap-1 text-[11px] font-semibold rounded px-1.5 py-0.5 border ${SEVERITY_BADGE[severity]}`}>
                         <Clock className="h-2.5 w-2.5" />
                         {daysLabel}
                       </span>
+                      {cardValue > 0 && (
+                        <span className="text-[11px] font-semibold text-slate-600 bg-slate-50 border border-slate-200 rounded px-1.5 py-0.5">
+                          {formatPrice(cardValue)}
+                        </span>
+                      )}
                     </div>
+
+                    {/* Last sale date */}
                     <p className="text-[11px] text-muted-foreground mt-1">
                       {neverSold
                         ? t("Aucune vente enregistrée", "لا يوجد سجل بيع")
                         : `${t("Dernier vente", "آخر بيع")}: ${formatDate(row.last_sold_at)}`}
                     </p>
+
+                    {/* Inline price edit */}
+                    {isEditingPrice ? (
+                      <div className="mt-2 flex items-center gap-1.5 flex-wrap">
+                        <Input
+                          type="number"
+                          value={editingPriceVal}
+                          onChange={(e) => setEditingPriceVal(e.target.value)}
+                          className="h-7 text-xs w-28"
+                          placeholder={t("Nouveau prix", "السعر الجديد")}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") void savePrice(row);
+                            if (e.key === "Escape") cancelEditPrice();
+                          }}
+                          autoFocus
+                          disabled={isSaving}
+                        />
+                        <button
+                          type="button"
+                          onClick={() => void savePrice(row)}
+                          disabled={isSaving}
+                          className="h-7 px-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded text-[11px] font-semibold flex items-center gap-1 disabled:opacity-50"
+                        >
+                          <Save className="h-3 w-3" />
+                          {isSaving ? "…" : t("Sauv.", "حفظ")}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={cancelEditPrice}
+                          disabled={isSaving}
+                          className="h-7 px-2 bg-slate-200 hover:bg-slate-300 text-slate-700 rounded text-[11px]"
+                        >
+                          <X className="h-3 w-3" />
+                        </button>
+                        {priceError && editingPriceId === row.id && (
+                          <span className="text-[10px] text-red-600 w-full">{priceError}</span>
+                        )}
+                      </div>
+                    ) : (
+                      <div className="mt-2 flex items-center gap-2 flex-wrap">
+                        <button
+                          type="button"
+                          onClick={() => startEditPrice(row)}
+                          className="inline-flex items-center gap-1 text-[11px] font-semibold text-slate-600 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 border border-slate-200 rounded px-1.5 py-0.5 transition-colors"
+                        >
+                          <Pencil className="h-2.5 w-2.5" />
+                          {row.selling_price != null
+                            ? formatPrice(Number(row.selling_price))
+                            : t("Modifier prix", "تعديل السعر")}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => openForSlowMoverTransfer(row)}
+                          className="inline-flex items-center gap-1 text-[11px] font-semibold text-indigo-600 hover:text-indigo-800 transition-colors"
+                        >
+                          <Send className="h-3 w-3" />
+                          {t("Envoyer vers →", "← إرسال لمتجر")}
+                        </button>
+                      </div>
+                    )}
                   </div>
                 </div>
               );
@@ -485,7 +701,7 @@ export default function Alertes() {
         )}
       </section>
 
-      {/* ── Floating action bar — appears when products are selected ────── */}
+      {/* ── Floating action bar (cross-store multi-select) ─────────────── */}
       {selected.size > 0 && (
         <div className="fixed bottom-5 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2 bg-slate-900 text-white rounded-2xl shadow-2xl px-4 py-2.5 max-w-[90vw]">
           {multiStoreConflict ? (
@@ -512,20 +728,19 @@ export default function Alertes() {
             type="button"
             onClick={() => setSelected(new Set())}
             className="text-slate-400 hover:text-white ml-1 text-sm leading-none"
-            aria-label="Annuler la sélection"
           >
             ✕
           </button>
         </div>
       )}
 
-      {/* ── Transfer dialog — keyed to remount with fresh initial state ── */}
+      {/* ── Transfer dialog — keyed to force fresh mount each open ─────── */}
       <CreateTransferDialog
         key={dialogKey}
         open={dialogOpen}
         onOpenChange={(o) => {
           setDialogOpen(o);
-          if (!o) setSelected(new Set()); // clear selection after dialog closes
+          if (!o) setSelected(new Set());
         }}
         otherStores={otherStores}
         isAdmin={!!isAdmin}
@@ -533,7 +748,7 @@ export default function Alertes() {
           void qc.invalidateQueries({ queryKey: ["alerts-count"] });
           void qc.invalidateQueries({ queryKey: ["alerts-cross-store-missing"] });
         }}
-        initialDirection="in"
+        initialDirection={dialogConfig?.direction ?? "in"}
         initialStoreId={dialogConfig?.storeId}
         initialLines={dialogConfig?.lines}
         initialPickedProducts={dialogConfig?.pickedProducts}

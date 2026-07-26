@@ -708,6 +708,20 @@ CREATE UNIQUE INDEX IF NOT EXISTS "purchase_snooze_product_store_uniq" ON "purch
 ALTER TABLE "purchase_snooze" ADD CONSTRAINT "purchase_snooze_product_id_fk" FOREIGN KEY ("product_id") REFERENCES "public"."products"("id") ON DELETE CASCADE;--> statement-breakpoint
 ALTER TABLE "purchase_snooze" ADD CONSTRAINT "purchase_snooze_store_id_fk" FOREIGN KEY ("store_id") REFERENCES "public"."stores"("id") ON DELETE CASCADE;--> statement-breakpoint
 ALTER TABLE "products" ADD COLUMN IF NOT EXISTS "excluded_from_purchase" boolean NOT NULL DEFAULT false;--> statement-breakpoint
+-- ─── Product expiry batches (tracking register, no FIFO link) ───────────────
+CREATE TABLE IF NOT EXISTS "product_expiry_batches" (
+  "id" serial PRIMARY KEY NOT NULL,
+  "product_id" integer NOT NULL,
+  "store_id" integer NOT NULL,
+  "quantity" double precision NOT NULL DEFAULT 0,
+  "expiry_date" text NOT NULL,
+  "lot_number" text,
+  "notes" text,
+  "created_at" timestamp DEFAULT now() NOT NULL
+);--> statement-breakpoint
+ALTER TABLE "product_expiry_batches" ADD CONSTRAINT "product_expiry_batches_product_id_fk" FOREIGN KEY ("product_id") REFERENCES "public"."products"("id") ON DELETE CASCADE;--> statement-breakpoint
+ALTER TABLE "product_expiry_batches" ADD CONSTRAINT "product_expiry_batches_store_id_fk" FOREIGN KEY ("store_id") REFERENCES "public"."stores"("id") ON DELETE CASCADE;--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "product_expiry_batches_product_store_idx" ON "product_expiry_batches" ("product_id", "store_id");--> statement-breakpoint
 `;
 
 

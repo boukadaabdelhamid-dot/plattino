@@ -42,7 +42,7 @@ import {
   Smartphone, DollarSign, LayoutGrid, Image as ImageIcon, Eye, EyeOff,
   Columns3, Printer, Sparkles, MoreVertical, Copy, Info, Boxes,
   ChevronDown, QrCode, Send, Star, ArrowUp, ArrowDown, FileSpreadsheet,
-  History, Ban, ShoppingBasket,
+  History, Ban, ShoppingBasket, CalendarClock, AlertTriangle,
 } from "lucide-react";
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
@@ -243,6 +243,222 @@ function ToggleSwitch({ checked, onCheckedChange, label }: { checked: boolean; o
       </span>
       {label}
     </button>
+  );
+}
+
+// ── Expiry Batch Panel (used inside product edit dialog) ─────────────────────
+
+function authHdrs(): Record<string, string> {
+  const token = localStorage.getItem("midanic_token");
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
+
+type ExpiryBatch = {
+  id: number;
+  product_id: number;
+  store_id: number;
+  quantity: number;
+  expiry_date: string; // "YYYY-MM-DD"
+  lot_number: string | null;
+  notes: string | null;
+  created_at: string;
+};
+
+function expiryColor(daysLeft: number): { card: string; badge: string; label: string } {
+  if (daysLeft < 0) return {
+    card: "border-l-4 border-l-red-500 bg-red-50/40",
+    badge: "bg-red-100 text-red-800",
+    label: "Expiré",
+  };
+  if (daysLeft <= 7) return {
+    card: "border-l-4 border-l-orange-400 bg-orange-50/30",
+    badge: "bg-orange-100 text-orange-800",
+    label: `${daysLeft}j restants`,
+  };
+  return {
+    card: "border-l-4 border-l-yellow-400 bg-yellow-50/20",
+    badge: "bg-yellow-100 text-yellow-800",
+    label: `${daysLeft}j`,
+  };
+}
+
+function ExpiryBatchesPanel({ productId }: { productId: number }) {
+  const qc = useQueryClient();
+  const { lang } = useLang();
+  const t = (fr: string, ar: string) => lang === "ar" ? ar : fr;
+
+  const [form, setForm] = useState({ quantity: "1", expiryDate: "", lotNumber: "", notes: "" });
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const { data: batches, isLoading } = useQuery<ExpiryBatch[]>({
+    queryKey: ["expiry-batches", productId],
+    queryFn: async () => {
+      const res = await fetch(`${API_BASE}/api/erp/products/${productId}/expiry-batches`, { headers: authHdrs() });
+      if (!res.ok) throw new Error("fetch failed");
+      return res.json() as Promise<ExpiryBatch[]>;
+    },
+    staleTime: 30_000,
+  });
+
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  function daysLeft(expiryDate: string): number {
+    const exp = new Date(expiryDate);
+    exp.setHours(0, 0, 0, 0);
+    return Math.floor((exp.getTime() - today.getTime()) / 86_400_000);
+  }
+
+  const handleAdd = async () => {
+    setError(null);
+    if (!form.expiryDate) { setError(t("Date requise", "التاريخ مطلوب")); return; }
+    const qty = parseFloat(form.quantity.replace(",", "."));
+    if (isNaN(qty) || qty < 0) { setError(t("Quantité invalide", "الكمية غير صالحة")); return; }
+    setSaving(true);
+    try {
+      const res = await fetch(`${API_BASE}/api/erp/products/${productId}/expiry-batches`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...authHdrs() },
+        body: JSON.stringify({ quantity: qty, expiryDate: form.expiryDate, lotNumber: form.lotNumber || null, notes: form.notes || null }),
+      });
+      if (!res.ok) {
+        const err = (await res.json().catch(() => ({}))) as { error?: string };
+        setError(err.error ?? t("Erreur serveur", "خطأ في الخادم"));
+        return;
+      }
+      await qc.invalidateQueries({ queryKey: ["expiry-batches", productId] });
+      setForm({ quantity: "1", expiryDate: "", lotNumber: "", notes: "" });
+    } catch {
+      setError(t("Erreur réseau", "خطأ في الشبكة"));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleDelete = async (batchId: number) => {
+    const res = await fetch(`${API_BASE}/api/erp/expiry-batches/${batchId}`, {
+      method: "DELETE",
+      headers: authHdrs(),
+    });
+    if (res.ok) void qc.invalidateQueries({ queryKey: ["expiry-batches", productId] });
+  };
+
+  return (
+    <div className="space-y-5">
+      <div className="flex items-center gap-2">
+        <CalendarClock className="h-4 w-4 text-[#1B3057]" />
+        <h3 className="text-sm font-semibold text-[#1B3057]">{t("Dates de péremption par lot", "تواريخ انتهاء الصلاحية حسب الدفعة")}</h3>
+      </div>
+
+      {/* Batch list */}
+      {isLoading && <div className="text-xs text-muted-foreground">{t("Chargement...", "جاري التحميل...")}</div>}
+      {!isLoading && (!batches || batches.length === 0) && (
+        <div className="flex flex-col items-center justify-center py-8 border-2 border-dashed border-muted-foreground/20 rounded-xl text-muted-foreground">
+          <CalendarClock className="h-8 w-8 mb-2 opacity-30" />
+          <p className="text-sm">{t("Aucun lot enregistré", "لا توجد دفعات مسجلة")}</p>
+          <p className="text-xs text-muted-foreground/60">{t("Ajoutez des lots ci-dessous", "أضف دفعات أدناه")}</p>
+        </div>
+      )}
+      {!isLoading && batches && batches.length > 0 && (
+        <div className="space-y-2">
+          {batches.map((b) => {
+            const dl = daysLeft(b.expiry_date);
+            const col = expiryColor(dl);
+            return (
+              <div key={b.id} className={`flex items-start gap-3 rounded-lg border p-3 ${col.card}`}>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="text-sm font-semibold">
+                      {new Date(b.expiry_date).toLocaleDateString("fr-DZ", { day: "2-digit", month: "short", year: "numeric" })}
+                    </span>
+                    <span className={`text-[11px] px-1.5 py-0.5 rounded font-medium ${col.badge}`}>{col.label}</span>
+                    {b.lot_number && (
+                      <span className="text-[11px] text-muted-foreground bg-muted/60 px-1.5 py-0.5 rounded font-mono">
+                        {t("Lot", "دفعة")}: {b.lot_number}
+                      </span>
+                    )}
+                  </div>
+                  <div className="text-xs text-muted-foreground mt-0.5">
+                    {t("Qté", "الكمية")}: <span className="font-semibold text-foreground">{b.quantity}</span>
+                    {b.notes && <span className="ml-2 text-muted-foreground/80">— {b.notes}</span>}
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => handleDelete(b.id)}
+                  className="shrink-0 h-6 w-6 rounded text-muted-foreground hover:text-red-600 hover:bg-red-50 flex items-center justify-center transition-colors"
+                  title={t("Supprimer ce lot", "حذف هذه الدفعة")}
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Add form */}
+      <div className="rounded-lg border bg-muted/30 p-4 space-y-3">
+        <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+          {t("Ajouter un lot", "إضافة دفعة")}
+        </p>
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <Label className="text-xs mb-1 block">{t("Date d'expiration *", "تاريخ الانتهاء *")}</Label>
+            <input
+              type="date"
+              value={form.expiryDate}
+              onChange={(e) => setForm((f) => ({ ...f, expiryDate: e.target.value }))}
+              className="w-full h-8 rounded-md border border-input bg-background px-3 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
+            />
+          </div>
+          <div>
+            <Label className="text-xs mb-1 block">{t("Quantité", "الكمية")}</Label>
+            <Input
+              type="number"
+              min="0"
+              step="1"
+              value={form.quantity}
+              onChange={(e) => setForm((f) => ({ ...f, quantity: e.target.value }))}
+              className="h-8 text-sm"
+            />
+          </div>
+          <div>
+            <Label className="text-xs mb-1 block">{t("N° Lot (optionnel)", "رقم الدفعة (اختياري)")}</Label>
+            <Input
+              value={form.lotNumber}
+              onChange={(e) => setForm((f) => ({ ...f, lotNumber: e.target.value }))}
+              placeholder={t("Ex: LOT-2025-01", "مثال: LOT-2025-01")}
+              className="h-8 text-sm font-mono"
+            />
+          </div>
+          <div>
+            <Label className="text-xs mb-1 block">{t("Notes (optionnel)", "ملاحظات (اختياري)")}</Label>
+            <Input
+              value={form.notes}
+              onChange={(e) => setForm((f) => ({ ...f, notes: e.target.value }))}
+              className="h-8 text-sm"
+            />
+          </div>
+        </div>
+        {error && (
+          <div className="flex items-center gap-1.5 text-xs text-red-600">
+            <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+            {error}
+          </div>
+        )}
+        <Button
+          type="button"
+          size="sm"
+          onClick={handleAdd}
+          disabled={saving || !form.expiryDate}
+          className="bg-[#1B3057] hover:bg-[#1B3057]/90 text-xs"
+        >
+          {saving ? <><Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" />{t("Ajout...", "إضافة...")}</> : <><Plus className="h-3.5 w-3.5 mr-1" />{t("Ajouter le lot", "إضافة الدفعة")}</>}
+        </Button>
+      </div>
+    </div>
   );
 }
 
@@ -1303,6 +1519,11 @@ export default function Products() {
                 <TabsTrigger value="images" className="flex items-center gap-1.5 data-[state=active]:border-b-2 data-[state=active]:border-[#1B3057] rounded-none h-10 text-xs px-3">
                   <ImageIcon className="h-3.5 w-3.5" /> IMAGES
                 </TabsTrigger>
+                {dialog.editing && (
+                  <TabsTrigger value="expiry" className="flex items-center gap-1.5 data-[state=active]:border-b-2 data-[state=active]:border-[#1B3057] rounded-none h-10 text-xs px-3">
+                    <CalendarClock className="h-3.5 w-3.5" /> {t("PÉREMPTION", "الصلاحية")}
+                  </TabsTrigger>
+                )}
               </TabsList>
             </div>
 
@@ -1811,6 +2032,13 @@ export default function Products() {
                   </AlertDialogContent>
                 </AlertDialog>
               </TabsContent>
+
+              {/* ── PÉREMPTION ── */}
+              {dialog.editing && (
+                <TabsContent value="expiry" className="m-0 p-5">
+                  <ExpiryBatchesPanel productId={dialog.editing.id} />
+                </TabsContent>
+              )}
 
             </div>
           </Tabs>

@@ -12,7 +12,7 @@ import { CreateTransferDialog, type LineDraft, type ProductLite } from "@/pages/
 import {
   AlertTriangle, Package, ArrowLeftRight, RefreshCw,
   Store as StoreIcon, Clock, TrendingDown, Check,
-  Pencil, X, Save, Send, ArrowUpDown,
+  Pencil, X, Save, Send, ArrowUpDown, CalendarClock,
 } from "lucide-react";
 
 const API_BASE = (import.meta.env.VITE_API_URL as string | undefined) ?? "";
@@ -56,6 +56,21 @@ type SlowMoverRow = {
 
 type SlowStats = { count: number; slowValue: number; totalValue: number; pctOfTotal: number };
 type SlowMoversResponse = { items: SlowMoverRow[]; stats: SlowStats };
+
+type ExpiryRow = {
+  batch_id: number;
+  product_id: number;
+  quantity: number;
+  expiry_date: string;
+  lot_number: string | null;
+  notes: string | null;
+  name_en: string;
+  name_ar: string;
+  reference: string | null;
+  barcode: string | null;
+  image_url: string | null;
+  days_left: number;
+};
 
 type DialogConfig = {
   direction: "in" | "out";
@@ -114,6 +129,33 @@ async function fetchSlowMovers(days: Days): Promise<SlowMoversResponse> {
   );
   if (!res.ok) throw new Error("fetch failed");
   return res.json() as Promise<SlowMoversResponse>;
+}
+
+async function fetchExpiringProducts(days: number): Promise<ExpiryRow[]> {
+  const res = await fetch(
+    `${API_BASE}/api/erp/alerts/expiring-products?days=${days}`,
+    { headers: authHeaders() },
+  );
+  if (!res.ok) throw new Error("fetch failed");
+  return res.json() as Promise<ExpiryRow[]>;
+}
+
+function expiryCardStyle(daysLeft: number): { card: string; badge: string; label: string } {
+  if (daysLeft < 0) return {
+    card: "border-l-4 border-l-red-500 bg-red-50/50",
+    badge: "bg-red-100 text-red-800 border-red-300",
+    label: "Expiré",
+  };
+  if (daysLeft <= 7) return {
+    card: "border-l-4 border-l-orange-400 bg-orange-50/40",
+    badge: "bg-orange-100 text-orange-800 border-orange-200",
+    label: `${daysLeft}j`,
+  };
+  return {
+    card: "border-l-4 border-l-yellow-400 bg-yellow-50/30",
+    badge: "bg-yellow-100 text-yellow-800 border-yellow-200",
+    label: `${daysLeft}j`,
+  };
 }
 
 function resolveImg(url: string | null | undefined): string | undefined {
@@ -208,6 +250,16 @@ export default function Alertes() {
   const [dialogKey, setDialogKey] = useState(0);
   const [dialogConfig, setDialogConfig] = useState<DialogConfig | null>(null);
 
+  // Expiry settings from localStorage
+  const expirySettings = (() => {
+    try {
+      const raw = localStorage.getItem("midanic_expiry_settings");
+      if (raw) return JSON.parse(raw) as { enabled: boolean; days: number };
+    } catch { /* ignore */ }
+    return { enabled: true, days: 30 };
+  })();
+  const [expiryDays, setExpiryDays] = useState<number>(expirySettings.days ?? 30);
+
   // ── Queries ──
   const crossQuery = useQuery<CrossStoreMissingRow[]>({
     queryKey: ["alerts-cross-store-missing"],
@@ -221,6 +273,13 @@ export default function Alertes() {
     staleTime: 60_000,
   });
 
+  const expiryQuery = useQuery<ExpiryRow[]>({
+    queryKey: ["alerts-expiring-products", expiryDays],
+    queryFn: () => fetchExpiringProducts(expiryDays),
+    staleTime: 60_000,
+    enabled: expirySettings.enabled,
+  });
+
   const { data: allStores } = useGetErpStoresAll();
   const otherStores = useMemo(
     () =>
@@ -229,10 +288,11 @@ export default function Alertes() {
     [allStores, currentStoreId],
   );
 
-  const isRefetching = crossQuery.isRefetching || slowQuery.isRefetching;
+  const isRefetching = crossQuery.isRefetching || slowQuery.isRefetching || expiryQuery.isRefetching;
   const refetchAll = () => {
     void crossQuery.refetch();
     void slowQuery.refetch();
+    void expiryQuery.refetch();
     void qc.invalidateQueries({ queryKey: ["alerts-count"] });
   };
 
@@ -743,6 +803,108 @@ export default function Alertes() {
                         </button>
                       </div>
                     )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </section>
+
+      {/* ── Section 3 : dates de péremption ────────────────────────────── */}
+      <section className="space-y-3">
+        <div className="flex items-center gap-2">
+          <CalendarClock className="h-4 w-4 text-orange-500" />
+          <h2 className="font-semibold text-sm">
+            {t("Produits proches de la péremption", "منتجات قريبة من انتهاء الصلاحية")}
+          </h2>
+          {expiryQuery.data && expiryQuery.data.length > 0 && (
+            <Badge variant="secondary" className="ml-1 bg-orange-100 text-orange-700 border-orange-200">
+              {expiryQuery.data.length}
+            </Badge>
+          )}
+        </div>
+
+        {/* Days filter */}
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className="text-xs text-muted-foreground">{t("Horizon :", "المدى:")}</span>
+          {[7, 14, 30, 60, 90].map((d) => (
+            <button
+              key={d}
+              type="button"
+              onClick={() => setExpiryDays(d)}
+              className={`text-xs px-3 py-1 rounded-full border transition-colors font-medium ${
+                expiryDays === d
+                  ? "bg-orange-500 text-white border-orange-500"
+                  : "bg-white text-muted-foreground border-muted-foreground/30 hover:bg-orange-50 hover:border-orange-300"
+              }`}
+            >
+              {d}j
+            </button>
+          ))}
+        </div>
+
+        {!expirySettings.enabled && (
+          <div className="rounded-xl border bg-muted/30 p-6 text-center">
+            <p className="text-sm text-muted-foreground">
+              {t(
+                "Les alertes de péremption sont désactivées. Activez-les dans Paramètres → Notifications.",
+                "تنبيهات انتهاء الصلاحية معطّلة. فعّلها من الإعدادات ← الإشعارات.",
+              )}
+            </p>
+          </div>
+        )}
+
+        {expirySettings.enabled && expiryQuery.isLoading && <CardSkeletons />}
+
+        {expirySettings.enabled && !expiryQuery.isLoading && (!expiryQuery.data || expiryQuery.data.length === 0) && (
+          <div className="rounded-xl border bg-muted/30 p-8 text-center">
+            <CalendarClock className="h-9 w-9 text-muted-foreground mx-auto mb-2 opacity-40" />
+            <p className="text-sm text-muted-foreground">
+              {t(
+                `Aucun lot n'expire dans les ${expiryDays} prochains jours ✓`,
+                `لا توجد دفعات تنتهي خلال الـ ${expiryDays} يوماً القادمة ✓`,
+              )}
+            </p>
+          </div>
+        )}
+
+        {expirySettings.enabled && expiryQuery.data && expiryQuery.data.length > 0 && (
+          <div className="grid gap-3 sm:grid-cols-2">
+            {expiryQuery.data.map((row) => {
+              const name = lang === "ar" && row.name_ar ? row.name_ar : row.name_en;
+              const col = expiryCardStyle(Number(row.days_left));
+              const dl = Number(row.days_left);
+              return (
+                <div key={row.batch_id} className={`bg-white border rounded-xl p-3 shadow-sm flex gap-3 ${col.card}`}>
+                  <div className="w-14 h-14 rounded-lg bg-slate-100 flex items-center justify-center shrink-0 overflow-hidden border">
+                    {row.image_url
+                      ? <img src={resolveImg(row.image_url)} alt={name} className="w-full h-full object-cover" />
+                      : <Package className="h-6 w-6 text-slate-400" />}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-start justify-between gap-2">
+                      <p className="font-semibold text-sm truncate">{name}</p>
+                      <span className={`text-[11px] px-1.5 py-0.5 rounded border font-semibold whitespace-nowrap shrink-0 ${col.badge}`}>
+                        {dl < 0 ? t("Expiré", "منتهي") : col.label}
+                      </span>
+                    </div>
+                    {(row.reference || row.barcode) && (
+                      <p className="text-[11px] text-muted-foreground/70 font-mono mt-0.5">
+                        {row.reference ?? row.barcode}
+                      </p>
+                    )}
+                    <div className="mt-1.5 flex items-center gap-3 text-xs text-muted-foreground flex-wrap">
+                      <span>
+                        📅 {new Date(row.expiry_date).toLocaleDateString("fr-DZ", { day: "2-digit", month: "short", year: "numeric" })}
+                      </span>
+                      <span>
+                        {t("Qté", "الكمية")}: <span className="font-semibold text-foreground">{row.quantity}</span>
+                      </span>
+                      {row.lot_number && (
+                        <span className="font-mono text-[11px] bg-muted/60 px-1 rounded">{row.lot_number}</span>
+                      )}
+                    </div>
                   </div>
                 </div>
               );

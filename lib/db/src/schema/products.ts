@@ -78,3 +78,18 @@ export const productImagesTable = pgTable("product_images", {
 }));
 
 export type ProductImage = typeof productImagesTable.$inferSelect;
+
+// Expiry batches — multiple batches per product, each with a distinct expiry date and qty.
+// Purely a tracking register; not linked to stock movements or FIFO.
+export const productExpiryBatchesTable = pgTable("product_expiry_batches", {
+  id: serial("id").primaryKey(),
+  productId: integer("product_id").references(() => productsTable.id, { onDelete: "cascade" }).notNull(),
+  storeId: integer("store_id").references(() => storesTable.id, { onDelete: "cascade" }).notNull(),
+  quantity: doublePrecision("quantity").notNull().default(0),
+  expiryDate: text("expiry_date").notNull(), // stored as ISO date string "YYYY-MM-DD"
+  lotNumber: text("lot_number"),
+  notes: text("notes"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+export type ProductExpiryBatch = typeof productExpiryBatchesTable.$inferSelect;

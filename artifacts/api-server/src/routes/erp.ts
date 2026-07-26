@@ -4694,13 +4694,109 @@ router.get("/erp/alerts/slow-movers", authenticate, requireStaff, requireStore, 
   } catch (err) { req.log.error(err); res.status(500).json({ error: "Internal server error" }); }
 });
 
+// ─── Product expiry batches ────────────────────────────────────────────────
+
+// GET /erp/products/:id/expiry-batches — list batches for one product (store-scoped)
+router.get("/erp/products/:id/expiry-batches", authenticate, requireStaff, requireStore, requirePermission("products", "view"), async (req: AuthRequest, res) => {
+  try {
+    const storeId = req.currentStoreId!;
+    const productId = parseInt(req.params.id!, 10);
+    if (isNaN(productId)) return res.status(400).json({ error: "Invalid product id" });
+
+    const rows = await db.execute(sql`
+      SELECT id, product_id, store_id, quantity, expiry_date, lot_number, notes, created_at
+      FROM product_expiry_batches
+      WHERE product_id = ${productId} AND store_id = ${storeId}
+      ORDER BY expiry_date ASC
+    `);
+    res.json(rows.rows);
+  } catch (err) { req.log.error(err); res.status(500).json({ error: "Internal server error" }); }
+});
+
+// POST /erp/products/:id/expiry-batches — add a new batch
+router.post("/erp/products/:id/expiry-batches", authenticate, requireStaff, requireStore, requirePermission("products", "edit"), async (req: AuthRequest, res) => {
+  try {
+    const storeId = req.currentStoreId!;
+    const productId = parseInt(req.params.id!, 10);
+    if (isNaN(productId)) return res.status(400).json({ error: "Invalid product id" });
+
+    const { quantity, expiryDate, lotNumber, notes } = req.body as {
+      quantity?: unknown; expiryDate?: unknown; lotNumber?: unknown; notes?: unknown;
+    };
+    const qty = parseFloat(String(quantity ?? "0"));
+    const dateStr = String(expiryDate ?? "").trim();
+    if (!dateStr || !/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
+      return res.status(400).json({ error: "expiryDate must be YYYY-MM-DD" });
+    }
+    if (isNaN(qty) || qty < 0) return res.status(400).json({ error: "Invalid quantity" });
+
+    // Verify product belongs to this store
+    const prod = await db.execute(sql`SELECT id FROM products WHERE id = ${productId} AND store_id = ${storeId} LIMIT 1`);
+    if (!prod.rows.length) return res.status(404).json({ error: "Product not found" });
+
+    const result = await db.execute(sql`
+      INSERT INTO product_expiry_batches (product_id, store_id, quantity, expiry_date, lot_number, notes)
+      VALUES (${productId}, ${storeId}, ${qty}, ${dateStr}, ${lotNumber ?? null}, ${notes ?? null})
+      RETURNING *
+    `);
+    res.status(201).json(result.rows[0]);
+  } catch (err) { req.log.error(err); res.status(500).json({ error: "Internal server error" }); }
+});
+
+// DELETE /erp/expiry-batches/:batchId — remove a batch
+router.delete("/erp/expiry-batches/:batchId", authenticate, requireStaff, requireStore, requirePermission("products", "edit"), async (req: AuthRequest, res) => {
+  try {
+    const storeId = req.currentStoreId!;
+    const batchId = parseInt(req.params.batchId!, 10);
+    if (isNaN(batchId)) return res.status(400).json({ error: "Invalid batch id" });
+
+    const result = await db.execute(sql`
+      DELETE FROM product_expiry_batches
+      WHERE id = ${batchId} AND store_id = ${storeId}
+      RETURNING id
+    `);
+    if (!result.rows.length) return res.status(404).json({ error: "Batch not found" });
+    res.json({ ok: true });
+  } catch (err) { req.log.error(err); res.status(500).json({ error: "Internal server error" }); }
+});
+
+// GET /erp/alerts/expiring-products?days=N — batches expiring within N days
+router.get("/erp/alerts/expiring-products", authenticate, requireStaff, requireStore, requirePermission("inventory", "view"), async (req: AuthRequest, res) => {
+  try {
+    const storeId = req.currentStoreId!;
+    const days = Math.max(1, Math.min(365, parseInt(String(req.query.days ?? "30"), 10) || 30));
+
+    const rows = await db.execute(sql`
+      SELECT
+        b.id              AS batch_id,
+        b.product_id,
+        b.quantity,
+        b.expiry_date,
+        b.lot_number,
+        b.notes,
+        p.name_en,
+        p.name_ar,
+        p.reference,
+        p.barcode,
+        p.image_url,
+        (b.expiry_date::date - CURRENT_DATE) AS days_left
+      FROM product_expiry_batches b
+      JOIN products p ON p.id = b.product_id
+      WHERE b.store_id = ${storeId}
+        AND b.expiry_date::date <= CURRENT_DATE + (${days} || ' days')::interval
+      ORDER BY b.expiry_date ASC
+    `);
+    res.json(rows.rows);
+  } catch (err) { req.log.error(err); res.status(500).json({ error: "Internal server error" }); }
+});
+
 // GET /erp/alerts/count — lightweight badge count (sum of all alert types)
 // Uses a fixed 30-day window for slow-movers in the badge (detail page can filter further).
 router.get("/erp/alerts/count", authenticate, requireStaff, requireStore, requirePermission("inventory", "view"), async (req: AuthRequest, res) => {
   try {
     const storeId = req.currentStoreId!;
 
-    const [crossResult, slowResult] = await Promise.all([
+    const [crossResult, slowResult, expiryResult] = await Promise.all([
       db.execute(sql`
         SELECT COUNT(DISTINCT COALESCE(NULLIF(src.reference, ''), src.barcode))
                AS cross_store_missing
@@ -4741,13 +4837,21 @@ router.get("/erp/alerts/count", authenticate, requireStaff, requireStore, requir
               AND  o.created_at  >= NOW() - INTERVAL '30 days'
           )
       `),
+      db.execute(sql`
+        SELECT COUNT(*) AS expiring
+        FROM product_expiry_batches
+        WHERE store_id = ${storeId}
+          AND expiry_date::date <= CURRENT_DATE + INTERVAL '30 days'
+      `),
     ]);
 
-    const crossRow = crossResult.rows[0] as { cross_store_missing: string };
-    const slowRow  = slowResult.rows[0]  as { slow_movers: string };
+    const crossRow  = crossResult.rows[0]  as { cross_store_missing: string };
+    const slowRow   = slowResult.rows[0]   as { slow_movers: string };
+    const expiryRow = expiryResult.rows[0] as { expiring: string };
     res.json({
       crossStoreMissing: Number(crossRow.cross_store_missing),
       slowMovers:        Number(slowRow.slow_movers),
+      expiringProducts:  Number(expiryRow.expiring),
     });
   } catch (err) { req.log.error(err); res.status(500).json({ error: "Internal server error" }); }
 });

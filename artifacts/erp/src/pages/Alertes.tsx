@@ -188,6 +188,21 @@ export default function Alertes() {
   const [savingPriceId, setSavingPriceId] = useState<number | null>(null);
   const [priceError, setPriceError] = useState<string | null>(null);
 
+  // ── Snooze map: tracks when a slow-mover's price was last edited ──────────
+  // Key = `${storeId}_${productId}`, value = timestamp ms of the edit.
+  // Hidden for 30 days, then re-appears: yellow 30-90j, orange 90-180j, red 180j+.
+  const SNOOZE_LS_KEY = "midanic_slow_mover_snooze";
+  const [snoozeMap, setSnoozeMap] = useState<Record<string, number>>(() => {
+    try { return JSON.parse(localStorage.getItem(SNOOZE_LS_KEY) ?? "{}") as Record<string, number>; }
+    catch { return {}; }
+  });
+  const snoozeKey = (productId: number) => `${currentStoreId ?? 0}_${productId}`;
+  const snoozeProduct = (productId: number) => {
+    const updated = { ...snoozeMap, [snoozeKey(productId)]: Date.now() };
+    setSnoozeMap(updated);
+    try { localStorage.setItem(SNOOZE_LS_KEY, JSON.stringify(updated)); } catch { /* ignore */ }
+  };
+
   // Transfer dialog
   const [dialogOpen, setDialogOpen] = useState(false);
   const [dialogKey, setDialogKey] = useState(0);
@@ -221,9 +236,16 @@ export default function Alertes() {
     void qc.invalidateQueries({ queryKey: ["alerts-count"] });
   };
 
-  // Client-side sort (server always returns "days" order)
+  // Client-side sort + snooze filter (server always returns "days" order)
   const sortedSlowItems = useMemo(() => {
-    const items = slowQuery.data?.items ?? [];
+    const nowMs = Date.now();
+    const storePrefix = `${currentStoreId ?? 0}_`;
+    const items = (slowQuery.data?.items ?? []).filter((row) => {
+      const editedAt = snoozeMap[storePrefix + row.id];
+      if (!editedAt) return true;
+      // hide for 30 days after price edit, then re-appear with colour override
+      return (nowMs - editedAt) / 86_400_000 >= 30;
+    });
     if (sortBy === "value") {
       return [...items].sort(
         (a, b) =>
@@ -235,7 +257,7 @@ export default function Alertes() {
       return [...items].sort((a, b) => Number(b.stock) - Number(a.stock));
     }
     return items;
-  }, [slowQuery.data, sortBy]);
+  }, [slowQuery.data, sortBy, snoozeMap, currentStoreId]);
 
   const slowStats = slowQuery.data?.stats;
 
@@ -340,6 +362,8 @@ export default function Alertes() {
       });
       setEditingPriceId(null);
       setEditingPriceVal("");
+      // Snooze: hide this product for 30 days, reappear with colour coding
+      snoozeProduct(row.id);
     } finally {
       setSavingPriceId(null);
     }
@@ -572,7 +596,7 @@ export default function Alertes() {
             {sortedSlowItems.map((row) => {
               const name = lang === "ar" && row.name_ar ? row.name_ar : row.name_en;
               const neverSold = row.last_sold_at === null;
-              const severity = getSeverity(row.days_since_last_sale, neverSold);
+              const baseSeverity = getSeverity(row.days_since_last_sale, neverSold);
               const cardValue = Number(row.stock) * Number(row.cost_price ?? 0);
               const isEditingPrice = editingPriceId === row.id;
               const isSaving = savingPriceId === row.id;
@@ -582,6 +606,16 @@ export default function Alertes() {
               const catName = lang === "ar"
                 ? (row.category_name_ar ?? row.category_name_en)
                 : row.category_name_en;
+
+              // Snooze-based severity override (price was edited → reappeared after 30j)
+              const editedAt = snoozeMap[snoozeKey(row.id)];
+              const daysSinceEdit = editedAt ? (Date.now() - editedAt) / 86_400_000 : null;
+              const snoozedSeverity: Severity | null =
+                daysSinceEdit === null ? null
+                : daysSinceEdit >= 180 ? "critical"   // rouge
+                : daysSinceEdit >= 90  ? "high"        // orange
+                : "low";                               // jaune (30–90j)
+              const severity: Severity = snoozedSeverity ?? baseSeverity;
 
               return (
                 <div
@@ -633,6 +667,17 @@ export default function Alertes() {
                         ? t("Aucune vente enregistrée", "لا يوجد سجل بيع")
                         : `${t("Dernier vente", "آخر بيع")}: ${formatDate(row.last_sold_at)}`}
                     </p>
+
+                    {/* Snooze indicator — visible only on re-appeared cards */}
+                    {daysSinceEdit !== null && (
+                      <p className="text-[10px] text-slate-400 mt-0.5 flex items-center gap-1">
+                        <Pencil className="h-2.5 w-2.5 shrink-0" />
+                        {t(
+                          `Prix modifié il y a ${Math.floor(daysSinceEdit)} j — toujours invendu`,
+                          `تعديل سعر منذ ${Math.floor(daysSinceEdit)} يوم — لم يُباع بعد`,
+                        )}
+                      </p>
+                    )}
 
                     {/* Inline price edit */}
                     {isEditingPrice ? (

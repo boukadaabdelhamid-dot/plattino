@@ -4461,8 +4461,8 @@ router.put("/erp/sale-orders/:id/cloture", authenticate, requireStaff, requireSt
       order_source: string;
     } | undefined;
     if (!existing) { res.status(404).json({ error: "Not found" }); return; }
-    if (existing.status !== "pending" && existing.status !== "processing") {
-      res.status(400).json({ error: "Seuls les bons en cours (pending/processing) peuvent être clôturés" }); return;
+    if (existing.status !== "draft" && existing.status !== "pending" && existing.status !== "processing") {
+      res.status(400).json({ error: "Seuls les bons en cours (draft/pending/processing) peuvent être clôturés" }); return;
     }
 
     const totalAmount = parseFloat(existing.total_amount ?? "0");

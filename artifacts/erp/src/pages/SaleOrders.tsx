@@ -116,10 +116,11 @@ const SALE_ORDERS_KEY = (search?: string, status?: string) =>
 
 const statusColor = (s: string) => {
   switch (s) {
-    case "delivered": return "bg-emerald-100 text-emerald-700 border-emerald-200";
-    case "cancelled": return "bg-red-100 text-red-700 border-red-200";
+    case "draft":      return "bg-blue-50 text-blue-600 border-blue-200";
+    case "delivered":  return "bg-emerald-100 text-emerald-700 border-emerald-200";
+    case "cancelled":  return "bg-red-100 text-red-700 border-red-200";
     case "processing": return "bg-amber-100 text-amber-700 border-amber-200";
-    default: return "bg-gray-100 text-gray-700 border-gray-200";
+    default:           return "bg-gray-100 text-gray-700 border-gray-200";
   }
 };
 
@@ -235,11 +236,12 @@ export default function SaleOrders() {
   }, [invoiceOrder, store, showTva]);
 
   const statusLabels: Record<string, string> = {
-    pending: t("En cours", "قيد التنفيذ"),
+    draft:      t("Brouillon", "مسودة"),
+    pending:    t("En cours", "قيد التنفيذ"),
     processing: t("En traitement", "جاري المعالجة"),
-    shipped: t("Expédié", "تم الشحن"),
-    delivered: t("Clôturé", "مُغلق"),
-    cancelled: t("Annulé", "ملغي"),
+    shipped:    t("Expédié", "تم الشحن"),
+    delivered:  t("Clôturé", "مُغلق"),
+    cancelled:  t("Annulé", "ملغي"),
   };
 
   const totalBenefice = orders.reduce((s, o) => s + parseFloat(o.benefice ?? "0"), 0);
@@ -301,6 +303,7 @@ export default function SaleOrders() {
           className="h-8 text-xs border rounded-md px-2 bg-background"
         >
           <option value="">{t("Tous les états", "جميع الحالات")}</option>
+          <option value="draft">{t("Brouillons", "مسودات")}</option>
           <option value="pending">{t("En cours", "قيد التنفيذ")}</option>
           <option value="delivered">{t("Clôturés", "مُغلقة")}</option>
           <option value="cancelled">{t("Annulés", "ملغية")}</option>
@@ -334,12 +337,13 @@ export default function SaleOrders() {
             )}
             {!isLoading && orders.map((order) => {
               const isPos = order.order_source === "pos";
+              const isDraft = order.status === "draft";
               const isDelivered = order.status === "delivered";
               const isCancelled = order.status === "cancelled";
               const isPending = order.status === "pending" || order.status === "processing";
-              // edit/delete only for bons (not POS); clôture available for any source while pending
+              // edit/delete only for bons (not POS); clôture available for draft, pending or processing
               const canEdit = !isPos && !isDelivered && !isCancelled;
-              const canCloture = isPending && !isCancelled;
+              const canCloture = (isDraft || isPending) && !isCancelled;
               const benefice = parseFloat(order.benefice ?? "0");
               const prefix = isPos ? "VR" : "BV";
               return (

@@ -15,7 +15,7 @@ import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Shield, UserPlus, Trash2, Crown, User, Key, Eye, EyeOff } from "lucide-react";
+import { Shield, UserPlus, Trash2, Crown, User, Key, Eye, EyeOff, ArrowUpDown } from "lucide-react";
 
 export default function Staff() {
   const qc = useQueryClient();
@@ -38,6 +38,11 @@ export default function Staff() {
   const [newPassword, setNewPassword] = useState("");
   const [showNewPassword, setShowNewPassword] = useState(false);
   const [pwdError, setPwdError] = useState<string | null>(null);
+
+  // Role change dialog
+  const [roleTarget, setRoleTarget] = useState<{ id: number; name: string; currentRole: "admin" | "employee" } | null>(null);
+  const [roleLoading, setRoleLoading] = useState(false);
+  const [roleError, setRoleError] = useState<string | null>(null);
 
   const allStores = stores ?? [];
   const toggleStore = (id: number, current: number[], set: (v: number[]) => void) => {
@@ -73,6 +78,36 @@ export default function Staff() {
   };
 
   const closePwdDialog = () => { setPwdTarget(null); setNewPassword(""); setShowNewPassword(false); setPwdError(null); };
+
+  const closeRoleDialog = () => { setRoleTarget(null); setRoleError(null); };
+  const handleRoleChange = async () => {
+    if (!roleTarget) return;
+    const newRole = roleTarget.currentRole === "employee" ? "admin" : "employee";
+    setRoleLoading(true);
+    setRoleError(null);
+    try {
+      const token = localStorage.getItem("midanic_token");
+      const resp = await fetch(`/api/erp/staff/${roleTarget.id}/role`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+        body: JSON.stringify({ role: newRole }),
+      });
+      if (!resp.ok) {
+        const err = (await resp.json().catch(() => ({}))) as { error?: string };
+        setRoleError(err.error ?? t("Erreur lors du changement de rôle", "خطأ أثناء تغيير الصلاحية"));
+        return;
+      }
+      await qc.invalidateQueries({ queryKey: getGetErpStaffQueryKey() });
+      toast({ title: newRole === "admin"
+        ? t(`${roleTarget.name} est maintenant Admin`, `${roleTarget.name} أصبح مسؤولاً`)
+        : t(`${roleTarget.name} est maintenant Employé`, `${roleTarget.name} أصبح موظفاً`) });
+      closeRoleDialog();
+    } catch {
+      setRoleError(t("Erreur réseau", "خطأ في الشبكة"));
+    } finally {
+      setRoleLoading(false);
+    }
+  };;
 
   const handleResetPassword = () => {
     if (!pwdTarget) return;
@@ -178,6 +213,15 @@ export default function Staff() {
                           onClick={() => { setPwdTarget({ id: s.id, name: s.name }); setNewPassword(""); setShowNewPassword(false); setPwdError(null); }}
                           data-testid={`btn-reset-password-${s.id}`}>
                           <Key className="h-3.5 w-3.5" />
+                        </Button>
+                        <Button size="sm" variant="ghost"
+                          className={`h-7 text-xs ${s.role === "employee" ? "text-primary hover:bg-primary/10" : "text-muted-foreground hover:bg-muted"}`}
+                          title={s.role === "employee"
+                            ? t("Promouvoir en Admin", "ترقية إلى مسؤول")
+                            : t("Rétrograder en Employé", "تخفيض إلى موظف")}
+                          onClick={() => setRoleTarget({ id: s.id, name: s.name, currentRole: s.role === "admin" ? "admin" : "employee" })}
+                          data-testid={`btn-role-${s.id}`}>
+                          {s.role === "employee" ? <Crown className="h-3.5 w-3.5" /> : <ArrowUpDown className="h-3.5 w-3.5" />}
                         </Button>
                         <Button size="sm" variant="ghost" className="h-7 text-xs text-red-600 hover:text-red-700 hover:bg-red-50"
                           onClick={() => handleDelete(s.id, s.name)}
@@ -335,6 +379,51 @@ export default function Staff() {
             <Button variant="outline" onClick={closePwdDialog}>{t("Annuler", "إلغاء")}</Button>
             <Button onClick={handleResetPassword} disabled={resetPassword.isPending} data-testid="button-save-new-password">
               {resetPassword.isPending ? "..." : t("Enregistrer", "حفظ")}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── Role change dialog ─────────────────────────────────────────────── */}
+      <Dialog open={roleTarget !== null} onOpenChange={(v) => { if (!v) closeRoleDialog(); }}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              {roleTarget?.currentRole === "employee"
+                ? <><Crown className="h-5 w-5 text-primary" /> {t("Promouvoir en Admin", "ترقية إلى مسؤول")}</>
+                : <><ArrowUpDown className="h-5 w-5 text-muted-foreground" /> {t("Rétrograder en Employé", "تخفيض إلى موظف")}</>}
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            {roleTarget?.currentRole === "employee" ? (
+              <p className="text-sm text-muted-foreground">
+                {t("Voulez-vous accorder les droits Admin à", "هل تريد منح صلاحيات المسؤول لـ")}{" "}
+                <strong className="text-foreground">{roleTarget?.name}</strong> ?
+              </p>
+            ) : (
+              <p className="text-sm text-muted-foreground">
+                {t("Voulez-vous retirer les droits Admin de", "هل تريد إزالة صلاحيات المسؤول من")}{" "}
+                <strong className="text-foreground">{roleTarget?.name}</strong>{" "}
+                {t("et le passer en Employé ?", "وتحويله إلى موظف ؟")}
+              </p>
+            )}
+            <div className={`rounded-md p-3 text-xs ${roleTarget?.currentRole === "employee" ? "bg-primary/5 border border-primary/20 text-primary" : "bg-muted text-muted-foreground"}`}>
+              {roleTarget?.currentRole === "employee"
+                ? t("L'employé aura accès à toutes les fonctionnalités (achats, fournisseurs, comptabilité…)", "سيتمكن الموظف من الوصول إلى جميع الوظائف (المشتريات، الموردون، المحاسبة…)")
+                : t("L'utilisateur perdra l'accès aux données financières sensibles et à la gestion du personnel.", "سيفقد المستخدم الوصول إلى البيانات المالية الحساسة وإدارة الموظفين.")}
+            </div>
+            {roleError && <p className="text-sm text-red-600">{roleError}</p>}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={closeRoleDialog}>{t("Annuler", "إلغاء")}</Button>
+            <Button
+              onClick={handleRoleChange}
+              disabled={roleLoading}
+              variant={roleTarget?.currentRole === "employee" ? "default" : "outline"}
+              data-testid="button-confirm-role-change">
+              {roleLoading ? "..." : roleTarget?.currentRole === "employee"
+                ? t("Promouvoir", "ترقية")
+                : t("Rétrograder", "تخفيض")}
             </Button>
           </DialogFooter>
         </DialogContent>

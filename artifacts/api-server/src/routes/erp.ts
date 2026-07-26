@@ -3883,6 +3883,43 @@ router.put("/erp/staff/:id/stores", authenticate, requireAdmin, async (req: Auth
   } catch (err) { req.log.error(err); res.status(500).json({ error: "Internal server error" }); }
 });
 
+// PUT /erp/staff/:id/role — admin: promote employee → admin or demote admin → employee.
+// Cannot change your own role. Cannot demote the last remaining admin.
+router.put("/erp/staff/:id/role", authenticate, requireAdmin, async (req: AuthRequest, res) => {
+  try {
+    const targetId = pid(req, "id");
+    const { role } = req.body || {};
+    if (role !== "admin" && role !== "employee") {
+      res.status(400).json({ error: "role must be 'admin' or 'employee'" });
+      return;
+    }
+    if (req.user?.id === targetId) {
+      res.status(400).json({ error: "Cannot change your own role" });
+      return;
+    }
+    const [target] = await db.select({ role: schema.usersTable.role })
+      .from(schema.usersTable).where(eq(schema.usersTable.id, targetId)).limit(1);
+    if (!target) { res.status(404).json({ error: "Staff not found" }); return; }
+    if (target.role === "customer") {
+      res.status(400).json({ error: "Not a staff account" });
+      return;
+    }
+    // Guard: do not demote the last admin
+    if (role === "employee" && target.role === "admin") {
+      const [{ count }] = await db.select({ count: sql<number>`count(*)::int` })
+        .from(schema.usersTable).where(eq(schema.usersTable.role, "admin"));
+      if (Number(count) <= 1) {
+        res.status(400).json({ error: "Cannot demote the last administrator" });
+        return;
+      }
+    }
+    await db.update(schema.usersTable)
+      .set({ role })
+      .where(eq(schema.usersTable.id, targetId));
+    res.json({ success: true, userId: targetId, role });
+  } catch (err) { req.log.error(err); res.status(500).json({ error: "Internal server error" }); }
+});
+
 // PUT /erp/staff/:id/password — admin: reset a staff member's password.
 // Stores a fresh bcrypt hash; never reads or returns the existing password.
 router.put("/erp/staff/:id/password", authenticate, requireAdmin, async (req: AuthRequest, res) => {

@@ -53,6 +53,7 @@ import { CommuneCombobox } from "@/components/ui/commune-combobox";
 import { ContactFormDialog } from "@/components/ContactFormDialog";
 import { ShippingLabelModal } from "@/components/ShippingLabelModal";
 import { useCurrentStore } from "@/hooks/use-current-store";
+import { usePermissions } from "@/hooks/use-permissions";
 
 type TFn = (fr: string, ar: string) => string;
 
@@ -1823,6 +1824,7 @@ function AjustementDialog({
 export default function Customers() {
   const qc = useQueryClient();
   const { isAdmin } = useMe();
+  const { can } = usePermissions();
   const { lang } = useLang();
   const t = (fr: string, ar: string) => lang === "ar" ? ar : fr;
   const currency = lang === "ar" ? "دج" : "DA";
@@ -2042,8 +2044,8 @@ export default function Customers() {
                     <TableRow
                       key={c.id}
                       data-testid={`row-customer-${c.id}`}
-                      className={isAdmin ? "cursor-pointer hover:bg-muted/40" : ""}
-                      onClick={() => isAdmin && openSheet(c.id)}
+                      className={can("customers", "view") || can("customers", "edit") ? "cursor-pointer hover:bg-muted/40" : ""}
+                      onClick={() => (can("customers", "view") || can("customers", "edit")) && openSheet(c.id)}
                     >
                       <TableCell className="font-medium text-sm">{c.name}</TableCell>
                       <TableCell className="text-xs text-muted-foreground">
@@ -2064,7 +2066,7 @@ export default function Customers() {
                         );
                       })()}
                       <TableCell>
-                        {isAdmin ? (
+                        {can("customers", "edit") ? (
                             <DropdownMenu>
                               <DropdownMenuTrigger asChild>
                                 <Button
@@ -2092,17 +2094,23 @@ export default function Customers() {
                                 <DropdownMenuItem onClick={(e) => { e.stopPropagation(); setSelectedId(null); setOpsCustomer({ id: c.id, name: c.name }); }}>
                                   <CreditCard className="h-4 w-4 mr-2" />{t("Opérations", "العمليات")}
                                 </DropdownMenuItem>
-                                <DropdownMenuItem onClick={(e) => { e.stopPropagation(); openAdjust(c); }}>
-                                  <SlidersHorizontal className="h-4 w-4 mr-2 text-amber-600" />{t("Ajustement de solde", "تعديل الرصيد")}
-                                </DropdownMenuItem>
+                                {isAdmin && (
+                                  <DropdownMenuItem onClick={(e) => { e.stopPropagation(); openAdjust(c); }}>
+                                    <SlidersHorizontal className="h-4 w-4 mr-2 text-amber-600" />{t("Ajustement de solde", "تعديل الرصيد")}
+                                  </DropdownMenuItem>
+                                )}
                                 <DropdownMenuSeparator />
                                 <DropdownMenuItem onClick={(e) => { e.stopPropagation(); openSheet(c.id, "notes"); }}>
                                   <StickyNote className="h-4 w-4 mr-2" />{t("Notes", "الملاحظات")}
                                 </DropdownMenuItem>
-                                <DropdownMenuSeparator />
-                                <DropdownMenuItem onClick={(e) => { e.stopPropagation(); setImportCustomer({ id: c.id, name: c.name }); }}>
-                                  <Store className="h-4 w-4 mr-2" />{t("Importer vers magasins", "استيراد إلى متاجر")}
-                                </DropdownMenuItem>
+                                {isAdmin && (
+                                  <>
+                                    <DropdownMenuSeparator />
+                                    <DropdownMenuItem onClick={(e) => { e.stopPropagation(); setImportCustomer({ id: c.id, name: c.name }); }}>
+                                      <Store className="h-4 w-4 mr-2" />{t("Importer vers magasins", "استيراد إلى متاجر")}
+                                    </DropdownMenuItem>
+                                  </>
+                                )}
                               </DropdownMenuContent>
                             </DropdownMenu>
                         ) : <span className="text-xs text-muted-foreground">—</span>}

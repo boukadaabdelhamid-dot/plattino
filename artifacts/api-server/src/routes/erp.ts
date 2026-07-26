@@ -3277,7 +3277,7 @@ router.post("/erp/customers/:id/notes", authenticate, requireAdmin, requireStore
 });
 
 // ─── Customer Operations ────────────────────────────────────────────
-router.get("/erp/customers/:id/operations", authenticate, requireAdmin, requireStore, async (req: AuthRequest, res) => {
+router.get("/erp/customers/:id/operations", authenticate, requireStaff, requireStore, requirePermission("customers", "view"), async (req: AuthRequest, res) => {
   try {
     const storeId = req.currentStoreId!;
     const customerId = pid(req, "id");
@@ -3296,7 +3296,7 @@ router.get("/erp/customers/:id/operations", authenticate, requireAdmin, requireS
   } catch (err) { req.log.error(err); res.status(500).json({ error: "Internal server error" }); }
 });
 
-router.post("/erp/customers/:id/operations", authenticate, requireAdmin, requireStore, async (req: AuthRequest, res) => {
+router.post("/erp/customers/:id/operations", authenticate, requireStaff, requireStore, requirePermission("customers", "edit"), async (req: AuthRequest, res) => {
   try {
     const storeId = req.currentStoreId!;
     const customerId = pid(req, "id");
@@ -3444,7 +3444,7 @@ router.post("/erp/customers/:id/operations", authenticate, requireAdmin, require
   }
 });
 
-router.put("/erp/customers/:id/operations/:opId", authenticate, requireAdmin, requireStore, async (req: AuthRequest, res) => {
+router.put("/erp/customers/:id/operations/:opId", authenticate, requireStaff, requireStore, requirePermission("customers", "edit"), async (req: AuthRequest, res) => {
   try {
     const storeId = req.currentStoreId!;
     const customerId = pid(req, "id");

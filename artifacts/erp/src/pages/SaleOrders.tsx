@@ -341,8 +341,9 @@ export default function SaleOrders() {
               const isDelivered = order.status === "delivered";
               const isCancelled = order.status === "cancelled";
               const isPending = order.status === "pending" || order.status === "processing";
-              // edit/delete only for bons (not POS); clôture available for draft, pending or processing
-              const canEdit = !isPos && !isDelivered && !isCancelled;
+              // edit/delete for bons (not POS), OR for any draft (POS drafts can also be modified);
+              // clôture available for draft, pending or processing
+              const canEdit = (isDraft || !isPos) && !isDelivered && !isCancelled;
               const canCloture = (isDraft || isPending) && !isCancelled;
               const benefice = parseFloat(order.benefice ?? "0");
               const prefix = isPos ? "VR" : "BV";

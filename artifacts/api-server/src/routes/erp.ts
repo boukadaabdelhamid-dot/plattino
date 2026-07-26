@@ -4398,7 +4398,7 @@ router.put("/erp/sale-orders/:id", authenticate, requireStaff, requireStore, req
 
     const pm = paymentMethod === "a_terme" ? "a_terme" : "comptant";
 
-    const existRes = await db.execute(sql`SELECT id, status FROM orders WHERE id = ${id} AND store_id = ${storeId} AND order_source = 'bon' LIMIT 1`);
+    const existRes = await db.execute(sql`SELECT id, status FROM orders WHERE id = ${id} AND store_id = ${storeId} AND order_source IN ('bon', 'pos') LIMIT 1`);
     const existing = existRes.rows[0] as { id: number; status: string } | undefined;
     if (!existing) { res.status(404).json({ error: "Not found" }); return; }
     if (existing.status === "delivered" || existing.status === "cancelled") {

@@ -683,6 +683,11 @@ export default function Alertes() {
                             ? formatPrice(Number(row.selling_price))
                             : t("Modifier prix", "تعديل السعر")}
                         </button>
+                        {row.cost_price != null && Number(row.cost_price) > 0 && (
+                          <span className="text-[11px] text-violet-700 bg-violet-50 border border-violet-200 rounded px-1.5 py-0.5 font-medium">
+                            {t("Coût", "تكلفة")}: {formatPrice(Number(row.cost_price))}
+                          </span>
+                        )}
                         <button
                           type="button"
                           onClick={() => openForSlowMoverTransfer(row)}

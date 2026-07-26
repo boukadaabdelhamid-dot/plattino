@@ -78,9 +78,9 @@ function TierBadge({ pt, lang }: { pt?: PriceTier | null; lang: string }) {
   );
 }
 
-function CustomerSheet({ customerId, onClose, t, lang, currency, initialTab = "basic", initialEditing = false }: {
+function CustomerSheet({ customerId, onClose, t, lang, currency, initialTab = "basic", initialEditing = false, isAdmin = false }: {
   customerId: number; onClose: () => void; t: TFn; lang: string; currency: string;
-  initialTab?: string; initialEditing?: boolean;
+  initialTab?: string; initialEditing?: boolean; isAdmin?: boolean;
 }) {
   const qc = useQueryClient();
   const { data: customer, isLoading } = useGetErpCustomer(customerId, {
@@ -131,28 +131,34 @@ function CustomerSheet({ customerId, onClose, t, lang, currency, initialTab = "b
 
   const handleSave = () => {
     const str = (k: string) => String(form[k] ?? "");
-    const payload = {
+    // Basic fields editable by any staff with customers:edit
+    const payload: Record<string, unknown> = {
       name: str("name") || undefined,
       phone: str("phone") || undefined,
       address: str("address") || undefined,
       city: str("city") || undefined,
-      contactType: (str("contactType") || "customer") as "customer" | "customer_supplier",
       wilaya: str("wilaya") || null,
       commune: str("commune") || null,
       gps: str("gps") || null,
-      classificationId: form.classificationId ? Number(form.classificationId) : null,
-      priceTierId: form.priceTierId ? Number(form.priceTierId) : null,
-      accountNumber: str("accountNumber") || null,
-      creditLimit: form.creditLimit !== "" && form.creditLimit != null ? Number(form.creditLimit) : null,
-      minBalanceAlert: form.minBalanceAlert !== "" && form.minBalanceAlert != null ? Number(form.minBalanceAlert) : null,
+    };
+    // Admin-only fields — only included in the request when the caller is an admin.
+    // The backend enforces this server-side too; omitting them here keeps the payload clean
+    // and avoids confusing "ignored field" behaviour in the response.
+    if (isAdmin) {
+      payload.contactType = (str("contactType") || "customer") as "customer" | "customer_supplier";
+      payload.classificationId = form.classificationId ? Number(form.classificationId) : null;
+      payload.priceTierId = form.priceTierId ? Number(form.priceTierId) : null;
+      payload.accountNumber = str("accountNumber") || null;
+      payload.creditLimit = form.creditLimit !== "" && form.creditLimit != null ? Number(form.creditLimit) : null;
+      payload.minBalanceAlert = form.minBalanceAlert !== "" && form.minBalanceAlert != null ? Number(form.minBalanceAlert) : null;
       // currentBalance is deliberately omitted — see the comment where the form state is
       // initialized. Balance changes go exclusively through "Ajustement de solde".
-      foreignCurrency: Boolean(form.foreignCurrency),
-      rc: str("rc") || null,
-      nif: str("nif") || null,
-      ai: str("ai") || null,
-      nis: str("nis") || null,
-    };
+      payload.foreignCurrency = Boolean(form.foreignCurrency);
+      payload.rc = str("rc") || null;
+      payload.nif = str("nif") || null;
+      payload.ai = str("ai") || null;
+      payload.nis = str("nis") || null;
+    }
     updateCustomer.mutate({ id: customerId, data: payload }, {
       onSuccess: () => {
         qc.invalidateQueries({ queryKey: getGetErpCustomerQueryKey(customerId) });
@@ -297,7 +303,7 @@ function CustomerSheet({ customerId, onClose, t, lang, currency, initialTab = "b
               </div>
               <div>
                 <Label className="text-xs text-muted-foreground mb-1.5 block">{t("Type de contact", "نوع الاتصال")}</Label>
-                {editing ? (
+                {editing && isAdmin ? (
                   <Select value={String(form.contactType ?? "customer")} onValueChange={(v) => setForm((f) => ({ ...f, contactType: v }))}>
                     <SelectTrigger className="h-8 text-sm"><SelectValue /></SelectTrigger>
                     <SelectContent>
@@ -367,7 +373,7 @@ function CustomerSheet({ customerId, onClose, t, lang, currency, initialTab = "b
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <Label className="text-xs text-muted-foreground mb-1.5 block">{t("Classification", "التصنيف")}</Label>
-                {editing ? (
+                {editing && isAdmin ? (
                   <Select value={String(form.classificationId ?? "")} onValueChange={(v) => setForm((f) => ({ ...f, classificationId: v === "none" ? "" : v }))}>
                     <SelectTrigger className="h-8 text-sm"><SelectValue placeholder={t("Aucune", "بدون")} /></SelectTrigger>
                     <SelectContent>
@@ -386,7 +392,7 @@ function CustomerSheet({ customerId, onClose, t, lang, currency, initialTab = "b
               </div>
               <div>
                 <Label className="text-xs text-muted-foreground mb-1.5 block">{t("Grille de prix", "شريحة السعر")}</Label>
-                {editing ? (
+                {editing && isAdmin ? (
                   <Select value={String(form.priceTierId ?? "")} onValueChange={(v) => setForm((f) => ({ ...f, priceTierId: v === "none" ? "" : v }))}>
                     <SelectTrigger className="h-8 text-sm"><SelectValue placeholder={t("Standard", "قياسي")} /></SelectTrigger>
                     <SelectContent>
@@ -412,7 +418,7 @@ function CustomerSheet({ customerId, onClose, t, lang, currency, initialTab = "b
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <Label className="text-xs text-muted-foreground mb-1.5 block">{t("N° Compte", "رقم الحساب")}</Label>
-                {editing
+                {editing && isAdmin
                   ? <Input value={String(form.accountNumber ?? "")} onChange={(e) => setForm((f) => ({ ...f, accountNumber: e.target.value }))} className="h-8 text-sm font-mono" />
                   : <p className="text-sm py-1 font-mono">{String(profile.accountNumber ?? "") || "—"}</p>}
               </div>
@@ -424,20 +430,20 @@ function CustomerSheet({ customerId, onClose, t, lang, currency, initialTab = "b
               </div>
               <div>
                 <Label className="text-xs text-muted-foreground mb-1.5 block">{t("Plafond crédit", "سقف الائتمان")} ({currency})</Label>
-                {editing
+                {editing && isAdmin
                   ? <Input type="number" value={String(form.creditLimit ?? "")} onChange={(e) => setForm((f) => ({ ...f, creditLimit: e.target.value }))} className="h-8 text-sm" placeholder="0.00" />
                   : <p className="text-sm py-1">{profile.creditLimit != null ? `${Number(profile.creditLimit).toFixed(2)} ${currency}` : "—"}</p>}
               </div>
               <div>
                 <Label className="text-xs text-muted-foreground mb-1.5 block">{t("Alerte solde min.", "تنبيه الرصيد")} ({currency})</Label>
-                {editing
+                {editing && isAdmin
                   ? <Input type="number" value={String(form.minBalanceAlert ?? "")} onChange={(e) => setForm((f) => ({ ...f, minBalanceAlert: e.target.value }))} className="h-8 text-sm" placeholder="0.00" />
                   : <p className="text-sm py-1">{profile.minBalanceAlert != null ? `${Number(profile.minBalanceAlert).toFixed(2)} ${currency}` : "—"}</p>}
               </div>
             </div>
             <div className="flex items-center gap-3">
               <Label className="text-sm">{t("Devise étrangère", "عملة أجنبية")}</Label>
-              {editing
+              {editing && isAdmin
                 ? <Switch checked={Boolean(form.foreignCurrency)} onCheckedChange={(v) => setForm((f) => ({ ...f, foreignCurrency: v }))} />
                 : <Badge variant="outline" className="text-xs">{Boolean(profile.foreignCurrency) ? t("Oui", "نعم") : t("Non", "لا")}</Badge>}
             </div>
@@ -485,7 +491,7 @@ function CustomerSheet({ customerId, onClose, t, lang, currency, initialTab = "b
                     <Label className="text-xs text-muted-foreground mb-1.5 block">
                       {t(labels[field][0], labels[field][1])}
                     </Label>
-                    {editing
+                    {editing && isAdmin
                       ? <Input value={String(form[field] ?? "")} onChange={(e) => setForm((f) => ({ ...f, [field]: e.target.value }))} className="h-8 text-sm font-mono" placeholder={field.toUpperCase()} />
                       : <p className="text-sm py-1 font-mono">{String(profile[field] ?? "") || "—"}</p>}
                   </div>
@@ -2211,6 +2217,7 @@ export default function Customers() {
               t={t} lang={lang} currency={currency}
               initialTab={selectedTab}
               initialEditing={selectedEditing}
+              isAdmin={isAdmin}
             />
           )}
         </SheetContent>

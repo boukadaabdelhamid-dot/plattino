@@ -2672,7 +2672,7 @@ router.post("/erp/customers", authenticate, requireStaff, requireStore, requireP
   }
 });
 
-router.get("/erp/customers/:id", authenticate, requireAdmin, requireStore, async (req: AuthRequest, res) => {
+router.get("/erp/customers/:id", authenticate, requireStaff, requireStore, requirePermission("customers", "edit"), async (req: AuthRequest, res) => {
   try {
     const storeId = req.currentStoreId!;
     const userId = pid(req, "id");
@@ -2739,10 +2739,11 @@ router.get("/erp/customers/:id", authenticate, requireAdmin, requireStore, async
   } catch (err) { req.log.error(err); res.status(500).json({ error: "Internal server error" }); }
 });
 
-router.put("/erp/customers/:id", authenticate, requireAdmin, requireStore, async (req: AuthRequest, res) => {
+router.put("/erp/customers/:id", authenticate, requireStaff, requireStore, requirePermission("customers", "edit"), async (req: AuthRequest, res) => {
   try {
     const storeId = req.currentStoreId!;
     const userId = pid(req, "id");
+    const admin = isAdmin(req);
     const {
       name, phone, address, city,
       contactType, wilaya, commune, gps,
@@ -2770,42 +2771,50 @@ router.put("/erp/customers/:id", authenticate, requireAdmin, requireStore, async
     if (phone !== undefined) userUpdate.phone = phone;
     if (address !== undefined) userUpdate.address = address;
     if (city !== undefined) userUpdate.city = city;
-    if (password !== undefined && String(password).length >= 6) {
+    // password reset is admin-only
+    if (admin && password !== undefined && String(password).length >= 6) {
       userUpdate.passwordHash = await bcrypt.hash(String(password), 10);
     }
-    // Build partial update: only fields explicitly sent in the request body are updated
+    // Build partial update: only fields explicitly sent in the request body are updated.
+    // Admin-only fields (classificationId, priceTierId, creditLimit, minBalanceAlert,
+    // accountNumber, foreignCurrency, rc, nif, ai, nis, contactType) are silently
+    // ignored for non-admin staff — they can only update basic contact info.
     const updateSet: Record<string, unknown> = { updatedAt: new Date() };
-    if (contactType !== undefined) updateSet.contactType = contactType;
+    if (admin && contactType !== undefined) updateSet.contactType = contactType;
     if (wilaya !== undefined) updateSet.wilaya = wilaya ?? null;
     if (commune !== undefined) updateSet.commune = commune ?? null;
     if (gps !== undefined) updateSet.gps = gps ?? null;
-    if (classificationId !== undefined) updateSet.classificationId = classificationId ?? null;
-    if (priceTierId !== undefined) updateSet.priceTierId = priceTierId ?? null;
-    if (accountNumber !== undefined) updateSet.accountNumber = accountNumber ?? null;
-    if (creditLimit !== undefined) updateSet.creditLimit = creditLimit != null ? String(creditLimit) : null;
-    if (minBalanceAlert !== undefined) updateSet.minBalanceAlert = minBalanceAlert != null ? String(minBalanceAlert) : null;
+    if (admin && classificationId !== undefined) updateSet.classificationId = classificationId ?? null;
+    if (admin && priceTierId !== undefined) updateSet.priceTierId = priceTierId ?? null;
+    if (admin && accountNumber !== undefined) updateSet.accountNumber = accountNumber ?? null;
+    if (admin && creditLimit !== undefined) updateSet.creditLimit = creditLimit != null ? String(creditLimit) : null;
+    if (admin && minBalanceAlert !== undefined) updateSet.minBalanceAlert = minBalanceAlert != null ? String(minBalanceAlert) : null;
     // currentBalance is intentionally NOT in updateSet (see note at the top of the
     // handler) — it is never mass-assignable on a profile edit.
-    if (foreignCurrency !== undefined) updateSet.foreignCurrency = foreignCurrency;
-    if (rc !== undefined) updateSet.rc = rc ?? null;
-    if (nif !== undefined) updateSet.nif = nif ?? null;
-    if (ai !== undefined) updateSet.ai = ai ?? null;
-    if (nis !== undefined) updateSet.nis = nis ?? null;
+    if (admin && foreignCurrency !== undefined) updateSet.foreignCurrency = foreignCurrency;
+    if (admin && rc !== undefined) updateSet.rc = rc ?? null;
+    if (admin && nif !== undefined) updateSet.nif = nif ?? null;
+    if (admin && ai !== undefined) updateSet.ai = ai ?? null;
+    if (admin && nis !== undefined) updateSet.nis = nis ?? null;
     // Full values for INSERT (new profile rows get defaults for omitted fields).
     // currentBalance always starts at "0" here — a newly-created cross-store profile's
     // balance is then unified with any sibling store below (never from request input).
     const insertValues = {
       userId,
       storeId,
-      contactType: (contactType as "customer" | "customer_supplier") ?? "customer",
+      contactType: (admin ? (contactType as "customer" | "customer_supplier") : undefined) ?? "customer",
       wilaya: wilaya ?? null, commune: commune ?? null, gps: gps ?? null,
-      classificationId: classificationId ?? null, priceTierId: priceTierId ?? null,
-      accountNumber: accountNumber ?? null,
-      creditLimit: creditLimit != null ? String(creditLimit) : null,
-      minBalanceAlert: minBalanceAlert != null ? String(minBalanceAlert) : null,
+      classificationId: admin ? (classificationId ?? null) : null,
+      priceTierId: admin ? (priceTierId ?? null) : null,
+      accountNumber: admin ? (accountNumber ?? null) : null,
+      creditLimit: admin && creditLimit != null ? String(creditLimit) : null,
+      minBalanceAlert: admin && minBalanceAlert != null ? String(minBalanceAlert) : null,
       currentBalance: "0",
-      foreignCurrency: foreignCurrency ?? false,
-      rc: rc ?? null, nif: nif ?? null, ai: ai ?? null, nis: nis ?? null,
+      foreignCurrency: admin ? (foreignCurrency ?? false) : false,
+      rc: admin ? (rc ?? null) : null,
+      nif: admin ? (nif ?? null) : null,
+      ai: admin ? (ai ?? null) : null,
+      nis: admin ? (nis ?? null) : null,
     };
     // Everything — user fields, profile upsert, and unified contact maintenance — runs in
     // ONE transaction so the visible customer edit can never commit while the unified

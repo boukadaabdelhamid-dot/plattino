@@ -37,12 +37,6 @@ export function ClientPickerButton({
           </DialogHeader>
           <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder={t("Filtre", "بحث")} className="h-10" autoFocus />
           <div className="max-h-80 overflow-y-auto border rounded">
-            <button type="button"
-              className="w-full text-left px-3 py-2 hover:bg-slate-50 text-sm border-b"
-              onClick={() => { onPick(null); setOpen(false); }}>
-              <span className="font-semibold">DIVERS COMPTOIR</span>
-              <span className="text-xs text-muted-foreground block">{t("Client par défaut", "عميل افتراضي")}</span>
-            </button>
             {filtered.map((c) => {
               const bal = Number(c.current_balance ?? 0);
               const balColor = bal > 0 ? "text-red-600" : bal < 0 ? "text-emerald-600" : "text-muted-foreground";

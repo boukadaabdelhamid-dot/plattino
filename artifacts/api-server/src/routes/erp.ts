@@ -4255,7 +4255,7 @@ router.get("/erp/sale-orders", authenticate, requireStaff, requireStore, require
     const statusClause = status ? `AND o.status = '${status.replace(/'/g, "''")}'` : "";
     const dateFromClause = dateFrom ? `AND o.created_at >= '${dateFrom.replace(/'/g, "''")}'::date` : "";
     const dateToClause = dateTo ? `AND o.created_at < ('${dateTo.replace(/'/g, "''")}'::date + INTERVAL '1 day')` : "";
-    const orderSourceClause = orderSource && ["bon", "pos"].includes(orderSource) ? `AND o.order_source = '${orderSource}'` : "";
+    const orderSourceClause = orderSource && ["bon", "pos", "online"].includes(orderSource) ? `AND o.order_source = '${orderSource}'` : "";
     const pmClause = pmFilter && ["comptant", "a_terme"].includes(pmFilter) ? `AND o.payment_method = '${pmFilter}'` : "";
 
     const result = await db.execute(sql`
@@ -4278,7 +4278,7 @@ router.get("/erp/sale-orders", authenticate, requireStaff, requireStore, require
       FROM orders o
       LEFT JOIN order_items oi ON oi.order_id = o.id
       WHERE o.store_id = ${storeId}
-        AND o.order_source IN ('bon', 'pos')
+        AND o.order_source IN ('bon', 'pos', 'online')
         ${sql.raw(searchClause)}
         ${sql.raw(statusClause)}
         ${sql.raw(dateFromClause)}

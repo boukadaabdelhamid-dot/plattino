@@ -274,10 +274,13 @@ async function handleCreateOrder(req: AuthRequest, res: import("express").Respon
        // can credit their virtual caisse and audit who collected the cash.
       const sellerUserId = (req.user && (req.user.role === "admin" || req.user.role === "employee"))
         ? req.user.id : null;
+      // online = storefront order (no seller); pos = staff/POS sale
+      const derivedOrderSource = sellerUserId === null ? "online" : "pos";
       const [order] = await tx.insert(schema.ordersTable).values({
         storeId,
         userId: isPosSale ? posCustomerId : (req.user?.id ?? null),
         sellerUserId,
+        orderSource: derivedOrderSource,
         customerName, customerPhone, customerAddress,
         totalAmount: totalAmount.toFixed(2),
         discountAmount: discountAmount.toFixed(2),

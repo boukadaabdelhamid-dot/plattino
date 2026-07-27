@@ -29,7 +29,7 @@ type SaleOrderStatus = "pending" | "processing" | "shipped" | "delivered" | "can
 type SaleOrder = {
   id: number;
   status: SaleOrderStatus;
-  order_source: "bon" | "pos";
+  order_source: "bon" | "pos" | "online";
   customer_name: string;
   customer_phone: string;
   user_id: number | null;
@@ -340,6 +340,7 @@ export default function SaleOrders() {
             <option value="">{t("Tous les types", "جميع الأنواع")}</option>
             <option value="bon">{t("Bon de vente", "بون بيع")}</option>
             <option value="pos">{t("Vente rapide", "بيع سريع")}</option>
+            <option value="online">{t("En ligne", "إنترنت")}</option>
           </select>
           <select
             value={paymentMethodFilter}
@@ -403,29 +404,32 @@ export default function SaleOrders() {
               ))
             )}
             {!isLoading && orders.map((order) => {
-              const isPos = order.order_source === "pos";
+              const isPos    = order.order_source === "pos";
+              const isOnline = order.order_source === "online";
               const isDraft = order.status === "draft";
               const isDelivered = order.status === "delivered";
               const isCancelled = order.status === "cancelled";
               const isPending = order.status === "pending" || order.status === "processing";
-              // edit/delete for bons (not POS), OR for any draft (POS drafts can also be modified);
-              // clôture available for draft, pending or processing
-              const canEdit = (isDraft || !isPos) && !isDelivered && !isCancelled;
-              const canCloture = (isDraft || isPending) && !isCancelled;
+              // online orders are read-only in the ERP (managed from the Web Store)
+              const canEdit    = !isOnline && (isDraft || !isPos) && !isDelivered && !isCancelled;
+              const canCloture = !isOnline && (isDraft || isPending) && !isCancelled;
               const benefice = parseFloat(order.benefice ?? "0");
-              const prefix = isPos ? "VR" : "BV";
+              const prefix = isOnline ? "WS" : isPos ? "VR" : "BV";
+
+              const typeBadge = isOnline
+                ? { cls: "bg-violet-50 text-violet-700 border-violet-200", label: t("En ligne", "إنترنت") }
+                : isPos
+                  ? { cls: "bg-blue-50 text-blue-700 border-blue-200", label: t("Vente rapide", "بيع سريع") }
+                  : { cls: "bg-slate-50 text-slate-600 border-slate-200", label: t("Bon de vente", "بون بيع") };
+
               return (
                 <TableRow key={order.id} className="hover:bg-muted/30">
                   <TableCell className="font-medium text-[#1B3057] text-sm">
                     {prefix}-{String(order.id).padStart(5, "0")}
                   </TableCell>
                   <TableCell>
-                    <span className={`inline-flex items-center text-xs font-medium px-2 py-0.5 rounded-full border ${
-                      isPos
-                        ? "bg-blue-50 text-blue-700 border-blue-200"
-                        : "bg-slate-50 text-slate-600 border-slate-200"
-                    }`}>
-                      {isPos ? t("Vente rapide", "بيع سريع") : t("Bon de vente", "بون بيع")}
+                    <span className={`inline-flex items-center text-xs font-medium px-2 py-0.5 rounded-full border ${typeBadge.cls}`}>
+                      {typeBadge.label}
                     </span>
                   </TableCell>
                   <TableCell className="text-sm">

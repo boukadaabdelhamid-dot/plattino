@@ -2650,7 +2650,11 @@ router.post("/erp/customers", authenticate, requireStaff, requireStore, requireP
         if (balSibling.contactId) {
           await linkContactsGlobally(tx, balSibling.contactId, contactId);
           await recomputeContactBalance(tx, contactId);
-          await syncLinkedContactBalances(tx, contactId);
+          // Sync FROM the sibling (the authoritative source), not FROM the newly
+          // created contact. The new contact's supplier was just inserted at 0,
+          // so using it as the source would push 0 onto Store A's real supplier
+          // balance for customer_supplier contacts.
+          await syncLinkedContactBalances(tx, balSibling.contactId);
         }
       } else if (currentBalance != null) {
         // No sibling to adopt from — honor the requested opening balance through
@@ -3189,7 +3193,9 @@ router.post("/erp/customers/:id/import-to-stores", authenticate, requireStaff, r
             }
 
             await recomputeContactBalance(tx, nc.id);
-            await syncLinkedContactBalances(tx, nc.id);
+            // Do NOT call syncLinkedContactBalances here: nc has balance 0 and would
+            // clobber the source store's real balance before the authoritative
+            // syncLinkedContactBalances(srcContact) runs after the loop.
             results.push({ targetStoreId, status: "linked_existing", customerId: userId });
             continue;
           }
@@ -3213,7 +3219,8 @@ router.post("/erp/customers/:id/import-to-stores", authenticate, requireStaff, r
           if (srcContact && linkedContactId != null) {
             await linkContactsGlobally(tx, srcContact.id, linkedContactId);
             await recomputeContactBalance(tx, linkedContactId);
-            await syncLinkedContactBalances(tx, linkedContactId);
+            // Do NOT call syncLinkedContactBalances here: if target balance ≠ source it
+            // would clobber the source before the authoritative sync runs after the loop.
           }
 
           results.push({ targetStoreId, status: "already_linked", customerId: userId });
@@ -3258,18 +3265,26 @@ router.post("/erp/customers/:id/import-to-stores", authenticate, requireStaff, r
 
         if (targetContactId !== undefined) {
           await recomputeContactBalance(tx, targetContactId);
-          await syncLinkedContactBalances(tx, targetContactId);
+          // Do NOT call syncLinkedContactBalances here: the new contact has balance 0
+          // and would clobber the source store's real balance. The authoritative sync
+          // runs from srcContact after the loop below.
         }
         results.push({ targetStoreId, status: "created", customerId: userId });
       }
-      // Propagate the unified balance from the source store to every newly linked
-      // store so a linked customer shows the same balance everywhere immediately
-      // (not only after their next operation).
-      // The supplier role created above for a customer_supplier now shares the SAME
-      // globalContactId as the customer role (linked above), so its supplier-side
-      // balance IS cross-store-linked by this flow too — this closes the gap where
-      // customer-first import used to leave the supplier side unlinked.
+      // Propagate the unified balance from the source store to every linked store.
+      // This is the authoritative sync — it reads Store A's profile balance and
+      // pushes it to every sibling profile, then recomputes each sibling contact's
+      // unified balance. It runs AFTER the loop so that none of the mid-loop
+      // recomputeContactBalance calls (which ran with balance 0) can corrupt it.
       await syncLinkedCustomerBalances(tx, userId, storeId);
+      // Also sync via the globalContactId path so that:
+      //   (a) the supplier-side balance (not touched by syncLinkedCustomerBalances)
+      //       is propagated for customer_supplier contacts, and
+      //   (b) contacts.current_balance in every sibling is recomputed from the
+      //       now-correct role balances.
+      // Reading from srcContact (the authoritative source) ensures we never push
+      // a zero or stale value outward.
+      if (srcContact) await syncLinkedContactBalances(tx, srcContact.id);
     });
 
     res.json({ results });

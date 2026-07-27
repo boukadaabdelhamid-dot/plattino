@@ -35,6 +35,19 @@ and eyeball groups with >1 nonzero balance before the first prod run.
 **How it stays safe on re-run:** gate on divergent groups
 (`COUNT(*)>1 AND COUNT(DISTINCT current_balance)>1`) → no-op once unified.
 
+## Critical rule: never call syncLinkedContactBalances(tx, newContactId) during import/create
+Calling `syncLinkedContactBalances` with a **newly created** contact as the source is
+always wrong — the new contact has zero balances and will clobber the real balance in
+every sibling store. Always sync FROM the existing authoritative sibling contact:
+- `import-to-stores` loop: remove mid-loop `syncLinkedContactBalances`; after the
+  loop call `syncLinkedCustomerBalances(tx, userId, storeId)` (legacy path) then
+  `syncLinkedContactBalances(tx, srcContact.id)` (contact path, covers supplier side).
+- Customer `POST /erp/customers` with a sibling: call `syncLinkedContactBalances(tx,
+  balSibling.contactId)` not `syncLinkedContactBalances(tx, newContactId)`.
+**Why:** `syncLinkedCustomerBalances` pushes cp balance and recomputes contacts but
+misses the supplier-side balance for customer_supplier. The contact-path sync covers
+both roles. Reading from the new (zero) contact overwrites the sibling's real value.
+
 ## Known limitation
 Customer import-to-stores creates a supplier row for a customer_supplier WITHOUT
 `globalSupplierId`, so the supplier side is not cross-store-linked by that flow —

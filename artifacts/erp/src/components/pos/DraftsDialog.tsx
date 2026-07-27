@@ -31,7 +31,7 @@ export function DraftsDialog({
   open: boolean;
   onOpenChange: (o: boolean) => void;
   apiBase: string;
-  onLoad: (items: DraftItem[], draftId: number) => void;
+  onLoad: (items: DraftItem[], draftId: number, customerName: string) => void;
 }) {
   const { lang } = useLang();
   const t = (fr: string, ar: string) => lang === "ar" ? ar : fr;
@@ -81,7 +81,7 @@ export function DraftsDialog({
   function handleLoad(draft: Draft) {
     // Pass draftId so Pos.tsx can delete it only after the sale is confirmed.
     // Do NOT delete the draft here — if the page closes before payment, it must survive.
-    onLoad(draft.items, draft.id);
+    onLoad(draft.items, draft.id, draft.customerName);
     onOpenChange(false);
   }
 

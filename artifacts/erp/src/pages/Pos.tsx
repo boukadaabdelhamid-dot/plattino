@@ -104,6 +104,8 @@ export default function Pos() {
   const [draftsOpen, setDraftsOpen] = useState(false);
   // ID of the draft currently loaded into the cart. Deleted only after payment succeeds.
   const [activeDraftId, setActiveDraftId] = useState<number | null>(null);
+  // Saved customer name from a loaded draft (used as fallback when no client is selected).
+  const [draftCustomerName, setDraftCustomerName] = useState<string | null>(null);
 
   const codeRef = useRef<HTMLInputElement>(null);
   const editLineRef = useRef(editLine);
@@ -181,7 +183,7 @@ export default function Pos() {
   function resetSale() {
     setLines([]); setVersement(0); setClient(null);
     setEmptyState(false); setCode(""); setQtyStr("1");
-    setActiveDraftId(null);
+    setActiveDraftId(null); setDraftCustomerName(null);
   }
 
   /** Delete the active draft from the server (called only after payment succeeds). */
@@ -203,18 +205,30 @@ export default function Pos() {
       return;
     }
     const token = localStorage.getItem("midanic_token");
+    // Use the explicitly selected client name, fall back to the name saved with the
+    // loaded draft, then fall back to the generic placeholder.
+    const customerName = client?.name ?? draftCustomerName ?? "BON EN ATTENTE";
+    const customerPhone = (client as unknown as { phone?: string } | null)?.phone ?? "0000000000";
+    const body = JSON.stringify({
+      customerName,
+      customerPhone,
+      lines: lines.map((l) => ({ productId: l.productId, qty: l.qty, pu: l.pu })),
+    });
+
+    // If an existing draft is loaded, update it (PUT) instead of creating a new one (POST).
+    const url = activeDraftId
+      ? `${apiBase}/api/erp/pos/drafts/${activeDraftId}`
+      : `${apiBase}/api/erp/pos/drafts`;
+    const method = activeDraftId ? "PUT" : "POST";
+
     try {
-      const r = await fetch(`${apiBase}/api/erp/pos/drafts`, {
-        method: "POST",
+      const r = await fetch(url, {
+        method,
         headers: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${token ?? ""}`,
         },
-        body: JSON.stringify({
-          customerName: client?.name ?? "BON EN ATTENTE",
-          customerPhone: (client as unknown as { phone?: string } | null)?.phone ?? "0000000000",
-          lines: lines.map((l) => ({ productId: l.productId, qty: l.qty, pu: l.pu })),
-        }),
+        body,
       });
       if (!r.ok) { alert(t("Erreur lors de la sauvegarde du bon.", "خطأ في حفظ الفاتورة.")); return; }
       resetSale();
@@ -223,7 +237,7 @@ export default function Pos() {
     }
   }
 
-  function handleLoadDraft(items: { productId: number; quantity: number; unitPrice: string; nameEn?: string | null; nameAr?: string | null }[], draftId: number) {
+  function handleLoadDraft(items: { productId: number; quantity: number; unitPrice: string; nameEn?: string | null; nameAr?: string | null }[], draftId: number, customerName: string) {
     const newLines: CartLine[] = items.map((item) => ({
       productId: item.productId,
       designation: (item.nameEn || item.nameAr || `Produit #${item.productId}`).toUpperCase(),
@@ -234,6 +248,7 @@ export default function Pos() {
     }));
     setLines(newLines);
     setActiveDraftId(draftId);
+    setDraftCustomerName(customerName);
     setEmptyState(false);
     setCode("");
   }

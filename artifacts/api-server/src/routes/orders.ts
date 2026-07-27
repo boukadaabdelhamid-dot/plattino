@@ -1005,6 +1005,59 @@ router.delete("/erp/pos/drafts/:id", authenticate, requireStaff, requireStore, r
   }
 });
 
+// PUT /erp/pos/drafts/:id — replace items of an existing draft (update in-place)
+router.put("/erp/pos/drafts/:id", authenticate, requireStaff, requireStore, requirePermission("orders", "view"), async (req: AuthRequest, res) => {
+  try {
+    const storeId = req.currentStoreId!;
+    const draftId = pid(req, "id");
+    const { customerName, customerPhone, lines } = req.body as {
+      customerName?: string;
+      customerPhone?: string;
+      lines: { productId: number; qty: number; pu: number }[];
+    };
+    if (!Array.isArray(lines) || lines.length === 0) {
+      res.status(400).json({ error: "lines is required and must not be empty" });
+      return;
+    }
+    const [draft] = await db.select({ id: schema.ordersTable.id, status: schema.ordersTable.status })
+      .from(schema.ordersTable)
+      .where(and(eq(schema.ordersTable.id, draftId), eq(schema.ordersTable.storeId, storeId)))
+      .limit(1);
+    if (!draft) { res.status(404).json({ error: "Draft not found" }); return; }
+    if (draft.status !== "draft") { res.status(400).json({ error: "Order is not a draft" }); return; }
+
+    const totalAmount = lines.reduce((s, l) => s + (l.qty ?? 0) * (l.pu ?? 0), 0);
+
+    await db.transaction(async (tx) => {
+      // Delete existing items then re-insert — atomic replace.
+      await tx.delete(schema.orderItemsTable).where(eq(schema.orderItemsTable.orderId, draftId));
+      await tx.update(schema.ordersTable)
+        .set({
+          customerName: customerName || "BON EN ATTENTE",
+          customerPhone: customerPhone || "0000000000",
+          totalAmount: totalAmount.toFixed(2),
+          updatedAt: new Date(),
+        })
+        .where(eq(schema.ordersTable.id, draftId));
+      for (const line of lines) {
+        await tx.insert(schema.orderItemsTable).values({
+          orderId: draftId,
+          productId: line.productId,
+          quantity: line.qty,
+          unitPrice: (line.pu ?? 0).toFixed(2),
+        });
+      }
+    });
+
+    const [updated] = await db.select().from(schema.ordersTable)
+      .where(eq(schema.ordersTable.id, draftId)).limit(1);
+    res.json(updated);
+  } catch (err) {
+    req.log.error(err);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
 // POST /erp/pos/drafts/:id/confirm — convert draft → real order
 // Runs the full atomic pipeline: stock check, deduction, inventory movements,
 // accounting transaction, caisse credit, and WebSocket broadcasts.

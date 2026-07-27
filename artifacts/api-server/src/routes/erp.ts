@@ -2544,6 +2544,42 @@ router.get("/erp/customers", authenticate, requireStaff, requireStore, requirePe
   } catch (err) { req.log.error(err); res.status(500).json({ error: "Internal server error" }); }
 });
 
+// Returns the current store's configured default comptoir customer directly by ID,
+// independent of the paginated/total-spent-sorted list above. The POS relies on this
+// as a guaranteed fallback: a low-activity default customer could otherwise rank
+// outside the general list's page/limit and silently disappear from it.
+router.get("/erp/customers/default-comptoir", authenticate, requireStaff, requireStore, requirePermission("customers", "view"), async (req: AuthRequest, res) => {
+  try {
+    const storeId = req.currentStoreId!;
+    const [storeRow] = await db.select({ defaultComptoirCustomerId: schema.storesTable.defaultComptoirCustomerId })
+      .from(schema.storesTable).where(eq(schema.storesTable.id, storeId)).limit(1);
+    const customerId = storeRow?.defaultComptoirCustomerId ?? null;
+    if (customerId == null) { res.json({ customer: null }); return; }
+    const result = await db.execute(sql`
+      SELECT u.id, u.name, u.email, u.phone, u.address, u.city, u.created_at,
+        cp.contact_id, cp.wilaya, cp.contact_type, cp.rc, cp.nif, cp.ai, cp.nis,
+        cp.account_number, cp.credit_limit,
+        COALESCE(CASE WHEN cp.contact_type = 'customer_supplier' AND cp.contact_id IS NOT NULL THEN (SELECT current_balance FROM contacts WHERE id = cp.contact_id LIMIT 1) ELSE NULL END, cp.current_balance, 0) as current_balance,
+        cp.min_balance_alert, cp.foreign_currency,
+        CASE WHEN cc.id IS NOT NULL THEN json_build_object(
+          'id', cc.id, 'labelFr', cc.label_fr, 'labelAr', cc.label_ar,
+          'color', cc.color, 'sortOrder', cc.sort_order
+        ) ELSE NULL END as classification,
+        CASE WHEN pt.id IS NOT NULL THEN json_build_object(
+          'id', pt.id, 'labelFr', pt.label_fr, 'labelAr', pt.label_ar,
+          'code', pt.code, 'sortOrder', pt.sort_order
+        ) ELSE NULL END as "priceTier"
+      FROM users u
+      LEFT JOIN customer_profiles cp ON cp.user_id = u.id AND cp.store_id = ${storeId}
+      LEFT JOIN customer_classifications cc ON cc.id = cp.classification_id
+      LEFT JOIN price_tiers pt ON pt.id = cp.price_tier_id
+      WHERE u.id = ${customerId} AND u.role = 'customer'
+      LIMIT 1
+    `);
+    res.json({ customer: result.rows[0] ?? null });
+  } catch (err) { req.log.error(err); res.status(500).json({ error: "Internal server error" }); }
+});
+
 router.post("/erp/customers", authenticate, requireStaff, requireStore, requirePermission("customers", "create"), async (req: AuthRequest, res) => {
   try {
     const storeId = req.currentStoreId!;

@@ -110,6 +110,24 @@ export default function Pos() {
   }, [extraBarcodesData]);
   const customers: CustomerSummary[] = (_custRes?.data ?? []) as CustomerSummary[];
 
+  // The general customer list above is paginated/sorted by total spent, so a
+  // low-activity default comptoir customer can fall outside it. Fetch the
+  // store's configured default directly by ID as a guaranteed fallback.
+  const { data: defaultComptoirFetched } = useQuery<CustomerSummary | null>({
+    queryKey: ["default-comptoir-customer", store?.defaultComptoirCustomerId ?? null],
+    queryFn: async () => {
+      const token = localStorage.getItem("midanic_token");
+      const r = await fetch(`${apiBase}/api/erp/customers/default-comptoir`, {
+        headers: { Authorization: `Bearer ${token ?? ""}` },
+      });
+      if (!r.ok) return null;
+      const body = (await r.json()) as { customer: CustomerSummary | null };
+      return body.customer ?? null;
+    },
+    enabled: !!store?.defaultComptoirCustomerId,
+    staleTime: 60_000,
+  });
+
   // Restore POS state from localStorage on first mount (lazy initializer runs once).
   const [_restoredState] = useState<PersistedPosState | null>(() => readPersistedPosState());
 
@@ -173,8 +191,8 @@ export default function Pos() {
   // sale must be linked to a real customer: use the manually selected client,
   // otherwise fall back to this default. If neither exists the sale is blocked.
   const defaultComptoirCustomer = useMemo(
-    () => customers.find((c) => c.id === store?.defaultComptoirCustomerId) ?? null,
-    [customers, store?.defaultComptoirCustomerId],
+    () => customers.find((c) => c.id === store?.defaultComptoirCustomerId) ?? defaultComptoirFetched ?? null,
+    [customers, store?.defaultComptoirCustomerId, defaultComptoirFetched],
   );
   const effectiveClient = client ?? defaultComptoirCustomer;
 

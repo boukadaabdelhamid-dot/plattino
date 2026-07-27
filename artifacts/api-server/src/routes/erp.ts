@@ -4318,7 +4318,7 @@ router.get("/erp/sale-orders/:id", authenticate, requireStaff, requireStore, req
       FROM orders o
       LEFT JOIN order_items oi ON oi.order_id = o.id
       LEFT JOIN products p ON p.id = oi.product_id
-      WHERE o.id = ${id} AND o.store_id = ${storeId} AND o.order_source IN ('bon', 'pos')
+      WHERE o.id = ${id} AND o.store_id = ${storeId} AND o.order_source IN ('bon', 'pos', 'online')
       GROUP BY o.id
     `);
     if (!result.rows[0]) { res.status(404).json({ error: "Not found" }); return; }
@@ -4461,7 +4461,7 @@ router.put("/erp/sale-orders/:id/cloture", authenticate, requireStaff, requireSt
 
     const existRes = await db.execute(sql`
       SELECT id, status, payment_method, total_amount, user_id, customer_name, order_source
-      FROM orders WHERE id = ${id} AND store_id = ${storeId} AND order_source IN ('bon', 'pos') LIMIT 1
+      FROM orders WHERE id = ${id} AND store_id = ${storeId} AND order_source IN ('bon', 'pos', 'online') LIMIT 1
     `);
     const existing = existRes.rows[0] as {
       id: number; status: string; payment_method: string | null;
@@ -4479,9 +4479,10 @@ router.put("/erp/sale-orders/:id/cloture", authenticate, requireStaff, requireSt
     const customerName = existing.customer_name;
     const today = new Date().toISOString().split("T")[0];
     const isPos = existing.order_source === "pos";
-    const prefix = isPos ? "VR" : "BV";
+    const isOnline = existing.order_source === "online";
+    const prefix = isOnline ? "WS" : isPos ? "VR" : "BV";
     const refCode = `${prefix}-${String(id).padStart(6, "0")}`;
-    const sourceLabel = isPos ? "Vente rapide" : "Bon de vente";
+    const sourceLabel = isOnline ? "Commande en ligne" : isPos ? "Vente rapide" : "Bon de vente";
 
     const itemsRes = await db.execute(sql`SELECT product_id, quantity FROM order_items WHERE order_id = ${id}`);
     const lineItems = itemsRes.rows as Array<{ product_id: number; quantity: number }>;
@@ -4490,8 +4491,15 @@ router.put("/erp/sale-orders/:id/cloture", authenticate, requireStaff, requireSt
 
     // Atomic: mark delivered + deduct stock + accounting + payment in one transaction
     await db.transaction(async (tx) => {
-      // 1. Mark delivered
-      await tx.execute(sql`UPDATE orders SET status = 'delivered', updated_at = NOW() WHERE id = ${id}`);
+      // 1. Mark delivered — conditional on allowed statuses to prevent race with a concurrent cancel/cloture
+      const gateRes = await tx.execute(sql`
+        UPDATE orders SET status = 'delivered', updated_at = NOW()
+        WHERE id = ${id} AND status IN ('draft', 'pending', 'processing')
+        RETURNING id
+      `);
+      if (!gateRes.rows[0]) {
+        throw Object.assign(new Error("Seuls les bons en cours (draft/pending/processing) peuvent être clôturés"), { statusCode: 409 });
+      }
 
       // 2. Deduct stock
       for (const item of lineItems) {
@@ -4544,6 +4552,40 @@ router.put("/erp/sale-orders/:id/cloture", authenticate, requireStaff, requireSt
     }
 
     res.json({ id, status: "delivered", paymentMethod });
+  } catch (err) {
+    const e = err as { statusCode?: number; message?: string };
+    if (e.statusCode === 409) { res.status(409).json({ error: e.message }); return; }
+    req.log.error(err); res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// PUT /erp/sale-orders/:id/cancel
+// Cancels an online order that hasn't been confirmed yet. No stock changes needed
+// because stock is only deducted at cloture time.
+router.put("/erp/sale-orders/:id/cancel", authenticate, requireStaff, requireStore, requirePermission("orders", "edit"), async (req: AuthRequest, res) => {
+  try {
+    const storeId = req.currentStoreId!;
+    const id = pid(req, "id");
+
+    // First verify the order exists and is an online order (so we return 404 vs 409 correctly)
+    const existRes = await db.execute(sql`
+      SELECT id, status FROM orders WHERE id = ${id} AND store_id = ${storeId} AND order_source = 'online' LIMIT 1
+    `);
+    const existing = existRes.rows[0] as { id: number; status: string } | undefined;
+    if (!existing) { res.status(404).json({ error: "Not found" }); return; }
+
+    // Atomic conditional transition — status guard is part of the UPDATE to prevent races
+    const gateRes = await db.execute(sql`
+      UPDATE orders SET status = 'cancelled', updated_at = NOW()
+      WHERE id = ${id} AND store_id = ${storeId} AND order_source = 'online'
+        AND status IN ('draft', 'pending', 'processing')
+      RETURNING id
+    `);
+    if (!gateRes.rows[0]) {
+      res.status(409).json({ error: "Seules les commandes en ligne en cours (draft/pending/processing) peuvent être annulées" }); return;
+    }
+
+    res.json({ id, status: "cancelled" });
   } catch (err) { req.log.error(err); res.status(500).json({ error: "Internal server error" }); }
 });
 

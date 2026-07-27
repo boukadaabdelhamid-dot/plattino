@@ -15,7 +15,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import {
   Receipt, Plus, MoreHorizontal, Pencil, Eye, Lock, Trash2, Printer,
-  ChevronsUpDown, Check, User, TrendingUp, Search,
+  ChevronsUpDown, Check, User, TrendingUp, Search, CheckCircle, XCircle,
 } from "lucide-react";
 import { format } from "date-fns";
 import { ProductPickerDialog } from "@/components/pos/ProductPickerDialog";
@@ -24,7 +24,7 @@ import type { InvoiceData } from "@/components/InvoiceTemplate";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
-type SaleOrderStatus = "pending" | "processing" | "shipped" | "delivered" | "cancelled";
+type SaleOrderStatus = "draft" | "pending" | "processing" | "shipped" | "delivered" | "cancelled";
 
 type SaleOrder = {
   id: number;
@@ -152,6 +152,7 @@ export default function SaleOrders() {
   const [viewOpen, setViewOpen] = useState(false);
   const [viewingOrder, setViewingOrder] = useState<SaleOrderDetail | null>(null);
   const [clotureOrder, setClotureOrder] = useState<SaleOrder | null>(null);
+  const [cancelOrder, setCancelOrder] = useState<SaleOrder | null>(null);
   const [invoiceOrder, setInvoiceOrder] = useState<SaleOrderDetail | null>(null);
   const [invoiceOpen, setInvoiceOpen] = useState(false);
   const [showTva, setShowTva] = useState(false);
@@ -202,6 +203,12 @@ export default function SaleOrders() {
   const clotureMutation = useMutation({
     mutationFn: (id: number) => apiPut(`/erp/sale-orders/${id}/cloture`),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ["erp-sale-orders"] }); setClotureOrder(null); },
+    onError: (err: Error) => alert(`Erreur: ${err.message}`),
+  });
+
+  const cancelMutation = useMutation({
+    mutationFn: (id: number) => apiPut(`/erp/sale-orders/${id}/cancel`),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["erp-sale-orders"] }); setCancelOrder(null); },
     onError: (err: Error) => alert(`Erreur: ${err.message}`),
   });
 
@@ -410,9 +417,10 @@ export default function SaleOrders() {
               const isDelivered = order.status === "delivered";
               const isCancelled = order.status === "cancelled";
               const isPending = order.status === "pending" || order.status === "processing";
-              // online orders are read-only in the ERP (managed from the Web Store)
+              // online orders are read-only for editing; they can be confirmed or cancelled
               const canEdit    = !isOnline && (isDraft || !isPos) && !isDelivered && !isCancelled;
-              const canCloture = !isOnline && (isDraft || isPending) && !isCancelled;
+              const canCloture = (isDraft || isPending) && !isCancelled;
+              const canCancel  = isOnline && (isPending || isDraft) && !isCancelled;
               const benefice = parseFloat(order.benefice ?? "0");
               const prefix = isOnline ? "WS" : isPos ? "VR" : "BV";
 
@@ -478,7 +486,18 @@ export default function SaleOrders() {
                             onClick={() => setClotureOrder(order)}
                             className="text-emerald-700 focus:text-emerald-700"
                           >
-                            <Lock className="h-3.5 w-3.5 mr-2" /> {t("Clôturer", "إغلاق")}
+                            {isOnline
+                              ? <><CheckCircle className="h-3.5 w-3.5 mr-2" /> {t("Confirmer", "تأكيد")}</>
+                              : <><Lock className="h-3.5 w-3.5 mr-2" /> {t("Clôturer", "إغلاق")}</>
+                            }
+                          </DropdownMenuItem>
+                        )}
+                        {canCancel && (
+                          <DropdownMenuItem
+                            onClick={() => setCancelOrder(order)}
+                            className="text-red-600 focus:text-red-600"
+                          >
+                            <XCircle className="h-3.5 w-3.5 mr-2" /> {t("Annuler", "إلغاء الطلب")}
                           </DropdownMenuItem>
                         )}
                         <DropdownMenuItem onClick={() => openPrint(order)}>
@@ -606,13 +625,22 @@ export default function SaleOrders() {
         order={viewingOrder}
       />
 
-      {/* Clôture confirm dialog */}
+      {/* Clôture / Confirmer dialog */}
       <ClotureDialog
         open={!!clotureOrder}
         onOpenChange={(o) => { if (!o) setClotureOrder(null); }}
         order={clotureOrder}
         onConfirm={() => clotureOrder && clotureMutation.mutate(clotureOrder.id)}
         isPending={clotureMutation.isPending}
+      />
+
+      {/* Cancel online order dialog */}
+      <CancelOrderDialog
+        open={!!cancelOrder}
+        onOpenChange={(o) => { if (!o) setCancelOrder(null); }}
+        order={cancelOrder}
+        onConfirm={() => cancelOrder && cancelMutation.mutate(cancelOrder.id)}
+        isPending={cancelMutation.isPending}
       />
 
       {/* Invoice */}
@@ -1213,6 +1241,7 @@ function ClotureDialog({ open, onOpenChange, order, onConfirm, isPending }: {
   const t = (fr: string, ar: string) => lang === "ar" ? ar : fr;
   const currency = lang === "ar" ? "دج" : "DA";
 
+  const isOnline = order?.order_source === "online";
   const isComptant = !order || order.payment_method !== "a_terme";
   const amount = order ? parseFloat(order.total_amount).toFixed(2) : "0.00";
 
@@ -1225,16 +1254,28 @@ function ClotureDialog({ open, onOpenChange, order, onConfirm, isPending }: {
       <DialogContent className="max-w-sm">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
-            <Lock className="h-5 w-5 text-emerald-600" />
-            {t("Clôturer le bon", "إغلاق البون")}
+            {isOnline
+              ? <CheckCircle className="h-5 w-5 text-emerald-600" />
+              : <Lock className="h-5 w-5 text-emerald-600" />
+            }
+            {isOnline
+              ? t("Confirmer la commande en ligne", "تأكيد الطلب الإلكتروني")
+              : t("Clôturer le bon", "إغلاق البون")
+            }
           </DialogTitle>
         </DialogHeader>
         <div className="space-y-3 py-2">
           <p className="text-sm text-muted-foreground">
-            {t(
-              "Cette action va marquer le bon comme livré et déduire les quantités du stock.",
-              "سيتم تعليم البون كمُسلَّم وخصم الكميات من المخزون."
-            )}
+            {isOnline
+              ? t(
+                  "Cette action va confirmer la commande, déduire les quantités du stock et enregistrer le paiement.",
+                  "سيتم تأكيد الطلب وخصم الكميات من المخزون وتسجيل الدفعة."
+                )
+              : t(
+                  "Cette action va marquer le bon comme livré et déduire les quantités du stock.",
+                  "سيتم تعليم البون كمُسلَّم وخصم الكميات من المخزون."
+                )
+            }
           </p>
           <div className={`rounded-md border px-3 py-2 text-sm font-medium ${
             isComptant ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-amber-200 bg-amber-50 text-amber-700"
@@ -1254,7 +1295,65 @@ function ClotureDialog({ open, onOpenChange, order, onConfirm, isPending }: {
             disabled={isPending}
             className="bg-emerald-600 hover:bg-emerald-700 text-white"
           >
-            {isPending ? t("Clôture...", "جاري الإغلاق...") : t("Confirmer la clôture", "تأكيد الإغلاق")}
+            {isPending
+              ? t("En cours...", "جاري التنفيذ...")
+              : isOnline
+                ? t("Confirmer", "تأكيد الطلب")
+                : t("Confirmer la clôture", "تأكيد الإغلاق")
+            }
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ─── CancelOrderDialog ────────────────────────────────────────────────────────
+
+function CancelOrderDialog({ open, onOpenChange, order, onConfirm, isPending }: {
+  open: boolean;
+  onOpenChange: (o: boolean) => void;
+  order: SaleOrder | null;
+  onConfirm: () => void;
+  isPending: boolean;
+}) {
+  const { lang } = useLang();
+  const t = (fr: string, ar: string) => lang === "ar" ? ar : fr;
+  const ref = order ? `WS-${String(order.id).padStart(5, "0")}` : "";
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-sm">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2 text-red-700">
+            <XCircle className="h-5 w-5" />
+            {t("Annuler la commande", "إلغاء الطلب")}
+          </DialogTitle>
+        </DialogHeader>
+        <div className="space-y-3 py-2">
+          <p className="text-sm text-muted-foreground">
+            {t(
+              `Voulez-vous vraiment annuler la commande ${ref} ?`,
+              `هل تريد فعلاً إلغاء الطلب ${ref}؟`
+            )}
+          </p>
+          <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm font-medium text-red-700">
+            {t(
+              "La commande sera marquée comme annulée. Le stock ne sera pas modifié (aucun article n'avait été déduit).",
+              "سيتم تعليم الطلب كملغي. لن يتغير المخزون (لم يُخصم أي صنف بعد)."
+            )}
+          </div>
+        </div>
+        <DialogFooter className="gap-2">
+          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={isPending}>
+            {t("Retour", "رجوع")}
+          </Button>
+          <Button
+            onClick={onConfirm}
+            disabled={isPending}
+            variant="destructive"
+          >
+            {isPending ? t("Annulation...", "جاري الإلغاء...") : t("Confirmer l'annulation", "تأكيد الإلغاء")}
           </Button>
         </DialogFooter>
       </DialogContent>

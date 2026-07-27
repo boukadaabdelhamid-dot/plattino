@@ -633,7 +633,7 @@ export default function Pos() {
               <div className="flex justify-between gap-2">
                 <span className="text-muted-foreground font-medium">{t("Client :", "العميل:")}</span>
                 <span className="font-semibold truncate" data-testid="text-client-name">
-                  {effectiveClient ? effectiveClient.name : "DIVERS COMPTOIR"}
+                  {effectiveClient ? effectiveClient.name : <span className="text-muted-foreground italic text-xs">{t("Aucun client sélectionné", "لم يتم اختيار عميل")}</span>}
                 </span>
               </div>
               <div className="flex justify-between gap-2 mt-1">

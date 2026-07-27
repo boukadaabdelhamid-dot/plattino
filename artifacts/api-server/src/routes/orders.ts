@@ -922,9 +922,10 @@ router.post("/erp/pos/drafts", authenticate, requireStaff, requireStore, require
   try {
     const storeId = req.currentStoreId!;
     const sellerUserId = req.user!.id;
-    const { customerName, customerPhone, lines } = req.body as {
+    const { customerName, customerPhone, linkedCustomerId, lines } = req.body as {
       customerName?: string;
       customerPhone?: string;
+      linkedCustomerId?: number | null;
       lines: { productId: number; qty: number; pu: number }[];
     };
     if (!Array.isArray(lines) || lines.length === 0) {
@@ -935,7 +936,7 @@ router.post("/erp/pos/drafts", authenticate, requireStaff, requireStore, require
     const [draft] = await db.insert(schema.ordersTable).values({
       storeId,
       sellerUserId,
-      userId: null,
+      userId: linkedCustomerId ?? null,
       customerName: customerName || "BON EN ATTENTE",
       customerPhone: customerPhone || "0000000000",
       customerAddress: "En attente",
@@ -976,7 +977,7 @@ router.get("/erp/pos/drafts", authenticate, requireStaff, requireStore, requireP
         .from(schema.orderItemsTable)
         .leftJoin(schema.productsTable, eq(schema.orderItemsTable.productId, schema.productsTable.id))
         .where(eq(schema.orderItemsTable.orderId, draft.id));
-      return { ...draft, items };
+      return { ...draft, linkedCustomerId: draft.userId ?? null, items };
     }));
     res.json(result);
   } catch (err) {
@@ -1010,9 +1011,10 @@ router.put("/erp/pos/drafts/:id", authenticate, requireStaff, requireStore, requ
   try {
     const storeId = req.currentStoreId!;
     const draftId = pid(req, "id");
-    const { customerName, customerPhone, lines } = req.body as {
+    const { customerName, customerPhone, linkedCustomerId, lines } = req.body as {
       customerName?: string;
       customerPhone?: string;
+      linkedCustomerId?: number | null;
       lines: { productId: number; qty: number; pu: number }[];
     };
     if (!Array.isArray(lines) || lines.length === 0) {
@@ -1033,6 +1035,7 @@ router.put("/erp/pos/drafts/:id", authenticate, requireStaff, requireStore, requ
       await tx.delete(schema.orderItemsTable).where(eq(schema.orderItemsTable.orderId, draftId));
       await tx.update(schema.ordersTable)
         .set({
+          userId: linkedCustomerId !== undefined ? (linkedCustomerId ?? null) : undefined,
           customerName: customerName || "BON EN ATTENTE",
           customerPhone: customerPhone || "0000000000",
           totalAmount: totalAmount.toFixed(2),

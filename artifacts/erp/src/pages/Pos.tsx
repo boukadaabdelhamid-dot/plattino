@@ -264,6 +264,7 @@ export default function Pos() {
     const body = JSON.stringify({
       customerName,
       customerPhone,
+      linkedCustomerId: client?.id ?? null,
       lines: lines.map((l) => ({ productId: l.productId, qty: l.qty, pu: l.pu })),
     });
 
@@ -289,7 +290,7 @@ export default function Pos() {
     }
   }
 
-  function handleLoadDraft(items: { productId: number; quantity: number; unitPrice: string; nameEn?: string | null; nameAr?: string | null }[], draftId: number, customerName: string) {
+  function handleLoadDraft(items: { productId: number; quantity: number; unitPrice: string; nameEn?: string | null; nameAr?: string | null }[], draftId: number, customerName: string, linkedCustomerId?: number | null) {
     const newLines: CartLine[] = items.map((item) => ({
       productId: item.productId,
       designation: (item.nameEn || item.nameAr || `Produit #${item.productId}`).toUpperCase(),
@@ -301,6 +302,13 @@ export default function Pos() {
     setLines(newLines);
     setActiveDraftId(draftId);
     setDraftCustomerName(customerName);
+    // Restore the live customer object when the draft was linked to a known customer.
+    if (linkedCustomerId != null) {
+      const match = customers.find((c) => c.id === linkedCustomerId) ?? null;
+      setClient(match);
+    } else {
+      setClient(null);
+    }
     setEmptyState(false);
     setCode("");
   }

@@ -1,4 +1,4 @@
-import React, { useRef, useState, useMemo } from "react";
+import React, { useRef, useState, useMemo, useEffect } from "react";
 import {
   useGetProducts,
   useGetErpCustomers,
@@ -44,6 +44,28 @@ type CartLine = {
   reduction: number;
 };
 
+const POS_LS_KEY = "midanic_pos_draft";
+
+type PersistedPosState = {
+  lines: CartLine[];
+  activeDraftId: number | null;
+  draftCustomerName: string | null;
+  client: CustomerSummary | null;
+  versement: number;
+};
+
+function readPersistedPosState(): PersistedPosState | null {
+  try {
+    const raw = localStorage.getItem(POS_LS_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as PersistedPosState;
+    if (!Array.isArray(parsed.lines)) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
 const fmt = (n: number) =>
   n.toLocaleString("fr-DZ", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
@@ -88,24 +110,41 @@ export default function Pos() {
   }, [extraBarcodesData]);
   const customers: CustomerSummary[] = (_custRes?.data ?? []) as CustomerSummary[];
 
-  const [lines, setLines] = useState<CartLine[]>([]);
+  // Restore POS state from localStorage on first mount (lazy initializer runs once).
+  const [_restoredState] = useState<PersistedPosState | null>(() => readPersistedPosState());
+
+  const [lines, setLines] = useState<CartLine[]>(() => _restoredState?.lines ?? []);
   const [code, setCode] = useState("");
   const [qtyStr, setQtyStr] = useState("1");
   const [barcode, setBarcode] = useState("");
   const [showMontant, setShowMontant] = useState(true);
   const [showPrixMin, setShowPrixMin] = useState(false);
-  const [client, setClient] = useState<CustomerSummary | null>(null);
+  const [client, setClient] = useState<CustomerSummary | null>(() => _restoredState?.client ?? null);
   const [preparateur] = useState(user?.name ?? "Admin");
-  const [versement, setVersement] = useState(0);
+  const [versement, setVersement] = useState<number>(() => _restoredState?.versement ?? 0);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [editLine, setEditLine] = useState<{ idx: number; line: CartLine; qtyInput: string; puInput: string; reductionInput: string } | null>(null);
   const [paymentOpen, setPaymentOpen] = useState(false);
   const [emptyState, setEmptyState] = useState(false);
   const [draftsOpen, setDraftsOpen] = useState(false);
   // ID of the draft currently loaded into the cart. Deleted only after payment succeeds.
-  const [activeDraftId, setActiveDraftId] = useState<number | null>(null);
+  const [activeDraftId, setActiveDraftId] = useState<number | null>(() => _restoredState?.activeDraftId ?? null);
   // Saved customer name from a loaded draft (used as fallback when no client is selected).
-  const [draftCustomerName, setDraftCustomerName] = useState<string | null>(null);
+  const [draftCustomerName, setDraftCustomerName] = useState<string | null>(() => _restoredState?.draftCustomerName ?? null);
+
+  // Persist POS state to localStorage whenever the cart has items.
+  useEffect(() => {
+    if (lines.length === 0) {
+      localStorage.removeItem(POS_LS_KEY);
+      return;
+    }
+    const state: PersistedPosState = { lines, activeDraftId, draftCustomerName, client, versement };
+    try {
+      localStorage.setItem(POS_LS_KEY, JSON.stringify(state));
+    } catch {
+      // Storage quota exceeded — non-critical, ignore.
+    }
+  }, [lines, activeDraftId, draftCustomerName, client, versement]);
 
   const codeRef = useRef<HTMLInputElement>(null);
   const editLineRef = useRef(editLine);

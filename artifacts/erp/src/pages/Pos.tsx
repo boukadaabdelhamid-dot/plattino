@@ -50,7 +50,7 @@ type PersistedPosState = {
   lines: CartLine[];
   activeDraftId: number | null;
   draftCustomerName: string | null;
-  client: CustomerSummary | null;
+  clientId: number | null;
   versement: number;
 };
 
@@ -119,7 +119,7 @@ export default function Pos() {
   const [barcode, setBarcode] = useState("");
   const [showMontant, setShowMontant] = useState(true);
   const [showPrixMin, setShowPrixMin] = useState(false);
-  const [client, setClient] = useState<CustomerSummary | null>(() => _restoredState?.client ?? null);
+  const [client, setClient] = useState<CustomerSummary | null>(null);
   const [preparateur] = useState(user?.name ?? "Admin");
   const [versement, setVersement] = useState<number>(() => _restoredState?.versement ?? 0);
   const [pickerOpen, setPickerOpen] = useState(false);
@@ -132,13 +132,26 @@ export default function Pos() {
   // Saved customer name from a loaded draft (used as fallback when no client is selected).
   const [draftCustomerName, setDraftCustomerName] = useState<string | null>(() => _restoredState?.draftCustomerName ?? null);
 
+  // Hydrate the client from the live customers list using the persisted client ID.
+  // Runs once when the customers list first becomes available.
+  const clientHydratedRef = useRef(false);
+  useEffect(() => {
+    if (clientHydratedRef.current) return;
+    if (customers.length === 0) return; // list not yet loaded
+    clientHydratedRef.current = true;
+    const persistedId = _restoredState?.clientId ?? null;
+    if (persistedId == null) return;
+    const match = customers.find((c) => c.id === persistedId) ?? null;
+    if (match) setClient(match);
+  }, [customers, _restoredState?.clientId]);
+
   // Persist POS state to localStorage whenever the cart has items.
   useEffect(() => {
     if (lines.length === 0) {
       localStorage.removeItem(POS_LS_KEY);
       return;
     }
-    const state: PersistedPosState = { lines, activeDraftId, draftCustomerName, client, versement };
+    const state: PersistedPosState = { lines, activeDraftId, draftCustomerName, clientId: client?.id ?? null, versement };
     try {
       localStorage.setItem(POS_LS_KEY, JSON.stringify(state));
     } catch {

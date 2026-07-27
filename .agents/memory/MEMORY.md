@@ -35,3 +35,5 @@
 - [New staff zero permissions](new-staff-zero-permissions.md) — freshly created employees have no module permissions by default; grant them before treating a blank screen/403 as an app bug.
 - [HR module backend constraints](hr-module-backend-constraints.md) — attendance is create-only (no PUT, check-in/out = 2 rows); employee status/leave-type real values differ from web ERP UI options.
 - [Mobile raw-fetch admin endpoints](mobile-raw-fetch-admin-endpoints.md) — /erp/permissions/:userId and /auth/me(+/password) have no generated hook; mirror the web ERP's raw-fetch pattern instead of assuming a gap.
+- [drizzle-kit push unsafe here](drizzle-kit-push-unsafe.md) — hangs on interactive prompt / offers unrelated drops; apply schema.ts changes by hand via psql + verify with \d instead.
+- [openapi.yaml codegen drift risk](openapi-codegen-drift-risk.md) — some real routes were never added to openapi.yaml; regenerating orval can silently delete their hooks. Diff removed exports after every codegen run.

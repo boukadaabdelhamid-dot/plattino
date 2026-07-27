@@ -51,6 +51,7 @@ const SECTIONS: { key: string; labelFr: string; labelAr: string }[] = [
   { key: "employees", labelFr: "Employés",          labelAr: "الموظفون"      },
   { key: "attendance",labelFr: "Présences",         labelAr: "الحضور"        },
   { key: "leaves",    labelFr: "Congés",            labelAr: "الإجازات"      },
+  { key: "payroll",   labelFr: "Paie",              labelAr: "الرواتب"       },
   { key: "accounting",labelFr: "Comptabilité",      labelAr: "المحاسبة"      },
   { key: "realtime",  labelFr: "Temps Réel",        labelAr: "الوقت الفعلي"  },
   { key: "settings",  labelFr: "Paramètres",        labelAr: "الإعدادات"     },

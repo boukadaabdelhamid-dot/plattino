@@ -173,7 +173,6 @@ export interface Product {
   familyId?: number | null;
   brandId?: number | null;
   colorId?: number | null;
-  minStock?: number | null;
   images?: ProductImage[];
   primaryImage?: string | null;
 }
@@ -633,6 +632,9 @@ export interface Employee {
   salary: string;
   status: EmployeeStatus;
   hireDate: string;
+  matricule?: string | null;
+  cnasNumber?: string | null;
+  bankAccount?: string | null;
   createdAt?: string;
 }
 
@@ -643,6 +645,204 @@ export interface CreateEmployeeRequest {
   position: string;
   salary: string;
   hireDate: string;
+  matricule?: string;
+  cnasNumber?: string;
+  bankAccount?: string;
+}
+
+export interface PurchaseAnnexeCharge {
+  id: number;
+  storeId: number;
+  description: string;
+  totalAmount: string;
+  date: string;
+  notes?: string | null;
+  createdAt: string;
+  purchaseOrderIds: number[];
+}
+
+export interface CreatePurchaseAnnexeChargeRequest {
+  description: string;
+  totalAmount: number;
+  date: string;
+  notes?: string;
+  purchaseOrderIds: number[];
+}
+
+export interface ProductHistoryPurchase {
+  purchaseOrderId: number;
+  quantity: number;
+  unitCost: string;
+  status: string;
+  createdAt?: string | null;
+  receivedAt?: string | null;
+  supplierName?: string | null;
+  storeId: number;
+  storeNameAr?: string | null;
+  storeNameEn?: string | null;
+}
+
+export interface ProductHistorySale {
+  orderId: number;
+  quantity: number;
+  unitPrice: string;
+  customerName?: string | null;
+  customerPhone?: string | null;
+  status: string;
+  createdAt?: string | null;
+  storeId: number;
+  storeNameAr?: string | null;
+  storeNameEn?: string | null;
+}
+
+export type ProductHistoryMovementEntryKind =
+  (typeof ProductHistoryMovementEntryKind)[keyof typeof ProductHistoryMovementEntryKind];
+
+export const ProductHistoryMovementEntryKind = {
+  movement: "movement",
+} as const;
+
+export interface ProductHistoryMovementEntry {
+  kind: ProductHistoryMovementEntryKind;
+  id: string;
+  date?: string | null;
+  movementType: string;
+  quantity: number;
+  reason?: string | null;
+  reference?: string | null;
+  storeId: number;
+  storeNameAr?: string | null;
+  storeNameEn?: string | null;
+}
+
+export type ProductHistoryTransferEntryKind =
+  (typeof ProductHistoryTransferEntryKind)[keyof typeof ProductHistoryTransferEntryKind];
+
+export const ProductHistoryTransferEntryKind = {
+  transfer: "transfer",
+} as const;
+
+export interface ProductHistoryTransferEntry {
+  kind: ProductHistoryTransferEntryKind;
+  id: string;
+  date?: string | null;
+  status: string;
+  transferId: number;
+  quantity: number;
+  sourceStoreId: number;
+  sourceStoreNameAr?: string | null;
+  sourceStoreNameEn?: string | null;
+  destStoreId: number;
+  destStoreNameAr?: string | null;
+  destStoreNameEn?: string | null;
+}
+
+export interface ProductHistoryReturn {
+  id: number;
+  bonRetourId: number;
+  date?: string | null;
+  customerName?: string | null;
+  originalOrderId?: number | null;
+  retourType?: string | null;
+  reason?: string | null;
+  quantity: number;
+  unitPrice: string;
+}
+
+export interface ProductHistorySupplierReturn {
+  id: number;
+  bonRetourFournisseurId: number;
+  date?: string | null;
+  supplierName?: string | null;
+  originalPurchaseOrderId?: number | null;
+  reason?: string | null;
+  quantity: number;
+  unitCost: string;
+}
+
+export interface ProductHistoryResponse {
+  purchases: ProductHistoryPurchase[];
+  sales: ProductHistorySale[];
+  timeline: (ProductHistoryMovementEntry | ProductHistoryTransferEntry)[];
+  returns: ProductHistoryReturn[];
+  supplierReturns: ProductHistorySupplierReturn[];
+  currentStoreId: number;
+}
+
+export type PayrollAdjustmentType =
+  (typeof PayrollAdjustmentType)[keyof typeof PayrollAdjustmentType];
+
+export const PayrollAdjustmentType = {
+  advance: "advance",
+  deduction: "deduction",
+  bonus: "bonus",
+} as const;
+
+export interface PayrollAdjustment {
+  id: number;
+  employeeId: number;
+  employeeName?: string | null;
+  type: PayrollAdjustmentType;
+  amount: string;
+  reason?: string | null;
+  date: string;
+  payslipId?: number | null;
+  createdAt?: string;
+}
+
+export type CreatePayrollAdjustmentRequestType =
+  (typeof CreatePayrollAdjustmentRequestType)[keyof typeof CreatePayrollAdjustmentRequestType];
+
+export const CreatePayrollAdjustmentRequestType = {
+  advance: "advance",
+  deduction: "deduction",
+  bonus: "bonus",
+} as const;
+
+export interface CreatePayrollAdjustmentRequest {
+  employeeId: number;
+  type: CreatePayrollAdjustmentRequestType;
+  amount: number;
+  reason?: string;
+  date: string;
+}
+
+export interface PayrollRun {
+  id: number;
+  periodStart: string;
+  periodEnd: string;
+  createdAt: string;
+  employeeCount?: number;
+  totalNet?: string;
+}
+
+export interface Payslip {
+  id: number;
+  payrollRunId: number;
+  employeeId: number;
+  employeeName?: string | null;
+  matricule?: string | null;
+  position?: string | null;
+  cnasNumber?: string | null;
+  bankAccount?: string | null;
+  baseSalary: string;
+  bonusAmount: string;
+  advancesAmount: string;
+  deductionsAmount: string;
+  netAmount: string;
+  periodStart?: string | null;
+  periodEnd?: string | null;
+  createdAt?: string;
+}
+
+export interface GeneratePayrollRequest {
+  periodStart: string;
+  periodEnd: string;
+}
+
+export interface GeneratePayrollResponse {
+  run: PayrollRun;
+  payslips: Payslip[];
 }
 
 export type AttendanceStatus =
@@ -839,114 +1039,6 @@ export interface PurchaseOrderItem {
   unitCost: string;
   productNameEn?: string | null;
   productNameAr?: string | null;
-  /** Sum of all annexe charge allocations for this item (DA). "0" when none. */
-  totalCharges?: string;
-}
-
-// ─── Product History ──────────────────────────────────────────────────────────
-export interface ProductHistoryPurchase {
-  purchaseOrderId: number;
-  quantity: number;
-  unitCost: string;
-  status: string;
-  createdAt?: string | null;
-  receivedAt?: string | null;
-  supplierName?: string | null;
-  storeId: number;
-  storeNameAr?: string | null;
-  storeNameEn?: string | null;
-}
-
-export interface ProductHistorySale {
-  orderId: number;
-  quantity: number;
-  unitPrice: string;
-  customerName?: string | null;
-  customerPhone?: string | null;
-  status: string;
-  createdAt?: string | null;
-  storeId: number;
-  storeNameAr?: string | null;
-  storeNameEn?: string | null;
-}
-
-export interface ProductHistoryMovementEntry {
-  kind: "movement";
-  id: string;
-  date?: string | null;
-  movementType: string;
-  quantity: number;
-  reason?: string | null;
-  reference?: string | null;
-  storeId: number;
-  storeNameAr?: string | null;
-  storeNameEn?: string | null;
-}
-
-export interface ProductHistoryTransferEntry {
-  kind: "transfer";
-  id: string;
-  date?: string | null;
-  status: string;
-  transferId: number;
-  quantity: number;
-  sourceStoreId: number;
-  sourceStoreNameAr?: string | null;
-  sourceStoreNameEn?: string | null;
-  destStoreId: number;
-  destStoreNameAr?: string | null;
-  destStoreNameEn?: string | null;
-}
-
-export interface ProductHistoryReturn {
-  id: number;
-  bonRetourId: number;
-  date?: string | null;
-  customerName?: string | null;
-  originalOrderId?: number | null;
-  retourType?: string | null;
-  reason?: string | null;
-  quantity: number;
-  unitPrice: string;
-}
-
-export interface ProductHistorySupplierReturn {
-  id: number;
-  bonRetourFournisseurId: number;
-  date?: string | null;
-  supplierName?: string | null;
-  originalPurchaseOrderId?: number | null;
-  reason?: string | null;
-  quantity: number;
-  unitCost: string;
-}
-
-export interface ProductHistoryResponse {
-  purchases: ProductHistoryPurchase[];
-  sales: ProductHistorySale[];
-  timeline: (ProductHistoryMovementEntry | ProductHistoryTransferEntry)[];
-  returns: ProductHistoryReturn[];
-  supplierReturns: ProductHistorySupplierReturn[];
-  currentStoreId: number;
-}
-
-export interface PurchaseAnnexeCharge {
-  id: number;
-  storeId: number;
-  description: string;
-  totalAmount: string;
-  date: string;
-  notes?: string | null;
-  createdAt: string;
-  purchaseOrderIds: number[];
-}
-
-export interface CreatePurchaseAnnexeChargeRequest {
-  description: string;
-  totalAmount: number;
-  date: string;
-  notes?: string;
-  purchaseOrderIds: number[];
 }
 
 export type CreatePurchaseOrderRequestItemsItem = {
@@ -1926,6 +2018,15 @@ export type GetLowStockParams = {
   threshold?: number;
 };
 
+export type GetPayrollAdjustmentsParams = {
+  employeeId?: number;
+};
+
+export type GetPayslipsParams = {
+  runId?: number;
+  employeeId?: number;
+};
+
 export type GetAttendanceParams = {
   employeeId?: number;
 };
@@ -2023,40 +2124,6 @@ export type GetErpCustomersParams = {
   wilaya?: string;
   classificationId?: number;
   priceTierId?: number;
-  page?: number;
-  limit?: number;
-};
-
-export type GetSuppliersParams = {
-  page?: number;
-  limit?: number;
-  search?: string;
-};
-
-export type GetPurchaseOrdersParams = {
-  page?: number;
-  limit?: number;
-};
-
-export type PaginatedSuppliers = {
-  data: Supplier[];
-  total: number;
-  page: number;
-  limit: number;
-};
-
-export type PaginatedPurchaseOrders = {
-  data: PurchaseOrder[];
-  total: number;
-  page: number;
-  limit: number;
-};
-
-export type PaginatedCustomers = {
-  data: CustomerSummary[];
-  total: number;
-  page: number;
-  limit: number;
 };
 
 export type SetErpStaffStoresBody = {

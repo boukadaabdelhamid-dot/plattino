@@ -1498,6 +1498,9 @@ export const GetEmployeesResponseItem = zod.object({
   salary: zod.string(),
   status: zod.enum(["active", "inactive", "on_leave"]),
   hireDate: zod.string(),
+  matricule: zod.string().nullish(),
+  cnasNumber: zod.string().nullish(),
+  bankAccount: zod.string().nullish(),
   createdAt: zod.string().optional(),
 });
 export const GetEmployeesResponse = zod.array(GetEmployeesResponseItem);
@@ -1512,6 +1515,9 @@ export const CreateEmployeeBody = zod.object({
   position: zod.string(),
   salary: zod.string(),
   hireDate: zod.string(),
+  matricule: zod.string().optional(),
+  cnasNumber: zod.string().optional(),
+  bankAccount: zod.string().optional(),
 });
 
 /**
@@ -1528,6 +1534,9 @@ export const UpdateEmployeeBody = zod.object({
   position: zod.string(),
   salary: zod.string(),
   hireDate: zod.string(),
+  matricule: zod.string().optional(),
+  cnasNumber: zod.string().optional(),
+  bankAccount: zod.string().optional(),
 });
 
 export const UpdateEmployeeResponse = zod.object({
@@ -1539,6 +1548,9 @@ export const UpdateEmployeeResponse = zod.object({
   salary: zod.string(),
   status: zod.enum(["active", "inactive", "on_leave"]),
   hireDate: zod.string(),
+  matricule: zod.string().nullish(),
+  cnasNumber: zod.string().nullish(),
+  bankAccount: zod.string().nullish(),
   createdAt: zod.string().optional(),
 });
 
@@ -1551,6 +1563,228 @@ export const DeleteEmployeeParams = zod.object({
 
 export const DeleteEmployeeResponse = zod.object({
   success: zod.boolean(),
+});
+
+/**
+ * @summary List annexe charges (frais annexes distributed across purchase orders)
+ */
+export const GetPurchaseAnnexeChargesResponseItem = zod.object({
+  id: zod.number(),
+  storeId: zod.number(),
+  description: zod.string(),
+  totalAmount: zod.string(),
+  date: zod.string(),
+  notes: zod.string().nullish(),
+  createdAt: zod.string(),
+  purchaseOrderIds: zod.array(zod.number()),
+});
+export const GetPurchaseAnnexeChargesResponse = zod.array(
+  GetPurchaseAnnexeChargesResponseItem,
+);
+
+/**
+ * @summary Create an annexe charge, distributed proportionally across selected purchase orders
+ */
+export const CreatePurchaseAnnexeChargeBody = zod.object({
+  description: zod.string(),
+  totalAmount: zod.number(),
+  date: zod.string(),
+  notes: zod.string().optional(),
+  purchaseOrderIds: zod.array(zod.number()),
+});
+
+/**
+ * @summary Delete an annexe charge and revert affected CUMP calculations
+ */
+export const DeletePurchaseAnnexeChargeParams = zod.object({
+  id: zod.coerce.number(),
+});
+
+/**
+ * @summary Full cross-store purchase/sale/movement/return history for a product
+ */
+export const GetProductHistoryParams = zod.object({
+  productId: zod.coerce.number(),
+});
+
+export const GetProductHistoryResponse = zod.object({
+  purchases: zod.array(
+    zod.object({
+      purchaseOrderId: zod.number(),
+      quantity: zod.number(),
+      unitCost: zod.string(),
+      status: zod.string(),
+      createdAt: zod.string().nullish(),
+      receivedAt: zod.string().nullish(),
+      supplierName: zod.string().nullish(),
+      storeId: zod.number(),
+      storeNameAr: zod.string().nullish(),
+      storeNameEn: zod.string().nullish(),
+    }),
+  ),
+  sales: zod.array(
+    zod.object({
+      orderId: zod.number(),
+      quantity: zod.number(),
+      unitPrice: zod.string(),
+      customerName: zod.string().nullish(),
+      customerPhone: zod.string().nullish(),
+      status: zod.string(),
+      createdAt: zod.string().nullish(),
+      storeId: zod.number(),
+      storeNameAr: zod.string().nullish(),
+      storeNameEn: zod.string().nullish(),
+    }),
+  ),
+  timeline: zod.array(
+    zod.union([
+      zod.object({
+        kind: zod.enum(["movement"]),
+        id: zod.string(),
+        date: zod.string().nullish(),
+        movementType: zod.string(),
+        quantity: zod.number(),
+        reason: zod.string().nullish(),
+        reference: zod.string().nullish(),
+        storeId: zod.number(),
+        storeNameAr: zod.string().nullish(),
+        storeNameEn: zod.string().nullish(),
+      }),
+      zod.object({
+        kind: zod.enum(["transfer"]),
+        id: zod.string(),
+        date: zod.string().nullish(),
+        status: zod.string(),
+        transferId: zod.number(),
+        quantity: zod.number(),
+        sourceStoreId: zod.number(),
+        sourceStoreNameAr: zod.string().nullish(),
+        sourceStoreNameEn: zod.string().nullish(),
+        destStoreId: zod.number(),
+        destStoreNameAr: zod.string().nullish(),
+        destStoreNameEn: zod.string().nullish(),
+      }),
+    ]),
+  ),
+  returns: zod.array(
+    zod.object({
+      id: zod.number(),
+      bonRetourId: zod.number(),
+      date: zod.string().nullish(),
+      customerName: zod.string().nullish(),
+      originalOrderId: zod.number().nullish(),
+      retourType: zod.string().nullish(),
+      reason: zod.string().nullish(),
+      quantity: zod.number(),
+      unitPrice: zod.string(),
+    }),
+  ),
+  supplierReturns: zod.array(
+    zod.object({
+      id: zod.number(),
+      bonRetourFournisseurId: zod.number(),
+      date: zod.string().nullish(),
+      supplierName: zod.string().nullish(),
+      originalPurchaseOrderId: zod.number().nullish(),
+      reason: zod.string().nullish(),
+      quantity: zod.number(),
+      unitCost: zod.string(),
+    }),
+  ),
+  currentStoreId: zod.number(),
+});
+
+/**
+ * @summary List payroll adjustments (avances/retenues/primes)
+ */
+export const GetPayrollAdjustmentsQueryParams = zod.object({
+  employeeId: zod.coerce.number().optional(),
+});
+
+export const GetPayrollAdjustmentsResponseItem = zod.object({
+  id: zod.number(),
+  employeeId: zod.number(),
+  employeeName: zod.string().nullish(),
+  type: zod.enum(["advance", "deduction", "bonus"]),
+  amount: zod.string(),
+  reason: zod.string().nullish(),
+  date: zod.string(),
+  payslipId: zod.number().nullish(),
+  createdAt: zod.string().optional(),
+});
+export const GetPayrollAdjustmentsResponse = zod.array(
+  GetPayrollAdjustmentsResponseItem,
+);
+
+/**
+ * @summary Record an avance/retenue/prime for an employee
+ */
+export const CreatePayrollAdjustmentBody = zod.object({
+  employeeId: zod.number(),
+  type: zod.enum(["advance", "deduction", "bonus"]),
+  amount: zod.number(),
+  reason: zod.string().optional(),
+  date: zod.string(),
+});
+
+/**
+ * @summary Delete a payroll adjustment (only if not yet folded into a payslip)
+ */
+export const DeletePayrollAdjustmentParams = zod.object({
+  id: zod.coerce.number(),
+});
+
+export const DeletePayrollAdjustmentResponse = zod.object({
+  success: zod.boolean(),
+});
+
+/**
+ * @summary List generated payroll runs
+ */
+export const GetPayrollRunsResponseItem = zod.object({
+  id: zod.number(),
+  periodStart: zod.string(),
+  periodEnd: zod.string(),
+  createdAt: zod.string(),
+  employeeCount: zod.number().optional(),
+  totalNet: zod.string().optional(),
+});
+export const GetPayrollRunsResponse = zod.array(GetPayrollRunsResponseItem);
+
+/**
+ * @summary List generated payslips
+ */
+export const GetPayslipsQueryParams = zod.object({
+  runId: zod.coerce.number().optional(),
+  employeeId: zod.coerce.number().optional(),
+});
+
+export const GetPayslipsResponseItem = zod.object({
+  id: zod.number(),
+  payrollRunId: zod.number(),
+  employeeId: zod.number(),
+  employeeName: zod.string().nullish(),
+  matricule: zod.string().nullish(),
+  position: zod.string().nullish(),
+  cnasNumber: zod.string().nullish(),
+  bankAccount: zod.string().nullish(),
+  baseSalary: zod.string(),
+  bonusAmount: zod.string(),
+  advancesAmount: zod.string(),
+  deductionsAmount: zod.string(),
+  netAmount: zod.string(),
+  periodStart: zod.string().nullish(),
+  periodEnd: zod.string().nullish(),
+  createdAt: zod.string().optional(),
+});
+export const GetPayslipsResponse = zod.array(GetPayslipsResponseItem);
+
+/**
+ * @summary Generate payroll for all active employees over a period
+ */
+export const GeneratePayrollBody = zod.object({
+  periodStart: zod.string(),
+  periodEnd: zod.string(),
 });
 
 /**
@@ -1817,6 +2051,42 @@ export const GetPurchaseOrderItemsResponseItem = zod.object({
 export const GetPurchaseOrderItemsResponse = zod.array(
   GetPurchaseOrderItemsResponseItem,
 );
+
+/**
+ * @summary Update a pending purchase order
+ */
+export const UpdatePurchaseOrderParams = zod.object({
+  id: zod.coerce.number(),
+});
+
+export const UpdatePurchaseOrderBody = zod.object({
+  supplierId: zod.number(),
+  notes: zod.string().optional(),
+  items: zod.array(
+    zod.object({
+      productId: zod.number(),
+      quantity: zod.number(),
+      unitCost: zod.number(),
+    }),
+  ),
+});
+
+export const UpdatePurchaseOrderResponse = zod.object({
+  id: zod.number(),
+  supplierId: zod.number(),
+  status: zod.enum(["pending", "received", "cancelled"]),
+  totalAmount: zod.string(),
+  notes: zod.string().nullish(),
+  createdAt: zod.string().optional(),
+  receivedAt: zod.string().nullish(),
+});
+
+/**
+ * @summary Delete a pending purchase order (cannot delete received orders)
+ */
+export const DeletePurchaseOrderParams = zod.object({
+  id: zod.coerce.number(),
+});
 
 /**
  * @summary Mark purchase order as received (updates stock)

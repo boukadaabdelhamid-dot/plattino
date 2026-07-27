@@ -785,10 +785,15 @@ router.get("/erp/employees", authenticate, requireStaff, requireStore, requirePe
 router.post("/erp/employees", authenticate, requireStaff, requireStore, requirePermission("employees", "create"), async (req: AuthRequest, res) => {
   try {
     const storeId = req.currentStoreId!;
-    const { name, email, phone, position, salary, hireDate, password } = req.body;
+    const { name, email, phone, position, salary, hireDate, password, matricule, cnasNumber, bankAccount } = req.body;
     if (!name || !position || !salary || !hireDate) {
       res.status(400).json({ error: "name, position, salary, hireDate are required" });
       return;
+    }
+    if (matricule) {
+      const [dupe] = await db.select({ id: schema.employeesTable.id })
+        .from(schema.employeesTable).where(eq(schema.employeesTable.matricule, matricule)).limit(1);
+      if (dupe) { res.status(409).json({ error: "Matricule already in use" }); return; }
     }
 
     const result = await db.transaction(async (tx) => {
@@ -825,6 +830,7 @@ router.post("/erp/employees", authenticate, requireStaff, requireStore, requireP
         storeId, userId: userId ?? undefined,
         name, email: email || null, phone: phone || null,
         position, salary, hireDate,
+        matricule: matricule || null, cnasNumber: cnasNumber || null, bankAccount: bankAccount || null,
       }).returning();
 
       // 3. Ensure caisse exists for this user
@@ -851,12 +857,20 @@ router.put("/erp/employees/:id", authenticate, requireStaff, requireStore, requi
   try {
     const storeId = req.currentStoreId!;
     const empId = pid(req, "id");
-    const { name, email, phone, position, salary, hireDate, status } = req.body;
+    const { name, email, phone, position, salary, hireDate, status, matricule, cnasNumber, bankAccount } = req.body;
 
     const [existing] = await db.select().from(schema.employeesTable)
       .where(and(eq(schema.employeesTable.id, empId), eq(schema.employeesTable.storeId, storeId)))
       .limit(1);
     if (!existing) { res.status(404).json({ error: "Not found" }); return; }
+
+    if (matricule && matricule !== existing.matricule) {
+      const [dupe] = await db.select({ id: schema.employeesTable.id })
+        .from(schema.employeesTable)
+        .where(and(eq(schema.employeesTable.matricule, matricule), ne(schema.employeesTable.id, empId)))
+        .limit(1);
+      if (dupe) { res.status(409).json({ error: "Matricule already in use" }); return; }
+    }
 
     await db.transaction(async (tx) => {
       // Update employee record
@@ -868,6 +882,9 @@ router.put("/erp/employees/:id", authenticate, requireStaff, requireStore, requi
       if (salary   !== undefined) empUpdate.salary   = salary;
       if (hireDate !== undefined) empUpdate.hireDate = hireDate;
       if (status   !== undefined) empUpdate.status   = status;
+      if (matricule   !== undefined) empUpdate.matricule   = matricule || null;
+      if (cnasNumber  !== undefined) empUpdate.cnasNumber  = cnasNumber || null;
+      if (bankAccount !== undefined) empUpdate.bankAccount = bankAccount || null;
       await tx.update(schema.employeesTable).set(empUpdate)
         .where(eq(schema.employeesTable.id, empId));
 
@@ -1006,6 +1023,223 @@ router.put("/erp/leaves/:id/status", authenticate, requireStaff, requireStore, r
       endDate: leave.endDate,
     });
     res.json(leave);
+  } catch (err) { req.log.error(err); res.status(500).json({ error: "Internal server error" }); }
+});
+
+// ─── Payroll ─────────────────────────────────────────────────────────────────
+// One payroll_run = one bulk generation for all active employees over an
+// (admin-editable) period. Adjustments (avance/retenue/prime) are free-standing
+// until a run folds them in — at that point their payslip_id is set and they
+// become immutable (the period is effectively locked).
+
+router.get("/erp/payroll/adjustments", authenticate, requireStaff, requireStore, requirePermission("payroll", "view"), async (req: AuthRequest, res) => {
+  try {
+    const storeId = req.currentStoreId!;
+    const { employeeId } = req.query as Record<string, string | undefined>;
+    const conditions = [eq(schema.payrollAdjustmentsTable.storeId, storeId)];
+    if (employeeId) conditions.push(eq(schema.payrollAdjustmentsTable.employeeId, parseInt(employeeId)));
+    const rows = await db.select({
+      id: schema.payrollAdjustmentsTable.id,
+      employeeId: schema.payrollAdjustmentsTable.employeeId,
+      employeeName: schema.employeesTable.name,
+      type: schema.payrollAdjustmentsTable.type,
+      amount: schema.payrollAdjustmentsTable.amount,
+      reason: schema.payrollAdjustmentsTable.reason,
+      date: schema.payrollAdjustmentsTable.date,
+      payslipId: schema.payrollAdjustmentsTable.payslipId,
+      createdAt: schema.payrollAdjustmentsTable.createdAt,
+    })
+      .from(schema.payrollAdjustmentsTable)
+      .leftJoin(schema.employeesTable, eq(schema.employeesTable.id, schema.payrollAdjustmentsTable.employeeId))
+      .where(and(...conditions))
+      .orderBy(desc(schema.payrollAdjustmentsTable.date), desc(schema.payrollAdjustmentsTable.id));
+    res.json(rows);
+  } catch (err) { req.log.error(err); res.status(500).json({ error: "Internal server error" }); }
+});
+
+router.post("/erp/payroll/adjustments", authenticate, requireStaff, requireStore, requirePermission("payroll", "create"), async (req: AuthRequest, res) => {
+  try {
+    const storeId = req.currentStoreId!;
+    const employeeId = Number(req.body?.employeeId);
+    const type = req.body?.type as "advance" | "deduction" | "bonus";
+    const amount = Number(req.body?.amount);
+    const date = req.body?.date as string | undefined;
+    const reason = typeof req.body?.reason === "string" ? req.body.reason : null;
+    if (!Number.isInteger(employeeId) || !["advance", "deduction", "bonus"].includes(type) ||
+        !Number.isFinite(amount) || amount <= 0 || !date) {
+      res.status(400).json({ error: "employeeId, type (advance|deduction|bonus), amount > 0, date are required" });
+      return;
+    }
+    const [emp] = await db.select({ id: schema.employeesTable.id })
+      .from(schema.employeesTable)
+      .where(and(eq(schema.employeesTable.id, employeeId), eq(schema.employeesTable.storeId, storeId)))
+      .limit(1);
+    if (!emp) { res.status(403).json({ error: "Employee does not belong to current store" }); return; }
+    const [row] = await db.insert(schema.payrollAdjustmentsTable).values({
+      storeId, employeeId, type, amount: amount.toFixed(2), reason, date,
+      createdByUserId: req.user!.id,
+    }).returning();
+    res.status(201).json(row);
+  } catch (err) { req.log.error(err); res.status(500).json({ error: "Internal server error" }); }
+});
+
+router.delete("/erp/payroll/adjustments/:id", authenticate, requireStaff, requireStore, requirePermission("payroll", "delete"), async (req: AuthRequest, res) => {
+  try {
+    const storeId = req.currentStoreId!;
+    const id = pid(req, "id");
+    const [row] = await db.select().from(schema.payrollAdjustmentsTable)
+      .where(and(eq(schema.payrollAdjustmentsTable.id, id), eq(schema.payrollAdjustmentsTable.storeId, storeId)))
+      .limit(1);
+    if (!row) { res.status(404).json({ error: "Not found" }); return; }
+    if (row.payslipId) { res.status(409).json({ error: "Cette période est déjà clôturée par une paie générée" }); return; }
+    await db.delete(schema.payrollAdjustmentsTable).where(eq(schema.payrollAdjustmentsTable.id, id));
+    res.json({ success: true });
+  } catch (err) { req.log.error(err); res.status(500).json({ error: "Internal server error" }); }
+});
+
+router.get("/erp/payroll/runs", authenticate, requireStaff, requireStore, requirePermission("payroll", "view"), async (req: AuthRequest, res) => {
+  try {
+    const storeId = req.currentStoreId!;
+    const rows = await db.select({
+      id: schema.payrollRunsTable.id,
+      periodStart: schema.payrollRunsTable.periodStart,
+      periodEnd: schema.payrollRunsTable.periodEnd,
+      createdAt: schema.payrollRunsTable.createdAt,
+      employeeCount: sql<number>`count(${schema.payslipsTable.id})`,
+      totalNet: sql<string>`coalesce(sum(${schema.payslipsTable.netAmount}), 0)`,
+    })
+      .from(schema.payrollRunsTable)
+      .leftJoin(schema.payslipsTable, eq(schema.payslipsTable.payrollRunId, schema.payrollRunsTable.id))
+      .where(eq(schema.payrollRunsTable.storeId, storeId))
+      .groupBy(schema.payrollRunsTable.id)
+      .orderBy(desc(schema.payrollRunsTable.periodStart));
+    res.json(rows);
+  } catch (err) { req.log.error(err); res.status(500).json({ error: "Internal server error" }); }
+});
+
+router.get("/erp/payroll/payslips", authenticate, requireStaff, requireStore, requirePermission("payroll", "view"), async (req: AuthRequest, res) => {
+  try {
+    const storeId = req.currentStoreId!;
+    const { runId, employeeId } = req.query as Record<string, string | undefined>;
+    const conditions = [eq(schema.payslipsTable.storeId, storeId)];
+    if (runId) conditions.push(eq(schema.payslipsTable.payrollRunId, parseInt(runId)));
+    if (employeeId) conditions.push(eq(schema.payslipsTable.employeeId, parseInt(employeeId)));
+    const rows = await db.select({
+      id: schema.payslipsTable.id,
+      payrollRunId: schema.payslipsTable.payrollRunId,
+      employeeId: schema.payslipsTable.employeeId,
+      employeeName: schema.employeesTable.name,
+      matricule: schema.employeesTable.matricule,
+      position: schema.employeesTable.position,
+      cnasNumber: schema.employeesTable.cnasNumber,
+      bankAccount: schema.employeesTable.bankAccount,
+      baseSalary: schema.payslipsTable.baseSalary,
+      bonusAmount: schema.payslipsTable.bonusAmount,
+      advancesAmount: schema.payslipsTable.advancesAmount,
+      deductionsAmount: schema.payslipsTable.deductionsAmount,
+      netAmount: schema.payslipsTable.netAmount,
+      periodStart: schema.payrollRunsTable.periodStart,
+      periodEnd: schema.payrollRunsTable.periodEnd,
+      createdAt: schema.payslipsTable.createdAt,
+    })
+      .from(schema.payslipsTable)
+      .leftJoin(schema.employeesTable, eq(schema.employeesTable.id, schema.payslipsTable.employeeId))
+      .leftJoin(schema.payrollRunsTable, eq(schema.payrollRunsTable.id, schema.payslipsTable.payrollRunId))
+      .where(and(...conditions))
+      .orderBy(desc(schema.payslipsTable.id));
+    res.json(rows);
+  } catch (err) { req.log.error(err); res.status(500).json({ error: "Internal server error" }); }
+});
+
+// POST — generate payroll for ALL active employees over [periodStart, periodEnd]
+// in one batch: folds in every not-yet-locked adjustment dated inside the
+// period, produces one payslip per employee, and books a single expense
+// (main caisse debit + accounting transaction) for the combined net total.
+router.post("/erp/payroll/generate", authenticate, requireStaff, requireStore, requirePermission("payroll", "create"), async (req: AuthRequest, res) => {
+  try {
+    const storeId = req.currentStoreId!;
+    const actorUserId = req.user!.id;
+    const periodStart = req.body?.periodStart as string | undefined;
+    const periodEnd = req.body?.periodEnd as string | undefined;
+    if (!periodStart || !periodEnd || periodStart > periodEnd) {
+      res.status(400).json({ error: "periodStart and periodEnd (periodStart <= periodEnd) are required" });
+      return;
+    }
+    const [existingRun] = await db.select({ id: schema.payrollRunsTable.id })
+      .from(schema.payrollRunsTable)
+      .where(and(
+        eq(schema.payrollRunsTable.storeId, storeId),
+        eq(schema.payrollRunsTable.periodStart, periodStart),
+        eq(schema.payrollRunsTable.periodEnd, periodEnd),
+      )).limit(1);
+    if (existingRun) { res.status(409).json({ error: "Une paie a déjà été générée pour cette période exacte" }); return; }
+
+    const employees = await db.select().from(schema.employeesTable)
+      .where(and(eq(schema.employeesTable.storeId, storeId), eq(schema.employeesTable.status, "active")));
+    if (employees.length === 0) { res.status(400).json({ error: "Aucun employé actif" }); return; }
+
+    const result = await db.transaction(async (tx) => {
+      const [run] = await tx.insert(schema.payrollRunsTable).values({
+        storeId, periodStart, periodEnd, generatedByUserId: actorUserId,
+      }).returning();
+
+      let totalNet = 0;
+      const payslips: (typeof schema.payslipsTable.$inferSelect)[] = [];
+
+      for (const emp of employees) {
+        const adjustments = await tx.select().from(schema.payrollAdjustmentsTable)
+          .where(and(
+            eq(schema.payrollAdjustmentsTable.employeeId, emp.id),
+            isNull(schema.payrollAdjustmentsTable.payslipId),
+            sql`${schema.payrollAdjustmentsTable.date} >= ${periodStart}`,
+            sql`${schema.payrollAdjustmentsTable.date} <= ${periodEnd}`,
+          ));
+        const sumOf = (type: "advance" | "deduction" | "bonus") =>
+          adjustments.filter(a => a.type === type).reduce((s, a) => s + parseFloat(a.amount), 0);
+        const bonus = sumOf("bonus");
+        const advances = sumOf("advance");
+        const deductions = sumOf("deduction");
+        const baseSalary = parseFloat(emp.salary);
+        const netAmount = baseSalary + bonus - advances - deductions;
+        totalNet += netAmount;
+
+        const [payslip] = await tx.insert(schema.payslipsTable).values({
+          payrollRunId: run.id, storeId, employeeId: emp.id,
+          baseSalary: baseSalary.toFixed(2), bonusAmount: bonus.toFixed(2),
+          advancesAmount: advances.toFixed(2), deductionsAmount: deductions.toFixed(2),
+          netAmount: netAmount.toFixed(2),
+        }).returning();
+        payslips.push(payslip);
+
+        if (adjustments.length > 0) {
+          await tx.update(schema.payrollAdjustmentsTable)
+            .set({ payslipId: payslip.id })
+            .where(inArray(schema.payrollAdjustmentsTable.id, adjustments.map(a => a.id)));
+        }
+      }
+
+      // Book the combined expense once: main caisse debit + accounting transaction.
+      if (totalNet > 0) {
+        const mainCaisse = await ensureCaisse(null, null, tx);
+        const { oldBalance, newBalance } = await applyCaisseDelta(tx, mainCaisse.id, -totalNet);
+        await tx.insert(schema.caisseMovementsTable).values({
+          caisseId: mainCaisse.id, type: "debit", amount: totalNet.toFixed(2),
+          reason: "salary_payment", actorUserId,
+          notes: `Paie ${periodStart} → ${periodEnd} (${payslips.length} employés)`,
+          balanceBefore: oldBalance.toFixed(2), balanceAfter: newBalance.toFixed(2),
+        });
+        await tx.insert(schema.transactionsTable).values({
+          storeId, type: "expense", category: "salary",
+          amount: totalNet.toFixed(2),
+          description: `Paie ${periodStart} → ${periodEnd} (${payslips.length} employés)`,
+          date: periodEnd, reference: `PAYROLL-${run.id}`,
+        });
+      }
+
+      return { run, payslips };
+    });
+
+    res.status(201).json(result);
   } catch (err) { req.log.error(err); res.status(500).json({ error: "Internal server error" }); }
 });
 

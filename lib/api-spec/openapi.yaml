@@ -1146,6 +1146,206 @@ paths:
               schema:
                 $ref: "#/components/schemas/SuccessResponse"
 
+  /erp/purchase-annexe-charges:
+    get:
+      operationId: getPurchaseAnnexeCharges
+      tags: [erp]
+      summary: List annexe charges (frais annexes distributed across purchase orders)
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Annexe charges
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/PurchaseAnnexeCharge"
+    post:
+      operationId: createPurchaseAnnexeCharge
+      tags: [erp]
+      summary: Create an annexe charge, distributed proportionally across selected purchase orders
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreatePurchaseAnnexeChargeRequest"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PurchaseAnnexeCharge"
+
+  /erp/purchase-annexe-charges/{id}:
+    delete:
+      operationId: deletePurchaseAnnexeCharge
+      tags: [erp]
+      summary: Delete an annexe charge and revert affected CUMP calculations
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: integer
+      responses:
+        "204":
+          description: Deleted
+
+  /erp/products/{productId}/history:
+    get:
+      operationId: getProductHistory
+      tags: [erp]
+      summary: Full cross-store purchase/sale/movement/return history for a product
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: productId
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Product history
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProductHistoryResponse"
+
+  /erp/payroll/adjustments:
+    get:
+      operationId: getPayrollAdjustments
+      tags: [erp]
+      summary: List payroll adjustments (avances/retenues/primes)
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: query
+          name: employeeId
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Payroll adjustments
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/PayrollAdjustment"
+    post:
+      operationId: createPayrollAdjustment
+      tags: [erp]
+      summary: Record an avance/retenue/prime for an employee
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreatePayrollAdjustmentRequest"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PayrollAdjustment"
+
+  /erp/payroll/adjustments/{id}:
+    delete:
+      operationId: deletePayrollAdjustment
+      tags: [erp]
+      summary: Delete a payroll adjustment (only if not yet folded into a payslip)
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Deleted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+
+  /erp/payroll/runs:
+    get:
+      operationId: getPayrollRuns
+      tags: [erp]
+      summary: List generated payroll runs
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Payroll runs
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/PayrollRun"
+
+  /erp/payroll/payslips:
+    get:
+      operationId: getPayslips
+      tags: [erp]
+      summary: List generated payslips
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: query
+          name: runId
+          schema:
+            type: integer
+        - in: query
+          name: employeeId
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Payslips
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Payslip"
+
+  /erp/payroll/generate:
+    post:
+      operationId: generatePayroll
+      tags: [erp]
+      summary: Generate payroll for all active employees over a period
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/GeneratePayrollRequest"
+      responses:
+        "201":
+          description: Generated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GeneratePayrollResponse"
+
   /erp/attendance:
     get:
       operationId: getAttendance
@@ -1423,6 +1623,31 @@ paths:
                   $ref: "#/components/schemas/PurchaseOrderItem"
 
   /erp/purchase-orders/{id}:
+    put:
+      operationId: updatePurchaseOrder
+      tags: [erp]
+      summary: Update a pending purchase order
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreatePurchaseOrderRequest"
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PurchaseOrder"
     delete:
       operationId: deletePurchaseOrder
       tags: [erp]
@@ -4204,6 +4429,15 @@ components:
           enum: [active, inactive, on_leave]
         hireDate:
           type: string
+        matricule:
+          type: string
+          nullable: true
+        cnasNumber:
+          type: string
+          nullable: true
+        bankAccount:
+          type: string
+          nullable: true
         createdAt:
           type: string
       required: [id, name, position, salary, status, hireDate]
@@ -4223,7 +4457,386 @@ components:
           type: string
         hireDate:
           type: string
+        matricule:
+          type: string
+        cnasNumber:
+          type: string
+        bankAccount:
+          type: string
       required: [name, position, salary, hireDate]
+
+    PurchaseAnnexeCharge:
+      type: object
+      properties:
+        id:
+          type: integer
+        storeId:
+          type: integer
+        description:
+          type: string
+        totalAmount:
+          type: string
+        date:
+          type: string
+        notes:
+          type: string
+          nullable: true
+        createdAt:
+          type: string
+        purchaseOrderIds:
+          type: array
+          items:
+            type: integer
+      required: [id, storeId, description, totalAmount, date, createdAt, purchaseOrderIds]
+
+    CreatePurchaseAnnexeChargeRequest:
+      type: object
+      properties:
+        description:
+          type: string
+        totalAmount:
+          type: number
+        date:
+          type: string
+        notes:
+          type: string
+        purchaseOrderIds:
+          type: array
+          items:
+            type: integer
+      required: [description, totalAmount, date, purchaseOrderIds]
+
+    ProductHistoryPurchase:
+      type: object
+      properties:
+        purchaseOrderId:
+          type: integer
+        quantity:
+          type: number
+        unitCost:
+          type: string
+        status:
+          type: string
+        createdAt:
+          type: string
+          nullable: true
+        receivedAt:
+          type: string
+          nullable: true
+        supplierName:
+          type: string
+          nullable: true
+        storeId:
+          type: integer
+        storeNameAr:
+          type: string
+          nullable: true
+        storeNameEn:
+          type: string
+          nullable: true
+      required: [purchaseOrderId, quantity, unitCost, status, storeId]
+
+    ProductHistorySale:
+      type: object
+      properties:
+        orderId:
+          type: integer
+        quantity:
+          type: number
+        unitPrice:
+          type: string
+        customerName:
+          type: string
+          nullable: true
+        customerPhone:
+          type: string
+          nullable: true
+        status:
+          type: string
+        createdAt:
+          type: string
+          nullable: true
+        storeId:
+          type: integer
+        storeNameAr:
+          type: string
+          nullable: true
+        storeNameEn:
+          type: string
+          nullable: true
+      required: [orderId, quantity, unitPrice, status, storeId]
+
+    ProductHistoryMovementEntry:
+      type: object
+      properties:
+        kind:
+          type: string
+          enum: [movement]
+        id:
+          type: string
+        date:
+          type: string
+          nullable: true
+        movementType:
+          type: string
+        quantity:
+          type: number
+        reason:
+          type: string
+          nullable: true
+        reference:
+          type: string
+          nullable: true
+        storeId:
+          type: integer
+        storeNameAr:
+          type: string
+          nullable: true
+        storeNameEn:
+          type: string
+          nullable: true
+      required: [kind, id, movementType, quantity, storeId]
+
+    ProductHistoryTransferEntry:
+      type: object
+      properties:
+        kind:
+          type: string
+          enum: [transfer]
+        id:
+          type: string
+        date:
+          type: string
+          nullable: true
+        status:
+          type: string
+        transferId:
+          type: integer
+        quantity:
+          type: number
+        sourceStoreId:
+          type: integer
+        sourceStoreNameAr:
+          type: string
+          nullable: true
+        sourceStoreNameEn:
+          type: string
+          nullable: true
+        destStoreId:
+          type: integer
+        destStoreNameAr:
+          type: string
+          nullable: true
+        destStoreNameEn:
+          type: string
+          nullable: true
+      required: [kind, id, status, transferId, quantity, sourceStoreId, destStoreId]
+
+    ProductHistoryReturn:
+      type: object
+      properties:
+        id:
+          type: integer
+        bonRetourId:
+          type: integer
+        date:
+          type: string
+          nullable: true
+        customerName:
+          type: string
+          nullable: true
+        originalOrderId:
+          type: integer
+          nullable: true
+        retourType:
+          type: string
+          nullable: true
+        reason:
+          type: string
+          nullable: true
+        quantity:
+          type: number
+        unitPrice:
+          type: string
+      required: [id, bonRetourId, quantity, unitPrice]
+
+    ProductHistorySupplierReturn:
+      type: object
+      properties:
+        id:
+          type: integer
+        bonRetourFournisseurId:
+          type: integer
+        date:
+          type: string
+          nullable: true
+        supplierName:
+          type: string
+          nullable: true
+        originalPurchaseOrderId:
+          type: integer
+          nullable: true
+        reason:
+          type: string
+          nullable: true
+        quantity:
+          type: number
+        unitCost:
+          type: string
+      required: [id, bonRetourFournisseurId, quantity, unitCost]
+
+    ProductHistoryResponse:
+      type: object
+      properties:
+        purchases:
+          type: array
+          items:
+            $ref: "#/components/schemas/ProductHistoryPurchase"
+        sales:
+          type: array
+          items:
+            $ref: "#/components/schemas/ProductHistorySale"
+        timeline:
+          type: array
+          items:
+            oneOf:
+              - $ref: "#/components/schemas/ProductHistoryMovementEntry"
+              - $ref: "#/components/schemas/ProductHistoryTransferEntry"
+        returns:
+          type: array
+          items:
+            $ref: "#/components/schemas/ProductHistoryReturn"
+        supplierReturns:
+          type: array
+          items:
+            $ref: "#/components/schemas/ProductHistorySupplierReturn"
+        currentStoreId:
+          type: integer
+      required: [purchases, sales, timeline, returns, supplierReturns, currentStoreId]
+
+    PayrollAdjustment:
+      type: object
+      properties:
+        id:
+          type: integer
+        employeeId:
+          type: integer
+        employeeName:
+          type: string
+          nullable: true
+        type:
+          type: string
+          enum: [advance, deduction, bonus]
+        amount:
+          type: string
+        reason:
+          type: string
+          nullable: true
+        date:
+          type: string
+        payslipId:
+          type: integer
+          nullable: true
+        createdAt:
+          type: string
+      required: [id, employeeId, type, amount, date]
+
+    CreatePayrollAdjustmentRequest:
+      type: object
+      properties:
+        employeeId:
+          type: integer
+        type:
+          type: string
+          enum: [advance, deduction, bonus]
+        amount:
+          type: number
+        reason:
+          type: string
+        date:
+          type: string
+      required: [employeeId, type, amount, date]
+
+    PayrollRun:
+      type: object
+      properties:
+        id:
+          type: integer
+        periodStart:
+          type: string
+        periodEnd:
+          type: string
+        createdAt:
+          type: string
+        employeeCount:
+          type: integer
+        totalNet:
+          type: string
+      required: [id, periodStart, periodEnd, createdAt]
+
+    Payslip:
+      type: object
+      properties:
+        id:
+          type: integer
+        payrollRunId:
+          type: integer
+        employeeId:
+          type: integer
+        employeeName:
+          type: string
+          nullable: true
+        matricule:
+          type: string
+          nullable: true
+        position:
+          type: string
+          nullable: true
+        cnasNumber:
+          type: string
+          nullable: true
+        bankAccount:
+          type: string
+          nullable: true
+        baseSalary:
+          type: string
+        bonusAmount:
+          type: string
+        advancesAmount:
+          type: string
+        deductionsAmount:
+          type: string
+        netAmount:
+          type: string
+        periodStart:
+          type: string
+          nullable: true
+        periodEnd:
+          type: string
+          nullable: true
+        createdAt:
+          type: string
+      required: [id, payrollRunId, employeeId, baseSalary, bonusAmount, advancesAmount, deductionsAmount, netAmount]
+
+    GeneratePayrollRequest:
+      type: object
+      properties:
+        periodStart:
+          type: string
+        periodEnd:
+          type: string
+      required: [periodStart, periodEnd]
+
+    GeneratePayrollResponse:
+      type: object
+      properties:
+        run:
+          $ref: "#/components/schemas/PayrollRun"
+        payslips:
+          type: array
+          items:
+            $ref: "#/components/schemas/Payslip"
+      required: [run, payslips]
 
     Attendance:
       type: object

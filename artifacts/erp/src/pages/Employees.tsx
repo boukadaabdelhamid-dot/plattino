@@ -13,17 +13,21 @@ import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Plus, Pencil, Trash2, ChevronUp, ChevronDown, ChevronsUpDown } from "lucide-react";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Plus, Pencil, Trash2, ChevronUp, ChevronDown, ChevronsUpDown, Users, Wallet } from "lucide-react";
+import PayrollPanel from "@/components/PayrollPanel";
 
 type EmployeeRow = Employee & { solde?: string; role?: string; isActive?: boolean; userId?: number };
 
 type EmpForm = {
   name: string; email: string; phone: string;
   position: string; salary: string; hireDate: string; password: string;
+  matricule: string; cnasNumber: string; bankAccount: string;
 };
 const emptyForm: EmpForm = {
   name: "", email: "", phone: "",
   position: "", salary: "", hireDate: new Date().toISOString().slice(0, 10), password: "",
+  matricule: "", cnasNumber: "", bankAccount: "",
 };
 
 type SortCol = "nom" | "prenom" | "email" | "phone" | "solde" | "status";
@@ -107,6 +111,7 @@ export default function Employees() {
       name: e.name ?? "", email: e.email ?? "", phone: e.phone ?? "",
       position: e.position ?? "", salary: String(e.salary ?? ""),
       hireDate: e.hireDate?.slice(0, 10) ?? "", password: "",
+      matricule: e.matricule ?? "", cnasNumber: e.cnasNumber ?? "", bankAccount: e.bankAccount ?? "",
     });
     setEditStatus(e.status ?? "active");
     setDialog({ open: true, editing: e });
@@ -125,6 +130,9 @@ export default function Employees() {
           salary: form.salary,
           hireDate: form.hireDate,
           status: editStatus as Employee["status"],
+          matricule: form.matricule || undefined,
+          cnasNumber: form.cnasNumber || undefined,
+          bankAccount: form.bankAccount || undefined,
         } as unknown as Parameters<typeof updateEmp.mutate>[0]["data"],
       }, { onSettled });
     } else {
@@ -136,6 +144,9 @@ export default function Employees() {
           position: form.position,
           salary: form.salary,
           hireDate: form.hireDate,
+          matricule: form.matricule || undefined,
+          cnasNumber: form.cnasNumber || undefined,
+          bankAccount: form.bankAccount || undefined,
           ...(form.password ? { password: form.password } : {}),
         } as unknown as Parameters<typeof createEmp.mutate>[0]["data"],
       }, { onSettled });
@@ -153,11 +164,23 @@ export default function Employees() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold">{t("Employés", "الموظفون")}</h1>
-          <p className="text-sm text-muted-foreground">{t("Gérer votre équipe", "إدارة الفريق")}</p>
-        </div>
+      <div>
+        <h1 className="text-2xl font-bold">{t("Employés", "الموظفون")}</h1>
+        <p className="text-sm text-muted-foreground">{t("Gérer votre équipe et la paie", "إدارة الفريق والرواتب")}</p>
+      </div>
+
+      <Tabs defaultValue="employees">
+        <TabsList className="h-9">
+          <TabsTrigger value="employees" className="text-xs gap-1.5">
+            <Users className="h-3.5 w-3.5" />{t("Employés", "الموظفون")}
+          </TabsTrigger>
+          <TabsTrigger value="payroll" className="text-xs gap-1.5">
+            <Wallet className="h-3.5 w-3.5" />{t("Paie", "الرواتب")}
+          </TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="employees" className="mt-4 space-y-4">
+      <div className="flex items-center justify-end">
         <Button onClick={openCreate} data-testid="button-add-employee">
           <Plus className="h-4 w-4 mr-2" /> {t("Ajouter", "إضافة")}
         </Button>
@@ -278,6 +301,12 @@ export default function Employees() {
           </div>
         </div>
       )}
+        </TabsContent>
+
+        <TabsContent value="payroll" className="mt-4">
+          <PayrollPanel employees={employees} currency={currency} />
+        </TabsContent>
+      </Tabs>
 
       <Dialog open={dialog.open} onOpenChange={v => setDialog(d => ({ ...d, open: v }))}>
         <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
@@ -301,6 +330,22 @@ export default function Employees() {
                   type={type} className="h-8 text-sm" />
               </div>
             ))}
+
+            {([
+              { label: t("Matricule", "الرقم التسلسلي"), key: "matricule" as keyof EmpForm },
+              { label: t("N° CNAS", "رقم الضمان الاجتماعي"), key: "cnasNumber" as keyof EmpForm },
+            ] as const).map(({ label, key }) => (
+              <div key={key}>
+                <Label className="text-xs mb-1 block">{label}</Label>
+                <Input value={form[key]} onChange={e => setForm(f => ({ ...f, [key]: e.target.value }))}
+                  type="text" className="h-8 text-sm" />
+              </div>
+            ))}
+            <div className="col-span-2">
+              <Label className="text-xs mb-1 block">{t("Compte bancaire / CCP", "الحساب البنكي / CCP")}</Label>
+              <Input value={form.bankAccount} onChange={e => setForm(f => ({ ...f, bankAccount: e.target.value }))}
+                type="text" className="h-8 text-sm" />
+            </div>
 
             {!dialog.editing && (
               <div className="col-span-2">

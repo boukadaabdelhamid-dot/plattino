@@ -18,8 +18,16 @@ export const employeesTable = pgTable("employees", {
   salary: numeric("salary", { precision: 10, scale: 2 }).notNull(),
   status: employeeStatusEnum("status").notNull().default("active"),
   hireDate: date("hire_date").notNull(),
+  // Payroll identity — optional so existing rows are unaffected; enforced as
+  // required by the app for newly created employees.
+  matricule: text("matricule"),
+  cnasNumber: text("cnas_number"),
+  bankAccount: text("bank_account"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
-});
+}, (t) => ({
+  // Partial unique index — multiple NULLs allowed (legacy rows without a matricule yet).
+  uniqMatricule: uniqueIndex("employees_matricule_unique").on(t.matricule).where(sql`${t.matricule} IS NOT NULL`),
+}));
 
 export const attendanceStatusEnum = pgEnum("attendance_status", ["present", "absent", "late", "half_day"]);
 
@@ -411,6 +419,7 @@ export const caisseMovementReasonEnum = pgEnum("caisse_movement_reason", [
   "customer_payment",
   "supplier_payment",
   "purchase_payment",
+  "salary_payment",
 ]);
 export const caisseTransferStatusEnum = pgEnum("caisse_transfer_status", [
   "pending", "accepted", "rejected", "cancelled",
@@ -509,3 +518,56 @@ export const userPermissionsTable = pgTable("user_permissions", {
 ]);
 
 export type UserPermission = typeof userPermissionsTable.$inferSelect;
+
+// ─── Payroll (bulk monthly generation, avances/retenues/prime) ───────────────
+// A `payroll_run` groups one bulk generation for all active employees over a
+// given (admin-editable) period. Once created, adjustments dated inside that
+// period are locked (see the `locked` guard applied in the routes layer).
+export const payrollRunsTable = pgTable("payroll_runs", {
+  id: serial("id").primaryKey(),
+  storeId: integer("store_id").references(() => storesTable.id).notNull(),
+  periodStart: date("period_start").notNull(),
+  periodEnd: date("period_end").notNull(),
+  generatedByUserId: integer("generated_by_user_id").references(() => usersTable.id).notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+}, (t) => ({
+  uniqPeriod: uniqueIndex("payroll_runs_store_period_unique").on(t.storeId, t.periodStart, t.periodEnd),
+}));
+
+export const payslipsTable = pgTable("payslips", {
+  id: serial("id").primaryKey(),
+  payrollRunId: integer("payroll_run_id").references(() => payrollRunsTable.id).notNull(),
+  storeId: integer("store_id").references(() => storesTable.id).notNull(),
+  employeeId: integer("employee_id").references(() => employeesTable.id).notNull(),
+  baseSalary: numeric("base_salary", { precision: 10, scale: 2 }).notNull(),
+  bonusAmount: numeric("bonus_amount", { precision: 10, scale: 2 }).notNull().default("0"),
+  advancesAmount: numeric("advances_amount", { precision: 10, scale: 2 }).notNull().default("0"),
+  deductionsAmount: numeric("deductions_amount", { precision: 10, scale: 2 }).notNull().default("0"),
+  netAmount: numeric("net_amount", { precision: 10, scale: 2 }).notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+}, (t) => ({
+  uniqEmployeeRun: uniqueIndex("payslips_run_employee_unique").on(t.payrollRunId, t.employeeId),
+}));
+
+// avance = advance paid to the employee ahead of payday (deducted from net pay);
+// retenue = deduction (e.g. penalty); prime = manually entered performance bonus.
+export const payrollAdjustmentTypeEnum = pgEnum("payroll_adjustment_type", ["advance", "deduction", "bonus"]);
+
+export const payrollAdjustmentsTable = pgTable("payroll_adjustments", {
+  id: serial("id").primaryKey(),
+  storeId: integer("store_id").references(() => storesTable.id).notNull(),
+  employeeId: integer("employee_id").references(() => employeesTable.id).notNull(),
+  type: payrollAdjustmentTypeEnum("type").notNull(),
+  amount: numeric("amount", { precision: 10, scale: 2 }).notNull(),
+  reason: text("reason"),
+  date: date("date").notNull(),
+  // Set once this adjustment is folded into a generated payslip — from that
+  // point on it is immutable (the period it falls in is locked).
+  payslipId: integer("payslip_id").references(() => payslipsTable.id),
+  createdByUserId: integer("created_by_user_id").references(() => usersTable.id),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+export type PayrollRun = typeof payrollRunsTable.$inferSelect;
+export type Payslip = typeof payslipsTable.$inferSelect;
+export type PayrollAdjustment = typeof payrollAdjustmentsTable.$inferSelect;

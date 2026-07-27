@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from "react";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient, keepPreviousData } from "@tanstack/react-query";
 import { useGetErpCustomers, useGetProducts, type CustomerSummary, type Product } from "@workspace/api-client-react";
 import { useLang } from "@/hooks/use-lang";
 import { usePermissions } from "@/hooks/use-permissions";
@@ -109,8 +109,12 @@ async function apiDelete<T>(url: string): Promise<T> {
 
 // ─── Query keys ──────────────────────────────────────────────────────────────
 
-const SALE_ORDERS_KEY = (search?: string, status?: string) =>
-  ["erp-sale-orders", search ?? "", status ?? ""] as const;
+const SALE_ORDERS_KEY = (
+  search?: string, status?: string,
+  dateFrom?: string, dateTo?: string,
+  orderSource?: string, pmFilter?: string,
+  page?: number, pageSize?: number,
+) => ["erp-sale-orders", search ?? "", status ?? "", dateFrom ?? "", dateTo ?? "", orderSource ?? "", pmFilter ?? "", page ?? 1, pageSize ?? 25] as const;
 
 // ─── Status helpers ──────────────────────────────────────────────────────────
 
@@ -137,6 +141,12 @@ export default function SaleOrders() {
 
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
+  const [orderSource, setOrderSource] = useState("");
+  const [paymentMethodFilter, setPaymentMethodFilter] = useState("");
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(25);
   const [editorOpen, setEditorOpen] = useState(false);
   const [editingOrder, setEditingOrder] = useState<SaleOrderDetail | null>(null);
   const [viewOpen, setViewOpen] = useState(false);
@@ -153,17 +163,27 @@ export default function SaleOrders() {
     return () => clearTimeout(t);
   }, [search]);
 
+  // Reset to page 1 whenever any filter changes
+  React.useEffect(() => { setPage(1); }, [debouncedSearch, statusFilter, dateFrom, dateTo, orderSource, paymentMethodFilter, pageSize]);
+
   const { data: listData, isLoading } = useQuery({
-    queryKey: SALE_ORDERS_KEY(debouncedSearch || undefined, statusFilter || undefined),
+    queryKey: SALE_ORDERS_KEY(debouncedSearch || undefined, statusFilter || undefined, dateFrom || undefined, dateTo || undefined, orderSource || undefined, paymentMethodFilter || undefined, page, pageSize),
     queryFn: () => {
-      const params = new URLSearchParams({ limit: "100" });
+      const params = new URLSearchParams({ page: String(page), limit: String(pageSize) });
       if (debouncedSearch) params.set("search", debouncedSearch);
       if (statusFilter) params.set("status", statusFilter);
-      return apiGet<{ data: SaleOrder[]; total: number }>(`/erp/sale-orders?${params}`);
+      if (dateFrom) params.set("dateFrom", dateFrom);
+      if (dateTo) params.set("dateTo", dateTo);
+      if (orderSource) params.set("orderSource", orderSource);
+      if (paymentMethodFilter) params.set("paymentMethod", paymentMethodFilter);
+      return apiGet<{ data: SaleOrder[]; total: number; page: number; limit: number }>(`/erp/sale-orders?${params}`);
     },
+    placeholderData: keepPreviousData,
   });
 
   const orders = listData?.data ?? [];
+  const totalCount = listData?.total ?? 0;
+  const totalPages = Math.max(1, Math.ceil(totalCount / pageSize));
 
   const createMutation = useMutation({
     mutationFn: (payload: { customerUserId?: number | null; customerName?: string; customerPhone?: string; items: { productId: number; quantity: number; unitPrice: number }[]; notes?: string }) =>
@@ -270,7 +290,7 @@ export default function SaleOrders() {
       <div className={`grid ${canViewProfit ? "grid-cols-3" : "grid-cols-2"} gap-4`}>
         <div className="rounded-lg border bg-card p-4">
           <p className="text-xs text-muted-foreground">{t("Total bons", "إجمالي البونات")}</p>
-          <p className="text-2xl font-bold mt-1">{orders.length}</p>
+          <p className="text-2xl font-bold mt-1">{totalCount}</p>
         </div>
         <div className="rounded-lg border bg-card p-4">
           <p className="text-xs text-muted-foreground">{t("Chiffre d'affaires", "رقم الأعمال")}</p>
@@ -290,24 +310,71 @@ export default function SaleOrders() {
       </div>
 
       {/* Filters */}
-      <div className="flex gap-2 items-center">
-        <Input
-          placeholder={t("Rechercher (client, N°)...", "بحث (عميل، رقم)...")}
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          className="h-8 text-xs max-w-xs"
-        />
-        <select
-          value={statusFilter}
-          onChange={(e) => setStatusFilter(e.target.value)}
-          className="h-8 text-xs border rounded-md px-2 bg-background"
-        >
-          <option value="">{t("Tous les états", "جميع الحالات")}</option>
-          <option value="draft">{t("Brouillons", "مسودات")}</option>
-          <option value="pending">{t("En cours", "قيد التنفيذ")}</option>
-          <option value="delivered">{t("Clôturés", "مُغلقة")}</option>
-          <option value="cancelled">{t("Annulés", "ملغية")}</option>
-        </select>
+      <div className="space-y-2">
+        <div className="flex gap-2 items-center flex-wrap">
+          <div className="relative">
+            <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
+            <Input
+              placeholder={t("Rechercher (client, N°)...", "بحث (عميل، رقم)...")}
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className="h-8 text-xs pl-7 w-56"
+            />
+          </div>
+          <select
+            value={statusFilter}
+            onChange={(e) => setStatusFilter(e.target.value)}
+            className="h-8 text-xs border rounded-md px-2 bg-background"
+          >
+            <option value="">{t("Tous les états", "جميع الحالات")}</option>
+            <option value="draft">{t("Brouillons", "مسودات")}</option>
+            <option value="pending">{t("En cours", "قيد التنفيذ")}</option>
+            <option value="delivered">{t("Clôturés", "مُغلقة")}</option>
+            <option value="cancelled">{t("Annulés", "ملغية")}</option>
+          </select>
+          <select
+            value={orderSource}
+            onChange={(e) => setOrderSource(e.target.value)}
+            className="h-8 text-xs border rounded-md px-2 bg-background"
+          >
+            <option value="">{t("Tous les types", "جميع الأنواع")}</option>
+            <option value="bon">{t("Bon de vente", "بون بيع")}</option>
+            <option value="pos">{t("Vente rapide", "بيع سريع")}</option>
+          </select>
+          <select
+            value={paymentMethodFilter}
+            onChange={(e) => setPaymentMethodFilter(e.target.value)}
+            className="h-8 text-xs border rounded-md px-2 bg-background"
+          >
+            <option value="">{t("Tout paiement", "جميع طرق الدفع")}</option>
+            <option value="comptant">{t("Comptant", "نقداً")}</option>
+            <option value="a_terme">{t("À terme", "آجل")}</option>
+          </select>
+        </div>
+        <div className="flex gap-2 items-center flex-wrap">
+          <label className="text-xs text-muted-foreground">{t("Du", "من")}</label>
+          <input
+            type="date"
+            value={dateFrom}
+            onChange={(e) => setDateFrom(e.target.value)}
+            className="h-8 text-xs border rounded-md px-2 bg-background"
+          />
+          <label className="text-xs text-muted-foreground">{t("Au", "إلى")}</label>
+          <input
+            type="date"
+            value={dateTo}
+            onChange={(e) => setDateTo(e.target.value)}
+            className="h-8 text-xs border rounded-md px-2 bg-background"
+          />
+          {(dateFrom || dateTo || orderSource || paymentMethodFilter || statusFilter) && (
+            <button
+              onClick={() => { setDateFrom(""); setDateTo(""); setOrderSource(""); setPaymentMethodFilter(""); setStatusFilter(""); }}
+              className="h-8 text-xs px-2 text-muted-foreground hover:text-foreground border rounded-md bg-background"
+            >
+              {t("Réinitialiser", "إعادة ضبط")}
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Table */}
@@ -442,6 +509,75 @@ export default function SaleOrders() {
             )}
           </TableBody>
         </Table>
+      </div>
+
+      {/* Pagination */}
+      <div className="flex items-center justify-between gap-4 flex-wrap">
+        <span className="text-sm text-muted-foreground">
+          {totalCount === 0
+            ? t("Aucun bon trouvé", "لا توجد بونات")
+            : t(
+                `Affichage ${(page - 1) * pageSize + 1}–${Math.min(page * pageSize, totalCount)} sur ${totalCount} bon(s)`,
+                `عرض ${(page - 1) * pageSize + 1}–${Math.min(page * pageSize, totalCount)} من ${totalCount}`,
+              )}
+        </span>
+        <div className="flex items-center gap-3 flex-wrap">
+          <div className="flex items-center gap-1.5">
+            <span className="text-xs text-muted-foreground">{t("Lignes :", "الصفوف:")}</span>
+            <select
+              value={String(pageSize)}
+              onChange={(e) => setPageSize(Number(e.target.value))}
+              className="h-8 text-xs border rounded-md px-2 bg-background"
+            >
+              {[25, 50, 100, 200].map((n) => (
+                <option key={n} value={String(n)}>{n}</option>
+              ))}
+            </select>
+          </div>
+          <div className="flex items-center gap-1">
+            <Button
+              variant="outline" size="sm" className="h-8 px-2 text-xs"
+              onClick={() => setPage((p) => Math.max(1, p - 1))}
+              disabled={page === 1}
+            >
+              {t("← Préc.", "→ السابق")}
+            </Button>
+            {(() => {
+              const pages: (number | "...")[] = [];
+              if (totalPages <= 7) {
+                for (let i = 1; i <= totalPages; i++) pages.push(i);
+              } else {
+                pages.push(1);
+                if (page > 3) pages.push("...");
+                for (let i = Math.max(2, page - 1); i <= Math.min(totalPages - 1, page + 1); i++) pages.push(i);
+                if (page < totalPages - 2) pages.push("...");
+                pages.push(totalPages);
+              }
+              return pages.map((pg, i) =>
+                pg === "..." ? (
+                  <span key={`e${i}`} className="px-1 text-muted-foreground text-xs select-none">…</span>
+                ) : (
+                  <Button
+                    key={pg}
+                    variant={pg === page ? "default" : "outline"}
+                    size="sm"
+                    className={`h-8 w-8 p-0 text-xs ${pg === page ? "bg-[#1B3057] hover:bg-[#1B3057]/90" : ""}`}
+                    onClick={() => setPage(pg as number)}
+                  >
+                    {pg}
+                  </Button>
+                )
+              );
+            })()}
+            <Button
+              variant="outline" size="sm" className="h-8 px-2 text-xs"
+              onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+              disabled={page === totalPages}
+            >
+              {t("Suiv. →", "التالي ←")}
+            </Button>
+          </div>
+        </div>
       </div>
 
       {/* Editor dialog */}

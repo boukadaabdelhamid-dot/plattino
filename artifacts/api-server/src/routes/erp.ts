@@ -4246,13 +4246,17 @@ async function checkProductsInStore(productIds: number[], storeId: number): Prom
 router.get("/erp/sale-orders", authenticate, requireStaff, requireStore, requirePermission("orders", "view"), async (req: AuthRequest, res) => {
   try {
     const storeId = req.currentStoreId!;
-    const { page = "1", limit = "50", search, status } = req.query as Record<string, string | undefined>;
+    const { page = "1", limit = "50", search, status, dateFrom, dateTo, orderSource, paymentMethod: pmFilter } = req.query as Record<string, string | undefined>;
     const pageNum = Math.max(1, parseInt(page, 10) || 1);
     const limitNum = Math.max(1, Math.min(200, parseInt(limit, 10) || 50));
     const offset = (pageNum - 1) * limitNum;
 
     const searchClause = search ? `AND (lower(o.customer_name) LIKE lower('%${search.replace(/'/g, "''")}%') OR CAST(o.id AS TEXT) LIKE '%${search.replace(/'/g, "''")}%')` : "";
     const statusClause = status ? `AND o.status = '${status.replace(/'/g, "''")}'` : "";
+    const dateFromClause = dateFrom ? `AND o.created_at >= '${dateFrom.replace(/'/g, "''")}'::date` : "";
+    const dateToClause = dateTo ? `AND o.created_at < ('${dateTo.replace(/'/g, "''")}'::date + INTERVAL '1 day')` : "";
+    const orderSourceClause = orderSource && ["bon", "pos"].includes(orderSource) ? `AND o.order_source = '${orderSource}'` : "";
+    const pmClause = pmFilter && ["comptant", "a_terme"].includes(pmFilter) ? `AND o.payment_method = '${pmFilter}'` : "";
 
     const result = await db.execute(sql`
       SELECT
@@ -4277,6 +4281,10 @@ router.get("/erp/sale-orders", authenticate, requireStaff, requireStore, require
         AND o.order_source IN ('bon', 'pos')
         ${sql.raw(searchClause)}
         ${sql.raw(statusClause)}
+        ${sql.raw(dateFromClause)}
+        ${sql.raw(dateToClause)}
+        ${sql.raw(orderSourceClause)}
+        ${sql.raw(pmClause)}
       GROUP BY o.id
       ORDER BY o.created_at DESC
       LIMIT ${limitNum} OFFSET ${offset}

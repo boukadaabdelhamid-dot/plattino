@@ -4,7 +4,7 @@ import {
   useDeletePurchaseOrder,
   useGetSuppliers, useGetProducts, useCreateSupplier,
   useGetPurchaseOrderItems,
-  getGetPurchaseOrdersQueryKey, getGetSuppliersQueryKey,
+  getGetPurchaseOrdersQueryKey, getGetPurchaseOrderItemsQueryKey, getGetSuppliersQueryKey,
   getGetPurchaseAnnexeChargesQueryKey,
   useGetPurchaseAnnexeCharges, useCreatePurchaseAnnexeCharge, useDeletePurchaseAnnexeCharge,
   getProducts, useUpdateProduct,
@@ -528,7 +528,13 @@ export default function PurchaseOrders() {
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           if (editingPO) {
             updatePO.mutate({ id: editingPO.id, data: payload as any }, {
-              onSuccess: () => { qc.invalidateQueries({ queryKey: getGetPurchaseOrdersQueryKey() }); setEditorOpen(false); },
+              onSuccess: () => {
+                qc.invalidateQueries({ queryKey: getGetPurchaseOrdersQueryKey() });
+                // Remove stale items cache so re-opening the same bon always
+                // fetches fresh data instead of serving pre-save cached items.
+                qc.removeQueries({ queryKey: getGetPurchaseOrderItemsQueryKey(editingPO.id) });
+                setEditorOpen(false);
+              },
               onError: (err) => alert(`Erreur: ${(err as Error).message}`),
             });
           } else {

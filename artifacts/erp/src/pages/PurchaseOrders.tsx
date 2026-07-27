@@ -24,6 +24,10 @@ import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
 } from "@/components/ui/dialog";
 import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import {
@@ -613,6 +617,18 @@ function PurchaseEditor({
   const [lines, setLines] = useState<EditLine[]>([]);
   const [lineSearch, setLineSearch] = useState("");
   const [code, setCode] = useState("");
+  const [confirmExitOpen, setConfirmExitOpen] = useState(false);
+  // Snapshot of the full editable form state taken when the dialog finishes loading.
+  // Used to detect unsaved changes on close.
+  type FormSnapshot = {
+    supplierId: number | null;
+    refAchat: string;
+    paymentMethod: "comptant" | "a_terme";
+    lines: Array<{ productId: number; qty: number; pu: number }>;
+  };
+  const snapshotRef = React.useRef<FormSnapshot>({
+    supplierId: null, refAchat: "", paymentMethod: "a_terme", lines: [],
+  });
   const updateProduct = useUpdateProduct();
   const cs = columnSettings;
   const store = useCurrentStore();
@@ -632,14 +648,26 @@ function PurchaseEditor({
     hasLoadedItemsRef.current = false;
     setLineSearch("");
     if (editing) {
-      setRefAchat(editing.notes || `Bon N°${editing.id}`);
+      const initRefAchat = editing.notes || `Bon N°${editing.id}`;
+      const initPayment: "comptant" | "a_terme" = editing.paymentMethod === "comptant" ? "comptant" : "a_terme";
+      setRefAchat(initRefAchat);
       setDate(editing.createdAt ? editing.createdAt.slice(0, 16) : new Date().toISOString().slice(0, 16));
-      setPaymentMethod(editing.paymentMethod === "comptant" ? "comptant" : "a_terme");
+      setPaymentMethod(initPayment);
       setLines([]);
+      // Snapshot lines will be completed when existingItems load (below).
+      // Snapshot the non-lines fields now so isDirty works before items arrive.
+      snapshotRef.current = {
+        supplierId: editing.supplierId,
+        refAchat: initRefAchat,
+        paymentMethod: initPayment,
+        lines: [],
+      };
     } else {
       setSupplier(null); setRefAchat(""); setLines([]); setCode("");
       setDate(new Date().toISOString().slice(0, 16));
       setPaymentMethod("a_terme");
+      // For a new PO the baseline is fully empty.
+      snapshotRef.current = { supplierId: null, refAchat: "", paymentMethod: "a_terme", lines: [] };
     }
   }, [open, editing]);
 
@@ -655,7 +683,7 @@ function PurchaseEditor({
     // background WS invalidations do not overwrite the user's in-progress edits.
     if (hasLoadedItemsRef.current) return;
     hasLoadedItemsRef.current = true;
-    setLines(existingItems.map((it) => ({
+    const loaded = existingItems.map((it) => ({
       productId: it.productId,
       designation: (it.productNameEn || it.productNameAr || `#${it.productId}`).toUpperCase(),
       qty: it.quantity,
@@ -663,11 +691,39 @@ function PurchaseEditor({
       qtyGratuit: 0,
       pu: parseFloat(it.unitCost ?? "0"),
       charges: parseFloat(it.totalCharges ?? "0"),
-    })));
+    }));
+    // Complete the snapshot with loaded lines (non-lines fields already set in the open effect).
+    snapshotRef.current = {
+      ...snapshotRef.current,
+      lines: loaded.map((l) => ({ productId: l.productId, qty: l.qty, pu: l.pu })),
+    };
+    setLines(loaded);
   }, [open, editing, existingItems]);
 
 
   const subtotal = lines.reduce((s, l) => s + l.pu * l.qty, 0);
+
+  // Detect unsaved changes by comparing the full editable form state to the snapshot.
+  const isDirty = React.useMemo(() => {
+    const snap = snapshotRef.current;
+    if ((supplier?.id ?? null) !== snap.supplierId) return true;
+    if (refAchat !== snap.refAchat) return true;
+    if (paymentMethod !== snap.paymentMethod) return true;
+    if (lines.length !== snap.lines.length) return true;
+    return lines.some((l, i) => {
+      const s = snap.lines[i];
+      return l.productId !== s.productId || l.qty !== s.qty || l.pu !== s.pu;
+    });
+  }, [supplier, refAchat, paymentMethod, lines]);
+
+  // Request to close: show confirm dialog only when there are unsaved edits.
+  function handleRequestClose() {
+    if (isDirty && !isLocked) {
+      setConfirmExitOpen(true);
+    } else {
+      onOpenChange(false);
+    }
+  }
 
   function addProductWithValues(p: Product, vals: { qty: number; pu: number; qtyGratuit: number }) {
     setLines((prev) => {
@@ -749,12 +805,12 @@ function PurchaseEditor({
   }, [lines, lineSearch]);
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={(o) => { if (!o) handleRequestClose(); else onOpenChange(o); }}>
       <DialogContent className="max-w-5xl max-h-[92vh] overflow-y-auto p-0">
         <div className="bg-emerald-700 text-white px-5 py-3 flex items-center justify-between">
           <DialogHeader className="flex-1">
             <DialogTitle className="text-white text-base flex items-center gap-2">
-              <X className="h-4 w-4 cursor-pointer" onClick={() => onOpenChange(false)} />
+              <X className="h-4 w-4 cursor-pointer" onClick={handleRequestClose} />
               <span>
                 {isExisting
                   ? `${t("Modifier achat", "تعديل الشراء")} n°${editing?.id ?? ""}`
@@ -1053,7 +1109,7 @@ function PurchaseEditor({
         </div>
 
         <DialogFooter className="px-5 py-3 border-t bg-slate-50">
-          <Button variant="outline" onClick={() => onOpenChange(false)}>{t("Annuler", "إلغاء")}</Button>
+          <Button variant="outline" onClick={handleRequestClose}>{t("Annuler", "إلغاء")}</Button>
           {isExisting && (
             <Button variant="outline" className="border-[#1B3057] text-[#1B3057] hover:bg-blue-50"
               onClick={() => {
@@ -1141,6 +1197,29 @@ function PurchaseEditor({
           }}
           onCancel={() => setPendingProduct(null)}
         />
+
+        <AlertDialog open={confirmExitOpen} onOpenChange={setConfirmExitOpen}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>{t("Modifications non enregistrées", "تعديلات غير محفوظة")}</AlertDialogTitle>
+              <AlertDialogDescription>
+                {t(
+                  "Vous avez des modifications non enregistrées. Voulez-vous vraiment quitter ?",
+                  "لديك تعديلات غير محفوظة — هل تريد الخروج بدون حفظ؟"
+                )}
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>{t("Continuer l'édition", "متابعة التعديل")}</AlertDialogCancel>
+              <AlertDialogAction
+                className="bg-red-600 hover:bg-red-700 text-white"
+                onClick={() => { setConfirmExitOpen(false); onOpenChange(false); }}
+              >
+                {t("Quitter sans enregistrer", "خروج بدون حفظ")}
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
       </DialogContent>
     </Dialog>
   );

@@ -2169,6 +2169,104 @@ export const AdjustInventoryResponse = zod.object({
 });
 
 /**
+ * @summary List physical inventory count sessions for the current store
+ */
+export const GetInventoryCountSessionsResponseItem = zod
+  .object({
+    id: zod.number(),
+    status: zod.enum(["open", "completed"]),
+    notes: zod.string().nullish(),
+    createdAt: zod.string().optional(),
+    completedAt: zod.string().nullish(),
+  })
+  .and(
+    zod.object({
+      createdByName: zod.string().nullish(),
+      itemCount: zod.number(),
+      countedCount: zod.number(),
+      totalVariance: zod.number(),
+    }),
+  );
+export const GetInventoryCountSessionsResponse = zod.array(
+  GetInventoryCountSessionsResponseItem,
+);
+
+/**
+ * @summary Start a new physical inventory count session (snapshots current stock)
+ */
+export const StartInventoryCountBody = zod.object({
+  notes: zod.string().optional(),
+});
+
+/**
+ * @summary Get a count session with its product lines
+ */
+export const GetInventoryCountSessionParams = zod.object({
+  id: zod.coerce.number(),
+});
+
+export const GetInventoryCountSessionResponse = zod
+  .object({
+    id: zod.number(),
+    status: zod.enum(["open", "completed"]),
+    notes: zod.string().nullish(),
+    createdAt: zod.string().optional(),
+    completedAt: zod.string().nullish(),
+  })
+  .and(
+    zod.object({
+      items: zod.array(
+        zod.object({
+          id: zod.number(),
+          productId: zod.number(),
+          systemQuantity: zod.number(),
+          countedQuantity: zod.number().nullish(),
+          difference: zod.number().nullish(),
+          nameEn: zod.string().optional(),
+          nameAr: zod.string().optional(),
+        }),
+      ),
+    }),
+  );
+
+/**
+ * @summary Enter/update the counted quantity for one product line
+ */
+export const UpdateInventoryCountItemParams = zod.object({
+  id: zod.coerce.number(),
+  itemId: zod.coerce.number(),
+});
+
+export const UpdateInventoryCountItemBody = zod.object({
+  countedQuantity: zod.number(),
+});
+
+export const UpdateInventoryCountItemResponse = zod.object({
+  id: zod.number(),
+  productId: zod.number(),
+  systemQuantity: zod.number(),
+  countedQuantity: zod.number().nullish(),
+  difference: zod.number().nullish(),
+  nameEn: zod.string().optional(),
+  nameAr: zod.string().optional(),
+});
+
+/**
+ * @summary Validate the session — applies stock adjustments for counted lines and locks it
+ */
+export const CompleteInventoryCountParams = zod.object({
+  id: zod.coerce.number(),
+});
+
+export const CompleteInventoryCountResponse = zod.object({
+  id: zod.number(),
+  status: zod.enum(["open", "completed"]),
+  notes: zod.string().nullish(),
+  createdAt: zod.string().optional(),
+  completedAt: zod.string().nullish(),
+});
+
+/**
  * @summary List transactions
  */
 export const GetTransactionsResponseItem = zod.object({

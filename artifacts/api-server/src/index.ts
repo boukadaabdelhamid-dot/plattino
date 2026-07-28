@@ -722,6 +722,27 @@ CREATE TABLE IF NOT EXISTS "product_expiry_batches" (
 ALTER TABLE "product_expiry_batches" ADD CONSTRAINT "product_expiry_batches_product_id_fk" FOREIGN KEY ("product_id") REFERENCES "public"."products"("id") ON DELETE CASCADE;--> statement-breakpoint
 ALTER TABLE "product_expiry_batches" ADD CONSTRAINT "product_expiry_batches_store_id_fk" FOREIGN KEY ("store_id") REFERENCES "public"."stores"("id") ON DELETE CASCADE;--> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "product_expiry_batches_product_store_idx" ON "product_expiry_batches" ("product_id", "store_id");--> statement-breakpoint
+-- ─── Inventory physical count (jrd) ──────────────────────────────────────────
+DO $$ BEGIN CREATE TYPE "public"."inventory_count_status" AS ENUM('open', 'completed'); EXCEPTION WHEN duplicate_object THEN NULL; END $$;--> statement-breakpoint
+CREATE TABLE IF NOT EXISTS "inventory_count_sessions" (
+  "id" serial PRIMARY KEY NOT NULL,
+  "store_id" integer NOT NULL,
+  "status" "inventory_count_status" DEFAULT 'open' NOT NULL,
+  "notes" text,
+  "created_by_user_id" integer NOT NULL,
+  "created_at" timestamp DEFAULT now() NOT NULL,
+  "completed_by_user_id" integer,
+  "completed_at" timestamp
+);--> statement-breakpoint
+CREATE TABLE IF NOT EXISTS "inventory_count_items" (
+  "id" serial PRIMARY KEY NOT NULL,
+  "session_id" integer NOT NULL,
+  "product_id" integer NOT NULL,
+  "system_quantity" double precision NOT NULL,
+  "counted_quantity" double precision,
+  "created_at" timestamp DEFAULT now() NOT NULL
+);--> statement-breakpoint
+CREATE UNIQUE INDEX IF NOT EXISTS "inventory_count_items_session_product_unique" ON "inventory_count_items" ("session_id", "product_id");--> statement-breakpoint
 `;
 
 

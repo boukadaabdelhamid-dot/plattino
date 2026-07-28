@@ -5,7 +5,7 @@ import {
   Printer, CreditCard, Tag, TrendingUp, Globe, Package,
   Image as ImageIcon, Copy, Send, Upload, QrCode, History,
   LayoutGrid, Check, Cloud, Columns3, Store, User, Building2, Receipt,
-  ShoppingCart,
+  ShoppingCart, ClipboardList,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
@@ -105,6 +105,13 @@ const SECTION_ACTIONS: Record<string, ActionDef[]> = {
     { key: "print",           labelFr: "Imprimer / Voir la facture",          labelAr: "طباعة الفاتورة / العرض",   icon: Printer  },
     { key: "manage_charges",  labelFr: "Gérer les charges annexes",           labelAr: "إدارة المصاريف الإضافية",  icon: Cloud    },
     { key: "column_settings", labelFr: "Configurer les colonnes affichées",   labelAr: "إعداد الأعمدة المعروضة",  icon: Columns3 },
+  ],
+  inventory: [
+    { key: "view",   labelFr: "Voir le stock",                     labelAr: "عرض المخزون",              icon: Eye           },
+    { key: "create", labelFr: "Créer / transférer",                labelAr: "إنشاء / تحويل",             icon: Plus          },
+    { key: "edit",   labelFr: "Modifier",                          labelAr: "تعديل",                     icon: PenLine       },
+    { key: "delete", labelFr: "Supprimer",                         labelAr: "حذف",                       icon: Trash2        },
+    { key: "count",  labelFr: "Lancer / valider un jrd physique",  labelAr: "بدء / تأكيد جرد فعلي",      icon: ClipboardList },
   ],
   settings: [
     { key: "view",                  labelFr: "Voir les paramètres",                     labelAr: "عرض الإعدادات",                  icon: Eye      },

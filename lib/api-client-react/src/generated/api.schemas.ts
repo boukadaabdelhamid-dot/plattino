@@ -1102,6 +1102,51 @@ export interface AdjustInventoryRequest {
   reason: string;
 }
 
+export type InventoryCountSessionStatus =
+  (typeof InventoryCountSessionStatus)[keyof typeof InventoryCountSessionStatus];
+
+export const InventoryCountSessionStatus = {
+  open: "open",
+  completed: "completed",
+} as const;
+
+export interface InventoryCountSession {
+  id: number;
+  status: InventoryCountSessionStatus;
+  notes?: string | null;
+  createdAt?: string;
+  completedAt?: string | null;
+}
+
+export type InventoryCountSessionSummary = InventoryCountSession & {
+  createdByName?: string | null;
+  itemCount: number;
+  countedCount: number;
+  totalVariance: number;
+};
+
+export interface InventoryCountItem {
+  id: number;
+  productId: number;
+  systemQuantity: number;
+  countedQuantity?: number | null;
+  difference?: number | null;
+  nameEn?: string;
+  nameAr?: string;
+}
+
+export type InventoryCountSessionDetail = InventoryCountSession & {
+  items: InventoryCountItem[];
+};
+
+export interface StartInventoryCountRequest {
+  notes?: string;
+}
+
+export interface UpdateCountItemRequest {
+  countedQuantity: number;
+}
+
 export interface StoreLite {
   id: number;
   nameEn: string;

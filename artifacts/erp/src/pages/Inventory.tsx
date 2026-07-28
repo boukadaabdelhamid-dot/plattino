@@ -18,6 +18,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { SlidersHorizontal, AlertTriangle } from "lucide-react";
 import { format } from "date-fns";
+import InventoryPhysicalCount from "@/components/inventory/InventoryPhysicalCount";
 
 const MOVEMENT_TYPE_COLORS: Record<string, string> = {
   in: "bg-emerald-100 text-emerald-700",
@@ -90,6 +91,7 @@ export default function Inventory() {
         <TabsList className="mb-2">
           <TabsTrigger value="stock">{t("Stock actuel", "المخزون الحالي")}</TabsTrigger>
           <TabsTrigger value="movements">{t("Historique des mouvements", "سجل الحركات")}</TabsTrigger>
+          <TabsTrigger value="count" data-testid="tab-physical-count">{t("Jrd physique", "الجرد الفعلي")}</TabsTrigger>
         </TabsList>
 
         <TabsContent value="stock">
@@ -181,6 +183,10 @@ export default function Inventory() {
               )}
             </CardContent>
           </Card>
+        </TabsContent>
+
+        <TabsContent value="count">
+          <InventoryPhysicalCount />
         </TabsContent>
       </Tabs>
 

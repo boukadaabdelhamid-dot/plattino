@@ -32,7 +32,9 @@ export type PermAction =
   // settings
   | "edit_store_name" | "edit_default_customer" | "manage_permissions" | "manage_stores"
   // orders – sidebar child visibility
-  | "view_sale_orders";
+  | "view_sale_orders"
+  // inventory
+  | "count";
 
 export type PermRow = { section: string; action: string; granted: boolean };
 

@@ -2665,6 +2665,198 @@ router.post("/erp/inventory/adjust", authenticate, requireAdmin, requireStore, a
   } catch (err) { req.log.error(err); res.status(500).json({ error: "Internal server error" }); }
 });
 
+// ─── Inventory Physical Count (jrd) ─────────────────────────────────
+// List past + in-progress count sessions for the current store, newest first.
+router.get("/erp/inventory/count-sessions", authenticate, requireStaff, requireStore, requirePermission("inventory", "view"), async (req: AuthRequest, res) => {
+  try {
+    const storeId = req.currentStoreId!;
+    const sessions = await db.select({
+      id: schema.inventoryCountSessionsTable.id,
+      status: schema.inventoryCountSessionsTable.status,
+      notes: schema.inventoryCountSessionsTable.notes,
+      createdAt: schema.inventoryCountSessionsTable.createdAt,
+      completedAt: schema.inventoryCountSessionsTable.completedAt,
+      createdByName: schema.usersTable.name,
+    })
+      .from(schema.inventoryCountSessionsTable)
+      .leftJoin(schema.usersTable, eq(schema.inventoryCountSessionsTable.createdByUserId, schema.usersTable.id))
+      .where(eq(schema.inventoryCountSessionsTable.storeId, storeId))
+      .orderBy(desc(schema.inventoryCountSessionsTable.createdAt));
+
+    if (sessions.length === 0) { res.json([]); return; }
+
+    const sessionIds = sessions.map((s) => s.id);
+    const itemStats = await db.select({
+      sessionId: schema.inventoryCountItemsTable.sessionId,
+      itemCount: sql<number>`count(*)::int`,
+      countedCount: sql<number>`count(*) filter (where ${schema.inventoryCountItemsTable.countedQuantity} is not null)::int`,
+      totalVariance: sql<number>`coalesce(sum(abs(${schema.inventoryCountItemsTable.countedQuantity} - ${schema.inventoryCountItemsTable.systemQuantity})) filter (where ${schema.inventoryCountItemsTable.countedQuantity} is not null), 0)`,
+    })
+      .from(schema.inventoryCountItemsTable)
+      .where(inArray(schema.inventoryCountItemsTable.sessionId, sessionIds))
+      .groupBy(schema.inventoryCountItemsTable.sessionId);
+    const statsMap = new Map(itemStats.map((s) => [s.sessionId, s]));
+
+    res.json(sessions.map((s) => ({
+      ...s,
+      itemCount: statsMap.get(s.id)?.itemCount ?? 0,
+      countedCount: statsMap.get(s.id)?.countedCount ?? 0,
+      totalVariance: statsMap.get(s.id)?.totalVariance ?? 0,
+    })));
+  } catch (err) { req.log.error(err); res.status(500).json({ error: "Internal server error" }); }
+});
+
+// Start a new count session — snapshots current stock for every product in the store.
+router.post("/erp/inventory/count-sessions", authenticate, requireStaff, requireStore, requirePermission("inventory", "count"), async (req: AuthRequest, res) => {
+  try {
+    const storeId = req.currentStoreId!;
+    const { notes } = req.body ?? {};
+
+    const [existingOpen] = await db.select({ id: schema.inventoryCountSessionsTable.id })
+      .from(schema.inventoryCountSessionsTable)
+      .where(and(eq(schema.inventoryCountSessionsTable.storeId, storeId), eq(schema.inventoryCountSessionsTable.status, "open")))
+      .limit(1);
+    if (existingOpen) {
+      res.status(409).json({ error: "Une session de comptage est déjà en cours pour ce magasin.", sessionId: existingOpen.id });
+      return;
+    }
+
+    const session = await db.transaction(async (tx) => {
+      const [session] = await tx.insert(schema.inventoryCountSessionsTable).values({
+        storeId, notes: notes || null, createdByUserId: req.user!.id,
+      }).returning();
+
+      const products = await tx.select({ id: schema.productsTable.id, stock: schema.productsTable.stock })
+        .from(schema.productsTable)
+        .where(eq(schema.productsTable.storeId, storeId));
+
+      if (products.length > 0) {
+        await tx.insert(schema.inventoryCountItemsTable).values(
+          products.map((p) => ({ sessionId: session.id, productId: p.id, systemQuantity: p.stock }))
+        );
+      }
+      return session;
+    });
+
+    res.status(201).json(session);
+  } catch (err) { req.log.error(err); res.status(500).json({ error: "Internal server error" }); }
+});
+
+// Session detail with all count lines (product names + live difference).
+router.get("/erp/inventory/count-sessions/:id", authenticate, requireStaff, requireStore, requirePermission("inventory", "view"), async (req: AuthRequest, res) => {
+  try {
+    const storeId = req.currentStoreId!;
+    const sessionId = pid(req, "id");
+    const [session] = await db.select().from(schema.inventoryCountSessionsTable)
+      .where(and(eq(schema.inventoryCountSessionsTable.id, sessionId), eq(schema.inventoryCountSessionsTable.storeId, storeId))).limit(1);
+    if (!session) { res.status(404).json({ error: "Not found" }); return; }
+
+    const items = await db.select({
+      id: schema.inventoryCountItemsTable.id,
+      productId: schema.inventoryCountItemsTable.productId,
+      systemQuantity: schema.inventoryCountItemsTable.systemQuantity,
+      countedQuantity: schema.inventoryCountItemsTable.countedQuantity,
+      nameEn: schema.productsTable.nameEn,
+      nameAr: schema.productsTable.nameAr,
+    })
+      .from(schema.inventoryCountItemsTable)
+      .innerJoin(schema.productsTable, eq(schema.inventoryCountItemsTable.productId, schema.productsTable.id))
+      .where(eq(schema.inventoryCountItemsTable.sessionId, sessionId))
+      .orderBy(asc(schema.productsTable.nameEn));
+
+    res.json({
+      ...session,
+      items: items.map((it) => ({
+        ...it,
+        difference: it.countedQuantity == null ? null : it.countedQuantity - it.systemQuantity,
+      })),
+    });
+  } catch (err) { req.log.error(err); res.status(500).json({ error: "Internal server error" }); }
+});
+
+// Enter/update the counted quantity for one product line of an open session.
+router.patch("/erp/inventory/count-sessions/:id/items/:itemId", authenticate, requireStaff, requireStore, requirePermission("inventory", "count"), async (req: AuthRequest, res) => {
+  try {
+    const storeId = req.currentStoreId!;
+    const sessionId = pid(req, "id");
+    const itemId = pid(req, "itemId");
+    const { countedQuantity } = req.body ?? {};
+    if (countedQuantity === undefined || countedQuantity === null || isNaN(Number(countedQuantity))) {
+      res.status(400).json({ error: "countedQuantity is required" });
+      return;
+    }
+    if (Number(countedQuantity) < 0) {
+      res.status(400).json({ error: "countedQuantity cannot be negative" });
+      return;
+    }
+
+    const [session] = await db.select().from(schema.inventoryCountSessionsTable)
+      .where(and(eq(schema.inventoryCountSessionsTable.id, sessionId), eq(schema.inventoryCountSessionsTable.storeId, storeId))).limit(1);
+    if (!session) { res.status(404).json({ error: "Not found" }); return; }
+    if (session.status !== "open") { res.status(400).json({ error: "Cette session de comptage est déjà clôturée." }); return; }
+
+    const [updated] = await db.update(schema.inventoryCountItemsTable)
+      .set({ countedQuantity: Number(countedQuantity) })
+      .where(and(eq(schema.inventoryCountItemsTable.id, itemId), eq(schema.inventoryCountItemsTable.sessionId, sessionId)))
+      .returning();
+    if (!updated) { res.status(404).json({ error: "Item not found" }); return; }
+
+    res.json({ ...updated, difference: updated.countedQuantity! - updated.systemQuantity });
+  } catch (err) { req.log.error(err); res.status(500).json({ error: "Internal server error" }); }
+});
+
+// Validate the session: apply stock adjustments for every counted line whose
+// count differs from the system quantity, record traceable movements, lock it.
+router.post("/erp/inventory/count-sessions/:id/complete", authenticate, requireStaff, requireStore, requirePermission("inventory", "count"), async (req: AuthRequest, res) => {
+  try {
+    const storeId = req.currentStoreId!;
+    const sessionId = pid(req, "id");
+    const [session] = await db.select().from(schema.inventoryCountSessionsTable)
+      .where(and(eq(schema.inventoryCountSessionsTable.id, sessionId), eq(schema.inventoryCountSessionsTable.storeId, storeId))).limit(1);
+    if (!session) { res.status(404).json({ error: "Not found" }); return; }
+    if (session.status !== "open") { res.status(400).json({ error: "Cette session de comptage est déjà clôturée." }); return; }
+
+    const result = await db.transaction(async (tx) => {
+      const items = await tx.select().from(schema.inventoryCountItemsTable)
+        .where(eq(schema.inventoryCountItemsTable.sessionId, sessionId));
+
+      let adjustedCount = 0;
+      for (const item of items) {
+        if (item.countedQuantity == null) continue;
+        const diff = item.countedQuantity - item.systemQuantity;
+        if (diff === 0) continue;
+
+        const [product] = await tx.select({ id: schema.productsTable.id, stock: schema.productsTable.stock })
+          .from(schema.productsTable).where(eq(schema.productsTable.id, item.productId)).limit(1);
+        if (!product) continue;
+
+        // Re-derive the real delta against the CURRENT stock (may have moved
+        // since the session started via sales/purchases) but land exactly on
+        // the physically counted quantity — that's the whole point of a jrd.
+        const realDelta = item.countedQuantity - product.stock;
+        if (realDelta !== 0) {
+          await tx.update(schema.productsTable).set({ stock: item.countedQuantity })
+            .where(eq(schema.productsTable.id, item.productId));
+          await tx.insert(schema.inventoryMovementsTable).values({
+            storeId, productId: item.productId, type: "adjustment", quantity: realDelta,
+            reason: "Jrd physique — régularisation d'écart", reference: `COUNT-${sessionId}`,
+            userId: req.user!.id,
+          });
+        }
+        adjustedCount++;
+      }
+
+      const [completed] = await tx.update(schema.inventoryCountSessionsTable)
+        .set({ status: "completed", completedByUserId: req.user!.id, completedAt: new Date() })
+        .where(eq(schema.inventoryCountSessionsTable.id, sessionId))
+        .returning();
+      return { completed, adjustedCount };
+    });
+
+    res.json(result.completed);
+  } catch (err) { req.log.error(err); res.status(500).json({ error: "Internal server error" }); }
+});
+
 // ─── Accounting ────────────────────────────────────────────────────
 router.get("/erp/transactions", authenticate, requireStaff, requireStore, requirePermission("accounting", "view"), async (req: AuthRequest, res) => {
   try {

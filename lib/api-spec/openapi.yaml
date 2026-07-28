@@ -1743,6 +1743,116 @@ paths:
               schema:
                 $ref: "#/components/schemas/InventoryMovement"
 
+  /erp/inventory/count-sessions:
+    get:
+      operationId: getInventoryCountSessions
+      tags: [erp]
+      summary: List physical inventory count sessions for the current store
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Count sessions
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/InventoryCountSessionSummary"
+    post:
+      operationId: startInventoryCount
+      tags: [erp]
+      summary: Start a new physical inventory count session (snapshots current stock)
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/StartInventoryCountRequest"
+      responses:
+        "201":
+          description: Session started
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InventoryCountSession"
+
+  /erp/inventory/count-sessions/{id}:
+    get:
+      operationId: getInventoryCountSession
+      tags: [erp]
+      summary: Get a count session with its product lines
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Session detail
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InventoryCountSessionDetail"
+
+  /erp/inventory/count-sessions/{id}/items/{itemId}:
+    patch:
+      operationId: updateInventoryCountItem
+      tags: [erp]
+      summary: Enter/update the counted quantity for one product line
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+        - name: itemId
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateCountItemRequest"
+      responses:
+        "200":
+          description: Updated line
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InventoryCountItem"
+
+  /erp/inventory/count-sessions/{id}/complete:
+    post:
+      operationId: completeInventoryCount
+      tags: [erp]
+      summary: Validate the session — applies stock adjustments for counted lines and locks it
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Session completed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InventoryCountSession"
+
   # ── ERP: Accounting ──────────────────────────────────────────────
   /erp/transactions:
     get:
@@ -5163,6 +5273,86 @@ components:
         reason:
           type: string
       required: [productId, quantity, reason]
+
+    InventoryCountSession:
+      type: object
+      properties:
+        id:
+          type: integer
+        status:
+          type: string
+          enum: [open, completed]
+        notes:
+          type: string
+          nullable: true
+        createdAt:
+          type: string
+        completedAt:
+          type: string
+          nullable: true
+      required: [id, status]
+
+    InventoryCountSessionSummary:
+      allOf:
+        - $ref: "#/components/schemas/InventoryCountSession"
+        - type: object
+          properties:
+            createdByName:
+              type: string
+              nullable: true
+            itemCount:
+              type: integer
+            countedCount:
+              type: integer
+            totalVariance:
+              type: number
+          required: [itemCount, countedCount, totalVariance]
+
+    InventoryCountItem:
+      type: object
+      properties:
+        id:
+          type: integer
+        productId:
+          type: integer
+        systemQuantity:
+          type: number
+        countedQuantity:
+          type: number
+          nullable: true
+        difference:
+          type: number
+          nullable: true
+        nameEn:
+          type: string
+        nameAr:
+          type: string
+      required: [id, productId, systemQuantity]
+
+    InventoryCountSessionDetail:
+      allOf:
+        - $ref: "#/components/schemas/InventoryCountSession"
+        - type: object
+          properties:
+            items:
+              type: array
+              items:
+                $ref: "#/components/schemas/InventoryCountItem"
+          required: [items]
+
+    StartInventoryCountRequest:
+      type: object
+      properties:
+        notes:
+          type: string
+      required: []
+
+    UpdateCountItemRequest:
+      type: object
+      properties:
+        countedQuantity:
+          type: number
+      required: [countedQuantity]
 
     StoreLite:
       type: object

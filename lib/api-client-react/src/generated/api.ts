@@ -97,6 +97,10 @@ import type {
   GetProductsParams,
   GetSupplierReportParams,
   HealthStatus,
+  InventoryCountItem,
+  InventoryCountSession,
+  InventoryCountSessionDetail,
+  InventoryCountSessionSummary,
   InventoryMovement,
   Leave,
   LoginRequest,
@@ -133,6 +137,7 @@ import type {
   SetErpStaffStoresBody,
   SetProductImagesBody,
   StaffMember,
+  StartInventoryCountRequest,
   StockTransfer,
   StockTransferActionRequest,
   StockTransferDetail,
@@ -145,6 +150,7 @@ import type {
   SupplierStatementResponse,
   Transaction,
   UpdateCartRequest,
+  UpdateCountItemRequest,
   UpdateCustomerOperationRequest,
   UpdateLeaveStatusBody,
   UpdateOrderStatusRequest,
@@ -6659,6 +6665,440 @@ export const useAdjustInventory = <
   TContext
 > => {
   return useMutation(getAdjustInventoryMutationOptions(options));
+};
+
+/**
+ * @summary List physical inventory count sessions for the current store
+ */
+export const getGetInventoryCountSessionsUrl = () => {
+  return `/api/erp/inventory/count-sessions`;
+};
+
+export const getInventoryCountSessions = async (
+  options?: RequestInit,
+): Promise<InventoryCountSessionSummary[]> => {
+  return customFetch<InventoryCountSessionSummary[]>(
+    getGetInventoryCountSessionsUrl(),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export const getGetInventoryCountSessionsQueryKey = () => {
+  return [`/api/erp/inventory/count-sessions`] as const;
+};
+
+export const getGetInventoryCountSessionsQueryOptions = <
+  TData = Awaited<ReturnType<typeof getInventoryCountSessions>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getInventoryCountSessions>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getGetInventoryCountSessionsQueryKey();
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getInventoryCountSessions>>
+  > = ({ signal }) => getInventoryCountSessions({ signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getInventoryCountSessions>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetInventoryCountSessionsQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getInventoryCountSessions>>
+>;
+export type GetInventoryCountSessionsQueryError = ErrorType<unknown>;
+
+/**
+ * @summary List physical inventory count sessions for the current store
+ */
+
+export function useGetInventoryCountSessions<
+  TData = Awaited<ReturnType<typeof getInventoryCountSessions>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getInventoryCountSessions>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetInventoryCountSessionsQueryOptions(options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Start a new physical inventory count session (snapshots current stock)
+ */
+export const getStartInventoryCountUrl = () => {
+  return `/api/erp/inventory/count-sessions`;
+};
+
+export const startInventoryCount = async (
+  startInventoryCountRequest?: StartInventoryCountRequest,
+  options?: RequestInit,
+): Promise<InventoryCountSession> => {
+  return customFetch<InventoryCountSession>(getStartInventoryCountUrl(), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(startInventoryCountRequest),
+  });
+};
+
+export const getStartInventoryCountMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof startInventoryCount>>,
+    TError,
+    { data: BodyType<StartInventoryCountRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof startInventoryCount>>,
+  TError,
+  { data: BodyType<StartInventoryCountRequest> },
+  TContext
+> => {
+  const mutationKey = ["startInventoryCount"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof startInventoryCount>>,
+    { data: BodyType<StartInventoryCountRequest> }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return startInventoryCount(data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type StartInventoryCountMutationResult = NonNullable<
+  Awaited<ReturnType<typeof startInventoryCount>>
+>;
+export type StartInventoryCountMutationBody =
+  BodyType<StartInventoryCountRequest>;
+export type StartInventoryCountMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Start a new physical inventory count session (snapshots current stock)
+ */
+export const useStartInventoryCount = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof startInventoryCount>>,
+    TError,
+    { data: BodyType<StartInventoryCountRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof startInventoryCount>>,
+  TError,
+  { data: BodyType<StartInventoryCountRequest> },
+  TContext
+> => {
+  return useMutation(getStartInventoryCountMutationOptions(options));
+};
+
+/**
+ * @summary Get a count session with its product lines
+ */
+export const getGetInventoryCountSessionUrl = (id: number) => {
+  return `/api/erp/inventory/count-sessions/${id}`;
+};
+
+export const getInventoryCountSession = async (
+  id: number,
+  options?: RequestInit,
+): Promise<InventoryCountSessionDetail> => {
+  return customFetch<InventoryCountSessionDetail>(
+    getGetInventoryCountSessionUrl(id),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export const getGetInventoryCountSessionQueryKey = (id: number) => {
+  return [`/api/erp/inventory/count-sessions/${id}`] as const;
+};
+
+export const getGetInventoryCountSessionQueryOptions = <
+  TData = Awaited<ReturnType<typeof getInventoryCountSession>>,
+  TError = ErrorType<unknown>,
+>(
+  id: number,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getInventoryCountSession>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getGetInventoryCountSessionQueryKey(id);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getInventoryCountSession>>
+  > = ({ signal }) =>
+    getInventoryCountSession(id, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!id,
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof getInventoryCountSession>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetInventoryCountSessionQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getInventoryCountSession>>
+>;
+export type GetInventoryCountSessionQueryError = ErrorType<unknown>;
+
+/**
+ * @summary Get a count session with its product lines
+ */
+
+export function useGetInventoryCountSession<
+  TData = Awaited<ReturnType<typeof getInventoryCountSession>>,
+  TError = ErrorType<unknown>,
+>(
+  id: number,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getInventoryCountSession>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetInventoryCountSessionQueryOptions(id, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Enter/update the counted quantity for one product line
+ */
+export const getUpdateInventoryCountItemUrl = (id: number, itemId: number) => {
+  return `/api/erp/inventory/count-sessions/${id}/items/${itemId}`;
+};
+
+export const updateInventoryCountItem = async (
+  id: number,
+  itemId: number,
+  updateCountItemRequest: UpdateCountItemRequest,
+  options?: RequestInit,
+): Promise<InventoryCountItem> => {
+  return customFetch<InventoryCountItem>(
+    getUpdateInventoryCountItemUrl(id, itemId),
+    {
+      ...options,
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(updateCountItemRequest),
+    },
+  );
+};
+
+export const getUpdateInventoryCountItemMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof updateInventoryCountItem>>,
+    TError,
+    { id: number; itemId: number; data: BodyType<UpdateCountItemRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof updateInventoryCountItem>>,
+  TError,
+  { id: number; itemId: number; data: BodyType<UpdateCountItemRequest> },
+  TContext
+> => {
+  const mutationKey = ["updateInventoryCountItem"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof updateInventoryCountItem>>,
+    { id: number; itemId: number; data: BodyType<UpdateCountItemRequest> }
+  > = (props) => {
+    const { id, itemId, data } = props ?? {};
+
+    return updateInventoryCountItem(id, itemId, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type UpdateInventoryCountItemMutationResult = NonNullable<
+  Awaited<ReturnType<typeof updateInventoryCountItem>>
+>;
+export type UpdateInventoryCountItemMutationBody =
+  BodyType<UpdateCountItemRequest>;
+export type UpdateInventoryCountItemMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Enter/update the counted quantity for one product line
+ */
+export const useUpdateInventoryCountItem = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof updateInventoryCountItem>>,
+    TError,
+    { id: number; itemId: number; data: BodyType<UpdateCountItemRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof updateInventoryCountItem>>,
+  TError,
+  { id: number; itemId: number; data: BodyType<UpdateCountItemRequest> },
+  TContext
+> => {
+  return useMutation(getUpdateInventoryCountItemMutationOptions(options));
+};
+
+/**
+ * @summary Validate the session — applies stock adjustments for counted lines and locks it
+ */
+export const getCompleteInventoryCountUrl = (id: number) => {
+  return `/api/erp/inventory/count-sessions/${id}/complete`;
+};
+
+export const completeInventoryCount = async (
+  id: number,
+  options?: RequestInit,
+): Promise<InventoryCountSession> => {
+  return customFetch<InventoryCountSession>(getCompleteInventoryCountUrl(id), {
+    ...options,
+    method: "POST",
+  });
+};
+
+export const getCompleteInventoryCountMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof completeInventoryCount>>,
+    TError,
+    { id: number },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof completeInventoryCount>>,
+  TError,
+  { id: number },
+  TContext
+> => {
+  const mutationKey = ["completeInventoryCount"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof completeInventoryCount>>,
+    { id: number }
+  > = (props) => {
+    const { id } = props ?? {};
+
+    return completeInventoryCount(id, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type CompleteInventoryCountMutationResult = NonNullable<
+  Awaited<ReturnType<typeof completeInventoryCount>>
+>;
+
+export type CompleteInventoryCountMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Validate the session — applies stock adjustments for counted lines and locks it
+ */
+export const useCompleteInventoryCount = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof completeInventoryCount>>,
+    TError,
+    { id: number },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof completeInventoryCount>>,
+  TError,
+  { id: number },
+  TContext
+> => {
+  return useMutation(getCompleteInventoryCountMutationOptions(options));
 };
 
 /**

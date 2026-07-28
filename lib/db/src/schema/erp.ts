@@ -212,6 +212,40 @@ export const inventoryMovementsTable = pgTable("inventory_movements", {
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
+// ─── Inventory Physical Count (jrd) ───────────────────────────────────────────
+// A count session snapshots the store's current stock at start time, lets
+// staff enter counted quantities per product, and — once completed — applies
+// the resulting differences as traceable inventory movements in one shot.
+export const inventoryCountStatusEnum = pgEnum("inventory_count_status", ["open", "completed"]);
+
+export const inventoryCountSessionsTable = pgTable("inventory_count_sessions", {
+  id: serial("id").primaryKey(),
+  storeId: integer("store_id").references(() => storesTable.id).notNull(),
+  status: inventoryCountStatusEnum("status").notNull().default("open"),
+  notes: text("notes"),
+  createdByUserId: integer("created_by_user_id").references(() => usersTable.id).notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  completedByUserId: integer("completed_by_user_id").references(() => usersTable.id),
+  completedAt: timestamp("completed_at"),
+});
+
+export const inventoryCountItemsTable = pgTable("inventory_count_items", {
+  id: serial("id").primaryKey(),
+  sessionId: integer("session_id").references(() => inventoryCountSessionsTable.id).notNull(),
+  productId: integer("product_id").references(() => productsTable.id).notNull(),
+  // Stock recorded in the system at the moment the session was started —
+  // frozen so later concurrent adjustments don't shift the reference point.
+  systemQuantity: doublePrecision("system_quantity").notNull(),
+  // Null until staff actually enters a count for this product.
+  countedQuantity: doublePrecision("counted_quantity"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+}, (t) => ({
+  uniqSessionProduct: uniqueIndex("inventory_count_items_session_product_unique").on(t.sessionId, t.productId),
+}));
+
+export type InventoryCountSession = typeof inventoryCountSessionsTable.$inferSelect;
+export type InventoryCountItem = typeof inventoryCountItemsTable.$inferSelect;
+
 // ─── Accounting ───────────────────────────────────────────────────────────────
 export const transactionTypeEnum = pgEnum("transaction_type", ["income", "expense"]);
 export const transactionCategoryEnum = pgEnum("transaction_category", [

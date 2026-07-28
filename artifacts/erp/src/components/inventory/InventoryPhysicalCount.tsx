@@ -1,11 +1,12 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useRef, useEffect, memo } from "react";
 import { useQueryClient } from "@tanstack/react-query";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import {
   useGetInventoryCountSessions, useStartInventoryCount, useGetInventoryCountSession,
   useUpdateInventoryCountItem, useCompleteInventoryCount,
   getGetInventoryCountSessionsQueryKey, getGetInventoryCountSessionQueryKey,
   getGetInventoryStockQueryKey, getGetInventoryMovementsQueryKey,
-  type InventoryCountSessionSummary, type InventoryCountItem,
+  type InventoryCountSessionSummary, type InventoryCountItem, type InventoryCountSessionDetail,
 } from "@workspace/api-client-react";
 import { useLang } from "@/hooks/use-lang";
 import { usePermissions } from "@/hooks/use-permissions";
@@ -23,6 +24,9 @@ import {
 } from "@/components/ui/alert-dialog";
 import { ClipboardList, ClipboardCheck, Search } from "lucide-react";
 import { format } from "date-fns";
+
+// Height (px) of one virtualized product row. Must match the row's actual rendered height.
+const ROW_HEIGHT = 49;
 
 export default function InventoryPhysicalCount() {
   const qc = useQueryClient();
@@ -175,37 +179,64 @@ function CountSessionDialog({
   const { lang } = useLang();
   const t = (fr: string, ar: string) => (lang === "ar" ? ar : fr);
   const [search, setSearch] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
   const [confirmOpen, setConfirmOpen] = useState(false);
-  const [localCounts, setLocalCounts] = useState<Record<number, string>>({});
+
+  // Debounce the search filter so typing doesn't recompute/re-render the whole list on every keystroke.
+  useEffect(() => {
+    const id = setTimeout(() => setDebouncedSearch(search), 200);
+    return () => clearTimeout(id);
+  }, [search]);
 
   const { data: session, isLoading } = useGetInventoryCountSession(sessionId);
   const updateItem = useUpdateInventoryCountItem();
   const completeCount = useCompleteInventoryCount();
 
-  const invalidateSession = () => {
-    qc.invalidateQueries({ queryKey: getGetInventoryCountSessionQueryKey(sessionId) });
-    qc.invalidateQueries({ queryKey: getGetInventoryCountSessionsQueryKey() });
-  };
+  const sessionKey = getGetInventoryCountSessionQueryKey(sessionId);
 
   const isOpen = session?.status === "open";
   const items: InventoryCountItem[] = session?.items ?? [];
   const filtered = useMemo(() => {
-    if (!search.trim()) return items;
-    const q = search.trim().toLowerCase();
-    return items.filter((it) => it.nameEn?.toLowerCase().includes(q) || it.nameAr?.includes(search.trim()));
-  }, [items, search]);
+    if (!debouncedSearch.trim()) return items;
+    const qLower = debouncedSearch.trim().toLowerCase();
+    return items.filter((it) => it.nameEn?.toLowerCase().includes(qLower) || it.nameAr?.includes(debouncedSearch.trim()));
+  }, [items, debouncedSearch]);
 
-  const countedTotal = items.filter((it) => it.countedQuantity != null).length;
-  const varianceTotal = items.reduce((sum, it) => sum + Math.abs(it.difference ?? 0), 0);
+  const countedTotal = useMemo(() => items.filter((it) => it.countedQuantity != null).length, [items]);
+  const varianceTotal = useMemo(() => items.reduce((sum, it) => sum + Math.abs(it.difference ?? 0), 0), [items]);
 
-  const commitCount = (item: InventoryCountItem, raw: string) => {
-    if (raw.trim() === "") return;
-    const value = Number(raw);
-    if (isNaN(value) || value < 0) return;
-    if (value === item.countedQuantity) return;
+  const parentRef = useRef<HTMLDivElement>(null);
+  const rowVirtualizer = useVirtualizer({
+    count: filtered.length,
+    getScrollElement: () => parentRef.current,
+    estimateSize: () => ROW_HEIGHT,
+    overscan: 12,
+  });
+
+  // Patch just the one changed row in the cache instead of invalidating/refetching
+  // the whole session (which can hold thousands of items) on every keystroke.
+  const commitCount = (item: InventoryCountItem, value: number) => {
     updateItem.mutate(
       { id: sessionId, itemId: item.id, data: { countedQuantity: value } },
-      { onSuccess: invalidateSession },
+      {
+        onSuccess: (updated) => {
+          qc.setQueryData<InventoryCountSessionDetail>(sessionKey, (old) => {
+            if (!old) return old;
+            return {
+              ...old,
+              items: old.items.map((it) => (it.id === updated.id ? { ...it, ...updated } : it)),
+            };
+          });
+          qc.invalidateQueries({ queryKey: getGetInventoryCountSessionsQueryKey() });
+        },
+        onError: () => {
+          toast({
+            variant: "destructive",
+            title: t("Erreur", "خطأ"),
+            description: t("Échec de l'enregistrement de la quantité.", "فشل حفظ الكمية."),
+          });
+        },
+      },
     );
   };
 
@@ -215,7 +246,8 @@ function CountSessionDialog({
       {
         onSuccess: () => {
           setConfirmOpen(false);
-          invalidateSession();
+          qc.invalidateQueries({ queryKey: sessionKey });
+          qc.invalidateQueries({ queryKey: getGetInventoryCountSessionsQueryKey() });
           onCompleted();
           toast({ title: t("Jrd validé", "تم تأكيد الجرد"), description: t("Les écarts ont été régularisés.", "تمت تسوية الفروقات.") });
         },
@@ -260,53 +292,46 @@ function CountSessionDialog({
                 </span>
               </div>
 
-              <div className="flex-1 overflow-y-auto border rounded-md">
-                <Table>
-                  <TableHeader className="sticky top-0 bg-background">
-                    <TableRow>
-                      <TableHead>{t("Produit", "المنتج")}</TableHead>
-                      <TableHead className="text-right">{t("Système", "النظام")}</TableHead>
-                      <TableHead className="text-right w-32">{t("Compté", "المعدود")}</TableHead>
-                      <TableHead className="text-right">{t("Écart", "الفرق")}</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {filtered.map((it) => {
-                      const value = localCounts[it.id] ?? (it.countedQuantity != null ? String(it.countedQuantity) : "");
-                      return (
-                        <TableRow key={it.id} data-testid={`row-count-item-${it.id}`}>
-                          <TableCell className="font-medium text-sm">
-                            {lang === "ar" ? it.nameAr : it.nameEn}
-                          </TableCell>
-                          <TableCell className="text-right tabular-nums text-muted-foreground">{it.systemQuantity}</TableCell>
-                          <TableCell className="text-right">
-                            <Input
-                              type="number"
+              <div className="flex-1 min-h-0 border rounded-md flex flex-col">
+                <div className="grid grid-cols-[1fr_100px_128px_100px] gap-2 px-3 py-2 border-b bg-background text-xs font-medium text-muted-foreground sticky top-0 z-10">
+                  <span>{t("Produit", "المنتج")}</span>
+                  <span className="text-right">{t("Système", "النظام")}</span>
+                  <span className="text-right">{t("Compté", "المعدود")}</span>
+                  <span className="text-right">{t("Écart", "الفرق")}</span>
+                </div>
+                <div ref={parentRef} className="flex-1 overflow-y-auto">
+                  {filtered.length === 0 ? (
+                    <div className="text-center py-6 text-muted-foreground text-sm">
+                      {t("Aucun produit trouvé", "لم يتم العثور على منتج")}
+                    </div>
+                  ) : (
+                    <div style={{ height: rowVirtualizer.getTotalSize(), position: "relative" }}>
+                      {rowVirtualizer.getVirtualItems().map((virtualRow) => {
+                        const item = filtered[virtualRow.index];
+                        return (
+                          <div
+                            key={item.id}
+                            style={{
+                              position: "absolute",
+                              top: 0,
+                              left: 0,
+                              width: "100%",
+                              height: `${virtualRow.size}px`,
+                              transform: `translateY(${virtualRow.start}px)`,
+                            }}
+                          >
+                            <CountItemRow
+                              item={item}
+                              lang={lang}
                               disabled={!isOpen || !canCount}
-                              className="h-8 text-right tabular-nums"
-                              value={value}
-                              onChange={(e) => setLocalCounts((prev) => ({ ...prev, [it.id]: e.target.value }))}
-                              onBlur={(e) => commitCount(it, e.target.value)}
-                              data-testid={`input-counted-${it.id}`}
+                              onCommit={commitCount}
                             />
-                          </TableCell>
-                          <TableCell className={`text-right font-semibold tabular-nums ${
-                            it.difference == null ? "text-muted-foreground" : it.difference === 0 ? "text-muted-foreground" : it.difference > 0 ? "text-emerald-600" : "text-red-600"
-                          }`}>
-                            {it.difference == null ? "—" : (it.difference > 0 ? `+${it.difference}` : it.difference)}
-                          </TableCell>
-                        </TableRow>
-                      );
-                    })}
-                    {filtered.length === 0 && (
-                      <TableRow>
-                        <TableCell colSpan={4} className="text-center py-6 text-muted-foreground">
-                          {t("Aucun produit trouvé", "لم يتم العثور على منتج")}
-                        </TableCell>
-                      </TableRow>
-                    )}
-                  </TableBody>
-                </Table>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
               </div>
             </>
           )}
@@ -344,3 +369,54 @@ function CountSessionDialog({
     </>
   );
 }
+
+// Isolated per-row component: keeps its own input state locally so typing in one
+// row never triggers a re-render of the parent (and therefore the other rows).
+// Only commits (onBlur) reach the network/cache layer.
+const CountItemRow = memo(function CountItemRow({
+  item, lang, disabled, onCommit,
+}: {
+  item: InventoryCountItem;
+  lang: string;
+  disabled: boolean;
+  onCommit: (item: InventoryCountItem, value: number) => void;
+}) {
+  const [value, setValue] = useState(item.countedQuantity != null ? String(item.countedQuantity) : "");
+
+  useEffect(() => {
+    setValue(item.countedQuantity != null ? String(item.countedQuantity) : "");
+  }, [item.countedQuantity]);
+
+  const handleBlur = () => {
+    const raw = value.trim();
+    if (raw === "") return;
+    const num = Number(raw);
+    if (isNaN(num) || num < 0) return;
+    if (num === item.countedQuantity) return;
+    onCommit(item, num);
+  };
+
+  return (
+    <div
+      className="grid grid-cols-[1fr_100px_128px_100px] gap-2 px-3 items-center border-b h-full"
+      data-testid={`row-count-item-${item.id}`}
+    >
+      <span className="font-medium text-sm truncate">{lang === "ar" ? item.nameAr : item.nameEn}</span>
+      <span className="text-right tabular-nums text-muted-foreground text-sm">{item.systemQuantity}</span>
+      <Input
+        type="number"
+        disabled={disabled}
+        className="h-8 text-right tabular-nums"
+        value={value}
+        onChange={(e) => setValue(e.target.value)}
+        onBlur={handleBlur}
+        data-testid={`input-counted-${item.id}`}
+      />
+      <span className={`text-right font-semibold tabular-nums text-sm ${
+        item.difference == null ? "text-muted-foreground" : item.difference === 0 ? "text-muted-foreground" : item.difference > 0 ? "text-emerald-600" : "text-red-600"
+      }`}>
+        {item.difference == null ? "—" : (item.difference > 0 ? `+${item.difference}` : item.difference)}
+      </span>
+    </div>
+  );
+});

@@ -75,6 +75,7 @@
     "zod": "catalog:"
   },
   "dependencies": {
+    "@tanstack/react-virtual": "^3.14.8",
     "jsbarcode": "^3.12.3",
     "xlsx": "^0.18.5"
   }

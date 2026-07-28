@@ -2,7 +2,7 @@ import React, { useMemo, useState, useCallback } from "react";
 import {
   useCreatePurchaseOrder, useUpdatePurchaseOrder, useReceivePurchaseOrder,
   useDeletePurchaseOrder,
-  useGetSuppliers, useGetProducts, useCreateSupplier,
+  useGetProducts, useCreateSupplier,
   useGetPurchaseOrderItems,
   getGetPurchaseOrderItemsQueryKey, getGetSuppliersQueryKey,
   getGetPurchaseAnnexeChargesQueryKey,
@@ -122,7 +122,33 @@ export default function PurchaseOrders() {
   const pos = (rawPosRes?.data ?? []) as ExtendedPO[];
   const totalPos = rawPosRes?.total ?? 0;
   const totalPages = Math.max(1, Math.ceil(totalPos / pageSize));
-  const { data: suppliersRes } = useGetSuppliers({ limit: 9999 });
+  const { data: suppliersRes } = useQuery({
+    queryKey: ["purchase-order-suppliers", store?.id ?? null],
+    queryFn: async () => {
+      const token = localStorage.getItem("midanic_token") ?? "";
+      const headers = { Authorization: `Bearer ${token}` };
+      const fetchPage = async (pageNumber: number) => {
+        const params = new URLSearchParams({ page: String(pageNumber), limit: "500" });
+        const res = await fetch(`${API_BASE}/api/erp/suppliers?${params}`, { headers });
+        if (!res.ok) throw new Error("Failed to fetch suppliers");
+        return res.json() as Promise<{ data: Supplier[]; total: number }>;
+      };
+
+      const firstPage = await fetchPage(1);
+      const totalPages = Math.ceil(firstPage.total / 500);
+      if (totalPages <= 1) return firstPage;
+
+      const remainingPages = await Promise.all(
+        Array.from({ length: totalPages - 1 }, (_, index) => fetchPage(index + 2)),
+      );
+      return {
+        data: [firstPage, ...remainingPages].flatMap((result) => result.data),
+        total: firstPage.total,
+      };
+    },
+    enabled: !!store?.id,
+    staleTime: 60_000,
+  });
   const { data: productsRes } = useGetProducts({ limit: 500 });
   const createPO = useCreatePurchaseOrder();
   const updatePO = useUpdatePurchaseOrder();

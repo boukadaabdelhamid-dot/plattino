@@ -36,6 +36,7 @@ import {
 import {
   Plus, Pencil, Trash2, Search, Save, Eye, EyeOff,
   FileText, Filter, X, Check, ShoppingBag, RefreshCw, Cloud, History, Settings, Printer, AlertTriangle,
+  Paperclip, Upload, ImageIcon,
 } from "lucide-react";
 import { format } from "date-fns";
 import InvoiceDialog from "@/components/InvoiceDialog";
@@ -73,7 +74,7 @@ function saveColSettings(s: ColumnSettings) {
   try { localStorage.setItem("po-column-settings", JSON.stringify(s)); } catch { /**/ }
 }
 
-type ExtendedPO = PurchaseOrder & { paymentMethod?: string };
+type ExtendedPO = PurchaseOrder & { paymentMethod?: string; receiptImageUrl?: string | null };
 
 const fmt = (n: number) =>
   n.toLocaleString("fr-DZ", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -420,7 +421,21 @@ export default function PurchaseOrders() {
                           )}
                         </TableCell>
                         <TableCell className="text-right font-bold tabular-nums">
-                          {fmt(parseFloat(po.totalAmount ?? "0"))}
+                          <div className="flex items-center justify-end gap-1.5">
+                            {(po as ExtendedPO).receiptImageUrl && (
+                              <a
+                                href={(po as ExtendedPO).receiptImageUrl!}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                onClick={(e) => e.stopPropagation()}
+                                title={t("Voir l'image du bon", "عرض صورة الوصل")}
+                                className="text-blue-400 hover:text-blue-600 flex-shrink-0"
+                              >
+                                <Paperclip className="h-3.5 w-3.5" />
+                              </a>
+                            )}
+                            {fmt(parseFloat(po.totalAmount ?? "0"))}
+                          </div>
                         </TableCell>
                         <TableCell className="text-center" onClick={(e) => e.stopPropagation()}>
                           <DropdownMenu>
@@ -634,7 +649,7 @@ function PurchaseEditor({
 }: {
   open: boolean; onOpenChange: (o: boolean) => void; editing: ExtendedPO | null;
   suppliers: Supplier[]; products: Product[];
-  onSave: (payload: { supplierId: number; notes?: string; paymentMethod: string; items: { productId: number; quantity: number; unitCost: number }[] }) => void;
+  onSave: (payload: { supplierId: number; notes?: string; paymentMethod: string; receiptImageUrl?: string | null; items: { productId: number; quantity: number; unitCost: number }[] }) => void;
   onClose: (po: PurchaseOrder) => void;
   onDelete: (po: PurchaseOrder) => void;
   saving: boolean;
@@ -647,6 +662,8 @@ function PurchaseEditor({
   const [refAchat, setRefAchat] = useState("");
   const [date, setDate] = useState(() => new Date().toISOString().slice(0, 16));
   const [paymentMethod, setPaymentMethod] = useState<"comptant" | "a_terme">("a_terme");
+  const [receiptImageUrl, setReceiptImageUrl] = useState<string | null>(null);
+  const [isUploadingReceipt, setIsUploadingReceipt] = useState(false);
   const [supplierPickerOpen, setSupplierPickerOpen] = useState(false);
   const [productPickerOpen, setProductPickerOpen] = useState(false);
   const [pendingProduct, setPendingProduct] = useState<Product | null>(null);
@@ -689,6 +706,7 @@ function PurchaseEditor({
       setRefAchat(initRefAchat);
       setDate(editing.createdAt ? editing.createdAt.slice(0, 16) : new Date().toISOString().slice(0, 16));
       setPaymentMethod(initPayment);
+      setReceiptImageUrl(editing.receiptImageUrl ?? null);
       setLines([]);
       // Snapshot lines will be completed when existingItems load (below).
       // Snapshot the non-lines fields now so isDirty works before items arrive.
@@ -702,6 +720,7 @@ function PurchaseEditor({
       setSupplier(null); setRefAchat(""); setLines([]); setCode("");
       setDate(new Date().toISOString().slice(0, 16));
       setPaymentMethod("a_terme");
+      setReceiptImageUrl(null);
       // For a new PO the baseline is fully empty.
       snapshotRef.current = { supplierId: null, refAchat: "", paymentMethod: "a_terme", lines: [] };
     }
@@ -817,6 +836,27 @@ function PurchaseEditor({
     setLines((prev) => prev.filter((_, i) => i !== idx));
   }
 
+  async function uploadReceiptImage(file: File) {
+    setIsUploadingReceipt(true);
+    try {
+      const token = localStorage.getItem("midanic_token") ?? "";
+      const fd = new FormData();
+      fd.append("file", file);
+      const res = await fetch(`${API_BASE}/api/uploads`, {
+        method: "POST",
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        body: fd,
+      });
+      if (!res.ok) throw new Error("Upload failed");
+      const data = await res.json() as { url: string };
+      setReceiptImageUrl(data.url);
+    } catch {
+      alert(t("Échec du chargement de l'image.", "فشل تحميل الصورة."));
+    } finally {
+      setIsUploadingReceipt(false);
+    }
+  }
+
   function handleSave() {
     if (!supplier) { alert(t("Choisissez un fournisseur", "اختر مورداً")); return; }
     if (lines.length === 0) { alert(t("Ajoutez au moins un article", "أضف مقالاً واحداً على الأقل")); return; }
@@ -824,6 +864,7 @@ function PurchaseEditor({
       supplierId: supplier.id,
       notes: refAchat || undefined,
       paymentMethod,
+      receiptImageUrl: receiptImageUrl ?? null,
       items: lines.map((l) => ({ productId: l.productId, quantity: l.qty, unitCost: l.pu })),
     });
   }
@@ -963,6 +1004,56 @@ function PurchaseEditor({
                   <p className="text-xs text-amber-700 mt-1">
                     {t("Paiement différé — crée une dette fournisseur.", "دفع مؤجل — ينشئ دينًا على المورد.")}
                   </p>
+                )}
+              </div>
+
+              {/* ── Receipt image upload ── */}
+              <div>
+                <Label className="text-xs mb-1.5 block">{t("Image du bon (optionnel)", "صورة الوصل (اختياري)")}</Label>
+                {receiptImageUrl ? (
+                  <div className="flex items-center gap-2">
+                    <a href={receiptImageUrl} target="_blank" rel="noopener noreferrer" className="flex-1 min-w-0">
+                      <div className="relative rounded-md border overflow-hidden bg-slate-50 flex items-center gap-2 px-3 py-2 hover:bg-slate-100 transition-colors cursor-pointer">
+                        <img
+                          src={receiptImageUrl}
+                          alt=""
+                          className="h-12 w-12 rounded object-cover border flex-shrink-0"
+                          onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }}
+                        />
+                        <span className="text-xs text-blue-600 underline truncate">{t("Voir l'image", "عرض الصورة")}</span>
+                      </div>
+                    </a>
+                    {!isLocked && (
+                      <Button
+                        type="button" size="icon" variant="ghost"
+                        className="h-8 w-8 text-red-500 hover:text-red-700 flex-shrink-0"
+                        onClick={() => setReceiptImageUrl(null)}
+                        title={t("Supprimer l'image", "حذف الصورة")}
+                        data-testid="button-remove-receipt-image"
+                      >
+                        <X className="h-4 w-4" />
+                      </Button>
+                    )}
+                  </div>
+                ) : (
+                  !isLocked && (
+                    <label className={`flex items-center gap-2 cursor-pointer border border-dashed rounded-md px-4 py-3 text-sm text-muted-foreground hover:border-blue-400 hover:text-blue-600 transition-colors ${isUploadingReceipt ? "opacity-60 pointer-events-none" : ""}`}>
+                      {isUploadingReceipt ? (
+                        <RefreshCw className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <Upload className="h-4 w-4" />
+                      )}
+                      <span>{isUploadingReceipt ? t("Chargement...", "جارٍ التحميل...") : t("Choisir une image", "اختيار صورة")}</span>
+                      <input
+                        type="file"
+                        accept="image/*"
+                        className="sr-only"
+                        disabled={isUploadingReceipt}
+                        onChange={(e) => { const f = e.target.files?.[0]; if (f) uploadReceiptImage(f); e.target.value = ""; }}
+                        data-testid="input-receipt-image"
+                      />
+                    </label>
+                  )
                 )}
               </div>
             </CardContent>

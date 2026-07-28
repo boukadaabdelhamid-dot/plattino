@@ -126,6 +126,7 @@ export const purchaseOrdersTable = pgTable("purchase_orders", {
   totalAmount: numeric("total_amount", { precision: 10, scale: 2 }).notNull().default("0"),
   notes: text("notes"),
   paymentMethod: text("payment_method").notNull().default("a_terme"),
+  receiptImageUrl: text("receipt_image_url"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   receivedAt: timestamp("received_at"),
 });

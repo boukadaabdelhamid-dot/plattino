@@ -1938,7 +1938,7 @@ router.get("/erp/purchase-orders", authenticate, requireStaff, requireStore, req
 router.post("/erp/purchase-orders", authenticate, requireStaff, requireStore, requirePermission("purchases", "create"), async (req: AuthRequest, res) => {
   try {
     const storeId = req.currentStoreId!;
-    const { supplierId, items, notes, paymentMethod: pmRaw } = req.body;
+    const { supplierId, items, notes, paymentMethod: pmRaw, receiptImageUrl } = req.body;
     const paymentMethod = pmRaw === "comptant" ? "comptant" : "a_terme";
     // Verify supplier belongs to this store
     const [sup] = await db.select({ id: schema.suppliersTable.id }).from(schema.suppliersTable)
@@ -1954,6 +1954,7 @@ router.post("/erp/purchase-orders", authenticate, requireStaff, requireStore, re
     for (const item of (items || [])) { total += item.quantity * item.unitCost; }
     const [po] = await db.insert(schema.purchaseOrdersTable).values({
       storeId, supplierId, notes, paymentMethod, totalAmount: total.toFixed(2),
+      receiptImageUrl: receiptImageUrl || null,
     }).returning();
     for (const item of (items || [])) {
       await db.insert(schema.purchaseItemsTable).values({ purchaseOrderId: po.id, ...item });
@@ -2028,7 +2029,7 @@ router.put("/erp/purchase-orders/:id", authenticate, requireStaff, requireStore,
   try {
     const storeId = req.currentStoreId!;
     const poId = pid(req, "id");
-    const { supplierId, items, notes, paymentMethod: pmRaw } = req.body;
+    const { supplierId, items, notes, paymentMethod: pmRaw, receiptImageUrl } = req.body;
     const paymentMethod = pmRaw === "comptant" ? "comptant" : "a_terme";
 
     const [existing] = await db.select({ status: schema.purchaseOrdersTable.status })
@@ -2058,7 +2059,7 @@ router.put("/erp/purchase-orders/:id", authenticate, requireStaff, requireStore,
 
     const [po] = await db.transaction(async (tx) => {
       const [updated] = await tx.update(schema.purchaseOrdersTable)
-        .set({ supplierId, notes, paymentMethod, totalAmount: total.toFixed(2) })
+        .set({ supplierId, notes, paymentMethod, totalAmount: total.toFixed(2), receiptImageUrl: receiptImageUrl ?? undefined })
         .where(and(eq(schema.purchaseOrdersTable.id, poId), eq(schema.purchaseOrdersTable.storeId, storeId)))
         .returning();
       await tx.delete(schema.purchaseItemsTable).where(eq(schema.purchaseItemsTable.purchaseOrderId, poId));

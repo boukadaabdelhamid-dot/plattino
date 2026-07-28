@@ -104,6 +104,7 @@ function CustomerSheet({ customerId, onClose, t, lang, currency, initialTab = "b
       const s = (v: unknown, fallback = "") => (v != null ? String(v) : fallback);
       setForm({
         name: s(customer.name),
+        email: s(customer.email),
         phone: s(customer.phone),
         address: s(customer.address),
         city: s(customer.city),
@@ -134,6 +135,7 @@ function CustomerSheet({ customerId, onClose, t, lang, currency, initialTab = "b
     // Basic fields editable by any staff with customers:edit
     const payload: Record<string, unknown> = {
       name: str("name") || undefined,
+      email: str("email") || undefined,
       phone: str("phone") || undefined,
       address: str("address") || undefined,
       city: str("city") || undefined,
@@ -291,7 +293,9 @@ function CustomerSheet({ customerId, onClose, t, lang, currency, initialTab = "b
                 <Label className="text-xs text-muted-foreground mb-1.5 block flex items-center gap-1">
                   <Mail className="h-3 w-3" /> Email
                 </Label>
-                <p className="text-sm py-1 text-muted-foreground truncate">{customer.email}</p>
+                {editing
+                  ? <Input value={String(form.email ?? "")} onChange={(e) => setForm((f) => ({ ...f, email: e.target.value }))} className="h-8 text-sm" type="email" placeholder="email@example.com" />
+                  : <p className="text-sm py-1 text-muted-foreground truncate">{customer.email || "—"}</p>}
               </div>
               <div>
                 <Label className="text-xs text-muted-foreground mb-1.5 block flex items-center gap-1">
@@ -1910,15 +1914,15 @@ export default function Customers() {
 
   const handleCreate = () => {
     setCreateError(null);
-    if (!createForm.name.trim() || !createForm.email.trim()) {
-      setCreateError(t("Le nom et l'email sont obligatoires", "الاسم والبريد مطلوبان"));
+    if (!createForm.name.trim()) {
+      setCreateError(t("Le nom est obligatoire", "الاسم مطلوب"));
       return;
     }
     createCustomer.mutate(
       {
         data: {
           name: createForm.name.trim(),
-          email: createForm.email.trim(),
+          email: createForm.email.trim() || undefined,
           password: createForm.password || undefined,
           phone: createForm.phone.trim() || undefined,
           address: createForm.address.trim() || undefined,

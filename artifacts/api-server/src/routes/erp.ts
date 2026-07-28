@@ -3038,8 +3038,8 @@ router.post("/erp/customers", authenticate, requireStaff, requireStore, requireP
       creditLimit, minBalanceAlert, currentBalance, foreignCurrency,
       rc, nif, ai, nis,
     } = req.body || {};
-    if (!name || !email) {
-      res.status(400).json({ error: "name and email are required" });
+    if (!name) {
+      res.status(400).json({ error: "name is required" });
       return;
     }
     const cpType: "customer" | "customer_supplier" =
@@ -3050,11 +3050,13 @@ router.post("/erp/customers", authenticate, requireStaff, requireStore, requireP
       contactType: cpType,
     };
 
-    // If a customer with this email already exists, reuse them and link/create a
-    // profile for this store instead of returning 409. This supports cross-store
-    // scenarios where the same person is a customer in multiple stores.
-    const [existingUser] = await db.select()
-      .from(schema.usersTable).where(eq(schema.usersTable.email, email)).limit(1);
+    // Email is optional. If provided, reuse an existing customer account with that
+    // email (cross-store support). If omitted, a synthetic placeholder is generated
+    // so the users table NOT NULL constraint is satisfied; it can be replaced later.
+    const trimmedEmail = (typeof email === "string" ? email : "").trim();
+    const [existingUser] = trimmedEmail
+      ? await db.select().from(schema.usersTable).where(eq(schema.usersTable.email, trimmedEmail)).limit(1)
+      : [undefined];
     if (existingUser && existingUser.role !== "customer") {
       res.status(409).json({ error: "Email belongs to a non-customer account" });
       return;
@@ -3065,10 +3067,11 @@ router.post("/erp/customers", authenticate, requireStaff, requireStore, requireP
       if (existingUser) {
         u = existingUser;
       } else {
+        const finalEmail = trimmedEmail || `no-email-${randomUUID()}@placeholder.invalid`;
         const pwd = (password && String(password).length >= 6) ? String(password) : Math.random().toString(36).slice(2, 12);
         const passwordHash = await bcrypt.hash(pwd, 10);
         const [newUser] = await tx.insert(schema.usersTable).values({
-          name, email, passwordHash,
+          name, email: finalEmail, passwordHash,
           role: "customer",
           preferredLang: preferredLang === "en" ? "en" : "ar",
           phone: phone || null,
@@ -3234,7 +3237,7 @@ router.put("/erp/customers/:id", authenticate, requireStaff, requireStore, requi
     const userId = pid(req, "id");
     const admin = isAdmin(req);
     const {
-      name, phone, address, city,
+      name, email, phone, address, city,
       contactType, wilaya, commune, gps,
       classificationId, priceTierId,
       accountNumber, creditLimit, minBalanceAlert, foreignCurrency,
@@ -3260,6 +3263,18 @@ router.put("/erp/customers/:id", authenticate, requireStaff, requireStore, requi
     if (phone !== undefined) userUpdate.phone = phone;
     if (address !== undefined) userUpdate.address = address;
     if (city !== undefined) userUpdate.city = city;
+    // email update: check uniqueness before writing
+    if (email !== undefined) {
+      const newEmail = String(email).trim();
+      if (newEmail) {
+        const [dup] = await db.select({ id: schema.usersTable.id })
+          .from(schema.usersTable)
+          .where(and(eq(schema.usersTable.email, newEmail), ne(schema.usersTable.id, userId)))
+          .limit(1);
+        if (dup) { res.status(409).json({ error: "Email already in use" }); return; }
+        userUpdate.email = newEmail;
+      }
+    }
     // password reset is admin-only
     if (admin && password !== undefined && String(password).length >= 6) {
       userUpdate.passwordHash = await bcrypt.hash(String(password), 10);

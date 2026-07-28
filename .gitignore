@@ -60,6 +60,9 @@ build/
 .next/
 out/
 
+# Exception: lib/db compiled declarations are needed for TS project references
+!lib/db/dist/
+
 # Database
 *.sqlite
 *.sqlite3

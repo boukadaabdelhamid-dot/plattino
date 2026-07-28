@@ -1706,12 +1706,20 @@ router.post("/erp/suppliers/:id/import-to-stores", authenticate, requireStaff, r
           }
 
           await linkContactsGlobally(tx, srcContact.id, targetContactId);
-          // Sync canonical contact balance from the copied supplier balance, then
-          // fan out through the newly (or already) linked identity.
+          // Recompute this target contact's unified balance from its own roles
+          // (supplier balance just set + any existing customer balance).
+          // Do NOT fan out yet — the source contact's customer balance is the
+          // authoritative value and must not be overwritten by a freshly-created
+          // target whose customer_profile starts at 0.
           await recomputeContactBalance(tx, targetContactId);
-          await syncLinkedContactBalances(tx, targetContactId);
         }
       }
+
+      // Fan out ONCE from the source contact after all target stores are set up.
+      // This copies the source's correct customer balance (and supplier balance) to
+      // every newly-linked sibling, without the source being overwritten by a
+      // zero-initialised target inside the loop.
+      if (srcContact) await syncLinkedContactBalances(tx, srcContact.id);
 
       return gsid;
     });

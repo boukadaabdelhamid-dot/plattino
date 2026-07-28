@@ -2880,6 +2880,37 @@ router.post("/erp/inventory/count-sessions/:id/complete", authenticate, requireS
   } catch (err) { req.log.error(err); res.status(500).json({ error: "Internal server error" }); }
 });
 
+// Reopen a completed count session for further editing.
+// Fails if another session is already open for this store.
+router.patch("/erp/inventory/count-sessions/:id/reopen", authenticate, requireStaff, requireStore, requirePermission("inventory", "count"), async (req: AuthRequest, res) => {
+  try {
+    const storeId = req.currentStoreId!;
+    const sessionId = pid(req, "id");
+
+    const [session] = await db.select().from(schema.inventoryCountSessionsTable)
+      .where(and(eq(schema.inventoryCountSessionsTable.id, sessionId), eq(schema.inventoryCountSessionsTable.storeId, storeId))).limit(1);
+    if (!session) { res.status(404).json({ error: "Not found" }); return; }
+    if (session.status === "open") { res.status(400).json({ error: "Cette session est déjà ouverte." }); return; }
+
+    // Refuse if another session is already open (only one active session per store)
+    const [existingOpen] = await db.select({ id: schema.inventoryCountSessionsTable.id })
+      .from(schema.inventoryCountSessionsTable)
+      .where(and(eq(schema.inventoryCountSessionsTable.storeId, storeId), eq(schema.inventoryCountSessionsTable.status, "open")))
+      .limit(1);
+    if (existingOpen) {
+      res.status(409).json({ error: "Une session de comptage est déjà en cours pour ce magasin." });
+      return;
+    }
+
+    const [updated] = await db.update(schema.inventoryCountSessionsTable)
+      .set({ status: "open", completedAt: null, completedByUserId: null })
+      .where(eq(schema.inventoryCountSessionsTable.id, sessionId))
+      .returning();
+
+    res.json(updated);
+  } catch (err) { req.log.error(err); res.status(500).json({ error: "Internal server error" }); }
+});
+
 // ─── Accounting ────────────────────────────────────────────────────
 router.get("/erp/transactions", authenticate, requireStaff, requireStore, requirePermission("accounting", "view"), async (req: AuthRequest, res) => {
   try {

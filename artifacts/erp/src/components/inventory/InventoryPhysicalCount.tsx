@@ -1,5 +1,5 @@
 import { useState, useMemo, useRef, useEffect, memo } from "react";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQueryClient, useMutation } from "@tanstack/react-query";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import {
   useGetInventoryCountSessions, useStartInventoryCount, useGetInventoryCountSession,
@@ -14,6 +14,7 @@ import { toast } from "@/hooks/use-toast";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { SearchableSelect } from "@/components/ui/searchable-select";
@@ -23,17 +24,20 @@ import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { ClipboardList, ClipboardCheck, Search } from "lucide-react";
+import { ClipboardList, ClipboardCheck, Search, Printer, RotateCcw } from "lucide-react";
 import { format } from "date-fns";
+
+const API_BASE = (import.meta.env.VITE_API_URL as string | undefined) ?? "";
 
 // Height (px) of one virtualized product row. Must match the row's actual rendered height.
 const ROW_HEIGHT = 49;
 
 // Shared between the header and every row so their columns always line up pixel-for-pixel.
 // Fixed columns are kept narrow so the flexible "product name" column always keeps enough
-// room on small (mobile) viewports without forcing horizontal scroll. `min-w-0` on the name
-// cell (see below) lets it truncate instead of growing the grid past the container width.
+// room on small (mobile) viewports without forcing horizontal scroll.
 const ROW_GRID_COLS = "grid grid-cols-[1fr_56px_76px_60px] gap-2 px-3 items-center";
+
+type CountedFilter = "all" | "counted" | "uncounted";
 
 export default function InventoryPhysicalCount() {
   const qc = useQueryClient();
@@ -44,8 +48,17 @@ export default function InventoryPhysicalCount() {
 
   const [activeSessionId, setActiveSessionId] = useState<number | null>(null);
 
+  // Dialog to enter an optional note before starting a new session
+  const [startDialogOpen, setStartDialogOpen] = useState(false);
+  const [startNote, setStartNote] = useState("");
+
+  // Alert to confirm closing the session directly from the banner
+  const [closeConfirmOpen, setCloseConfirmOpen] = useState(false);
+
   const { data: sessions, isLoading } = useGetInventoryCountSessions();
   const startCount = useStartInventoryCount();
+  // completeCount is also used here (for the banner "Fermer le jrd" shortcut)
+  const completeCount = useCompleteInventoryCount();
 
   const invalidateAll = () => {
     qc.invalidateQueries({ queryKey: getGetInventoryCountSessionsQueryKey() });
@@ -53,17 +66,46 @@ export default function InventoryPhysicalCount() {
 
   const handleStart = () => {
     startCount.mutate(
-      { data: {} },
+      // notes is accepted by the backend even though the generated type is {}
+      { data: { notes: startNote.trim() || undefined } as Parameters<typeof startCount.mutate>[0]["data"] },
       {
         onSuccess: (session) => {
           invalidateAll();
           setActiveSessionId(session.id);
+          setStartDialogOpen(false);
+          setStartNote("");
         },
         onError: (err: any) => {
           toast({
             variant: "destructive",
             title: t("Erreur", "خطأ"),
             description: err?.error ?? t("Impossible de démarrer le comptage.", "تعذر بدء الجرد."),
+          });
+        },
+      },
+    );
+  };
+
+  const handleCloseBanner = () => {
+    if (!openSession) return;
+    completeCount.mutate(
+      { id: openSession.id },
+      {
+        onSuccess: () => {
+          setCloseConfirmOpen(false);
+          invalidateAll();
+          qc.invalidateQueries({ queryKey: getGetInventoryStockQueryKey() });
+          qc.invalidateQueries({ queryKey: getGetInventoryMovementsQueryKey() });
+          toast({
+            title: t("Jrd clôturé", "تم إغلاق الجرد"),
+            description: t("Les écarts ont été régularisés.", "تمت تسوية الفروقات."),
+          });
+        },
+        onError: (err: any) => {
+          toast({
+            variant: "destructive",
+            title: t("Erreur", "خطأ"),
+            description: err?.error ?? t("Échec de la clôture.", "فشل الإغلاق."),
           });
         },
       },
@@ -83,25 +125,96 @@ export default function InventoryPhysicalCount() {
           )}
         </p>
         {canCount && !openSession && (
-          <Button onClick={handleStart} disabled={startCount.isPending} data-testid="button-start-count">
+          <Button onClick={() => setStartDialogOpen(true)} data-testid="button-start-count">
             <ClipboardList className="h-4 w-4 mr-2" /> {t("Nouveau jrd", "جرد جديد")}
           </Button>
         )}
       </div>
 
+      {/* ── Start session dialog ── */}
+      <Dialog open={startDialogOpen} onOpenChange={(o) => { if (!o) { setStartDialogOpen(false); setStartNote(""); } }}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>{t("Démarrer un nouveau jrd", "بدء جرد جديد")}</DialogTitle>
+          </DialogHeader>
+          <div className="py-2">
+            <Label className="text-sm text-muted-foreground mb-1.5 block">
+              {t("Note / Nom (optionnel)", "ملاحظة / اسم (اختياري)")}
+            </Label>
+            <Input
+              value={startNote}
+              onChange={(e) => setStartNote(e.target.value)}
+              placeholder={t("Ex : Jrd juillet 2026", "مثال: جرد يوليو 2026")}
+              onKeyDown={(e) => { if (e.key === "Enter") handleStart(); }}
+            />
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => { setStartDialogOpen(false); setStartNote(""); }}>
+              {t("Annuler", "إلغاء")}
+            </Button>
+            <Button onClick={handleStart} disabled={startCount.isPending} data-testid="button-confirm-start">
+              <ClipboardList className="h-4 w-4 mr-2" />
+              {startCount.isPending ? "..." : t("Démarrer", "بدء")}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── Open session banner ── */}
       {openSession && (
-        <div className="flex items-center justify-between rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-blue-800 text-sm">
+        <div className="flex items-center justify-between rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-blue-800 text-sm gap-2 flex-wrap">
           <span>
-            <strong>{t("Session en cours", "جلسة جارية")}</strong> — {t("démarrée le", "بدأت في")}{" "}
+            <strong>{t("Session en cours", "جلسة جارية")}</strong>
+            {openSession.notes ? ` — ${openSession.notes}` : ""}
+            {" — "}{t("démarrée le", "بدأت في")}{" "}
             {openSession.createdAt ? format(new Date(openSession.createdAt), "dd/MM/yyyy HH:mm") : "—"}
             {openSession.createdByName ? ` (${openSession.createdByName})` : ""}
           </span>
-          <Button size="sm" onClick={() => setActiveSessionId(openSession.id)} data-testid="button-continue-count">
-            {t("Continuer le comptage", "متابعة الجرد")}
-          </Button>
+          <div className="flex items-center gap-2 flex-wrap">
+            <Button size="sm" onClick={() => setActiveSessionId(openSession.id)} data-testid="button-continue-count">
+              {t("Continuer le comptage", "متابعة الجرد")}
+            </Button>
+            {canCount && (
+              <Button
+                size="sm"
+                variant="destructive"
+                onClick={() => setCloseConfirmOpen(true)}
+                disabled={completeCount.isPending}
+                data-testid="button-close-count-banner"
+              >
+                {t("Fermer le jrd", "غلق الجرد")}
+              </Button>
+            )}
+          </div>
         </div>
       )}
 
+      {/* ── Close from banner — confirmation ── */}
+      <AlertDialog open={closeConfirmOpen} onOpenChange={setCloseConfirmOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t("Fermer le jrd ?", "إغلاق الجرد؟")}</AlertDialogTitle>
+            <AlertDialogDescription>
+              {t(
+                "Le stock des produits comptés sera ajusté selon les quantités saisies. Les produits non comptés ne seront pas modifiés. Cette action est irréversible.",
+                "سيتم تعديل مخزون المنتجات المعدودة وفق الكميات المدخلة. المنتجات غير المعدودة لن تُعدَّل. هذا الإجراء لا يمكن التراجع عنه.",
+              )}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>{t("Annuler", "إلغاء")}</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleCloseBanner}
+              disabled={completeCount.isPending}
+              data-testid="button-confirm-close-banner"
+            >
+              {completeCount.isPending ? "..." : t("Confirmer la clôture", "تأكيد الإغلاق")}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* ── Sessions list ── */}
       <Card className="border shadow-sm">
         <CardContent className="p-0">
           {isLoading ? (
@@ -123,7 +236,10 @@ export default function InventoryPhysicalCount() {
                   {list.map((s) => (
                     <TableRow key={s.id} data-testid={`row-count-session-${s.id}`}>
                       <TableCell className="text-sm">
-                        {s.createdAt ? format(new Date(s.createdAt), "dd/MM/yyyy HH:mm") : "—"}
+                        <div>{s.createdAt ? format(new Date(s.createdAt), "dd/MM/yyyy HH:mm") : "—"}</div>
+                        {s.notes && (
+                          <div className="text-xs text-muted-foreground mt-0.5 max-w-[160px] truncate">{s.notes}</div>
+                        )}
                       </TableCell>
                       <TableCell className="text-sm text-muted-foreground">{s.createdByName ?? "—"}</TableCell>
                       <TableCell>
@@ -138,9 +254,28 @@ export default function InventoryPhysicalCount() {
                         {s.totalVariance}
                       </TableCell>
                       <TableCell className="text-right">
-                        <Button size="sm" variant="outline" onClick={() => setActiveSessionId(s.id)} data-testid={`button-view-count-${s.id}`}>
-                          {s.status === "open" ? t("Ouvrir", "فتح") : t("Détails", "التفاصيل")}
-                        </Button>
+                        <div className="flex items-center justify-end gap-1">
+                          {s.status === "completed" && canCount && !openSession && (
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              className="h-7 text-xs gap-1 text-muted-foreground"
+                              onClick={() => setActiveSessionId(s.id)}
+                              title={t("Réouvrir pour modification", "إعادة الفتح للتعديل")}
+                              data-testid={`button-reopen-count-${s.id}`}
+                            >
+                              <RotateCcw className="h-3 w-3" />
+                            </Button>
+                          )}
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => setActiveSessionId(s.id)}
+                            data-testid={`button-view-count-${s.id}`}
+                          >
+                            {s.status === "open" ? t("Ouvrir", "فتح") : t("Détails", "التفاصيل")}
+                          </Button>
+                        </div>
                       </TableCell>
                     </TableRow>
                   ))}
@@ -162,11 +297,15 @@ export default function InventoryPhysicalCount() {
         <CountSessionDialog
           sessionId={activeSessionId}
           canCount={canCount}
+          hasOpenSession={!!openSession}
           onClose={() => setActiveSessionId(null)}
           onCompleted={() => {
             invalidateAll();
             qc.invalidateQueries({ queryKey: getGetInventoryStockQueryKey() });
             qc.invalidateQueries({ queryKey: getGetInventoryMovementsQueryKey() });
+          }}
+          onReopened={() => {
+            invalidateAll();
           }}
         />
       )}
@@ -175,12 +314,14 @@ export default function InventoryPhysicalCount() {
 }
 
 function CountSessionDialog({
-  sessionId, canCount, onClose, onCompleted,
+  sessionId, canCount, hasOpenSession, onClose, onCompleted, onReopened,
 }: {
   sessionId: number;
   canCount: boolean;
+  hasOpenSession: boolean;
   onClose: () => void;
   onCompleted: () => void;
+  onReopened: () => void;
 }) {
   const qc = useQueryClient();
   const { lang } = useLang();
@@ -189,9 +330,10 @@ function CountSessionDialog({
   const [debouncedSearch, setDebouncedSearch] = useState("");
   const [familyFilter, setFamilyFilter] = useState("");
   const [brandFilter, setBrandFilter] = useState("");
+  const [countedFilter, setCountedFilter] = useState<CountedFilter>("all");
   const [confirmOpen, setConfirmOpen] = useState(false);
 
-  // Debounce the search filter so typing doesn't recompute/re-render the whole list on every keystroke.
+  // Debounce the search filter so typing doesn't recompute the whole list on every keystroke.
   useEffect(() => {
     const id = setTimeout(() => setDebouncedSearch(search), 200);
     return () => clearTimeout(id);
@@ -202,14 +344,36 @@ function CountSessionDialog({
   const updateItem = useUpdateInventoryCountItem();
   const completeCount = useCompleteInventoryCount();
 
+  // Reopen a completed session — no generated hook, use raw fetch
+  const reopenSession = useMutation({
+    mutationFn: async () => {
+      const token = localStorage.getItem("midanic_token") ?? "";
+      const res = await fetch(`${API_BASE}/api/erp/inventory/count-sessions/${sessionId}/reopen`, {
+        method: "PATCH",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      });
+      if (!res.ok) throw await res.json().catch(() => ({ error: "Erreur" }));
+      return res.json();
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: getGetInventoryCountSessionQueryKey(sessionId) });
+      onReopened();
+      toast({ title: t("Session réouverte", "تمت إعادة فتح الجلسة") });
+    },
+    onError: (err: any) => {
+      toast({
+        variant: "destructive",
+        title: t("Erreur", "خطأ"),
+        description: err?.error ?? t("Impossible de réouvrir.", "تعذرت إعادة الفتح."),
+      });
+    },
+  });
+
   const sessionKey = getGetInventoryCountSessionQueryKey(sessionId);
 
   const isOpen = session?.status === "open";
   const items: InventoryCountItem[] = session?.items ?? [];
 
-  // Reference lists for the family/marque dropdowns. Kept memoized so typing in the
-  // search box (re-rendering this component on every keystroke) doesn't rebuild these
-  // option arrays — they only depend on the store-wide filter-options fetch.
   const familyOptions = useMemo(
     () => (filterOptions?.families ?? []).map((f) => ({ value: String(f.id), labelFr: f.nameFr, labelAr: f.nameAr })),
     [filterOptions],
@@ -219,21 +383,21 @@ function CountSessionDialog({
     [filterOptions],
   );
 
-  // Family/marque + text search combine cumulatively (AND). Single pass over the
-  // (up to a few thousand) items so applying/changing filters stays smooth.
+  // All active filters applied cumulatively (AND).
   const filtered = useMemo(() => {
     const familyId = familyFilter ? Number(familyFilter) : null;
     const brandId = brandFilter ? Number(brandFilter) : null;
     const q = debouncedSearch.trim();
     const qLower = q.toLowerCase();
-    if (familyId == null && brandId == null && !q) return items;
     return items.filter((it) => {
       if (familyId != null && it.familyId !== familyId) return false;
       if (brandId != null && it.brandId !== brandId) return false;
       if (q && !(it.nameEn?.toLowerCase().includes(qLower) || it.nameAr?.includes(q))) return false;
+      if (countedFilter === "counted" && it.countedQuantity == null) return false;
+      if (countedFilter === "uncounted" && it.countedQuantity != null) return false;
       return true;
     });
-  }, [items, familyFilter, brandFilter, debouncedSearch]);
+  }, [items, familyFilter, brandFilter, debouncedSearch, countedFilter]);
 
   const countedTotal = useMemo(() => items.filter((it) => it.countedQuantity != null).length, [items]);
   const varianceTotal = useMemo(() => items.reduce((sum, it) => sum + Math.abs(it.difference ?? 0), 0), [items]);
@@ -247,7 +411,7 @@ function CountSessionDialog({
   });
 
   // Patch just the one changed row in the cache instead of invalidating/refetching
-  // the whole session (which can hold thousands of items) on every keystroke.
+  // the whole session on every keystroke.
   const commitCount = (item: InventoryCountItem, value: number) => {
     updateItem.mutate(
       { id: sessionId, itemId: item.id, data: { countedQuantity: value } },
@@ -295,6 +459,37 @@ function CountSessionDialog({
     );
   };
 
+  // Open a new window with a printable version of the current (filtered) list.
+  const handlePrint = () => {
+    const pw = window.open("", "_blank");
+    if (!pw) return;
+    const note = session?.notes ? ` — ${session.notes}` : "";
+    const dateStr = session?.createdAt ? format(new Date(session.createdAt), "dd/MM/yyyy HH:mm") : "";
+    const rows = filtered.map((item) => {
+      const name = (lang === "ar" ? item.nameAr : item.nameEn) || item.nameEn || item.nameAr || "—";
+      const counted = item.countedQuantity != null ? String(item.countedQuantity) : "—";
+      const diff = item.difference == null ? "—" : item.difference > 0 ? `+${item.difference}` : String(item.difference);
+      const diffStyle = item.difference == null || item.difference === 0 ? "" : item.difference > 0 ? "color:#16a34a" : "color:#dc2626";
+      return `<tr><td>${name}</td><td style="text-align:right">${item.systemQuantity}</td><td style="text-align:right">${counted}</td><td style="text-align:right;font-weight:600;${diffStyle}">${diff}</td></tr>`;
+    }).join("");
+    pw.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"/>
+<title>${lang === "ar" ? "جرد المخزون" : "Inventaire physique"}</title>
+<style>body{font-family:sans-serif;font-size:13px;padding:20px}h2{margin-bottom:4px}p{margin:0 0 12px;color:#666}table{border-collapse:collapse;width:100%}th,td{border:1px solid #ddd;padding:6px 10px}th{background:#f3f4f6;font-weight:600}</style>
+</head><body>
+<h2>${lang === "ar" ? "جرد المخزون" : "Inventaire physique"}${note}</h2>
+<p>${dateStr} — ${countedTotal}/${items.length} ${lang === "ar" ? "معدود" : "comptés"}</p>
+<table><thead><tr>
+<th>${lang === "ar" ? "المنتج" : "Produit"}</th>
+<th style="text-align:right">${lang === "ar" ? "النظام" : "Système"}</th>
+<th style="text-align:right">${lang === "ar" ? "المعدود" : "Compté"}</th>
+<th style="text-align:right">${lang === "ar" ? "الفرق" : "Écart"}</th>
+</tr></thead><tbody>${rows}</tbody></table>
+</body></html>`);
+    pw.document.close();
+    pw.focus();
+    pw.print();
+  };
+
   return (
     <>
       <Dialog open onOpenChange={(o) => { if (!o) onClose(); }}>
@@ -302,6 +497,7 @@ function CountSessionDialog({
           <DialogHeader>
             <DialogTitle>
               {isOpen ? t("Comptage en cours", "جرد جارٍ") : t("Détail du comptage", "تفاصيل الجرد")}
+              {session?.notes && <span className="ml-2 text-sm font-normal text-muted-foreground">— {session.notes}</span>}
             </DialogTitle>
           </DialogHeader>
 
@@ -309,7 +505,8 @@ function CountSessionDialog({
             <div className="space-y-2">{[...Array(6)].map((_, i) => <Skeleton key={i} className="h-10" />)}</div>
           ) : (
             <>
-              <div className="flex items-center gap-3">
+              {/* Search + count + print */}
+              <div className="flex items-center gap-2">
                 <div className="relative flex-1">
                   <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
                   <Input
@@ -323,8 +520,19 @@ function CountSessionDialog({
                 <span className="text-sm text-muted-foreground whitespace-nowrap">
                   {countedTotal}/{items.length} {t("comptés", "معدود")}
                 </span>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-9 px-2.5"
+                  onClick={handlePrint}
+                  title={t("Imprimer la liste", "طباعة القائمة")}
+                  data-testid="button-print-count"
+                >
+                  <Printer className="h-4 w-4" />
+                </Button>
               </div>
 
+              {/* Family / Brand filters */}
               <div className="flex items-center gap-2 flex-wrap">
                 <div className="w-full sm:w-44">
                   <SearchableSelect
@@ -363,6 +571,33 @@ function CountSessionDialog({
                 )}
               </div>
 
+              {/* Counted / uncounted toggle */}
+              <div className="flex items-center gap-1.5">
+                {(["all", "uncounted", "counted"] as CountedFilter[]).map((f) => (
+                  <Button
+                    key={f}
+                    size="sm"
+                    variant={countedFilter === f ? "default" : "outline"}
+                    className="h-7 text-xs px-3"
+                    onClick={() => setCountedFilter(f)}
+                    data-testid={`button-count-filter-${f}`}
+                  >
+                    {f === "all"
+                      ? t("Tout", "الكل")
+                      : f === "counted"
+                        ? t("Comptés", "المعدودة")
+                        : t("Non comptés", "غير المعدودة")}
+                  </Button>
+                ))}
+                <span className="text-xs text-muted-foreground ml-auto">
+                  {filtered.length !== items.length
+                    ? `${filtered.length} / ${items.length}`
+                    : `${items.length}`}{" "}
+                  {t("produit(s)", "منتج")}
+                </span>
+              </div>
+
+              {/* Virtualized list */}
               <div className="flex-1 min-h-0 border rounded-md flex flex-col">
                 <div className={`${ROW_GRID_COLS} py-2 bg-background text-xs font-medium text-muted-foreground sticky top-0 z-10`}>
                   <span className="min-w-0 truncate">{t("Produit", "المنتج")}</span>
@@ -409,8 +644,24 @@ function CountSessionDialog({
 
           <DialogFooter>
             <Button variant="outline" onClick={onClose}>{t("Fermer", "إغلاق")}</Button>
+            {/* Reopen a completed session — only if no other session is currently open */}
+            {!isOpen && canCount && !hasOpenSession && (
+              <Button
+                variant="outline"
+                onClick={() => reopenSession.mutate()}
+                disabled={reopenSession.isPending}
+                data-testid="button-reopen-session"
+              >
+                <RotateCcw className="h-4 w-4 mr-2" />
+                {reopenSession.isPending ? "..." : t("Réouvrir", "إعادة فتح")}
+              </Button>
+            )}
             {isOpen && canCount && (
-              <Button onClick={() => setConfirmOpen(true)} disabled={items.length === 0} data-testid="button-validate-count">
+              <Button
+                onClick={() => setConfirmOpen(true)}
+                disabled={items.length === 0}
+                data-testid="button-validate-count"
+              >
                 <ClipboardCheck className="h-4 w-4 mr-2" /> {t("Valider le comptage", "تأكيد الجرد")}
               </Button>
             )}
@@ -431,7 +682,11 @@ function CountSessionDialog({
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>{t("Annuler", "إلغاء")}</AlertDialogCancel>
-            <AlertDialogAction onClick={handleComplete} disabled={completeCount.isPending} data-testid="button-confirm-validate-count">
+            <AlertDialogAction
+              onClick={handleComplete}
+              disabled={completeCount.isPending}
+              data-testid="button-confirm-validate-count"
+            >
               {t("Confirmer", "تأكيد")}
             </AlertDialogAction>
           </AlertDialogFooter>

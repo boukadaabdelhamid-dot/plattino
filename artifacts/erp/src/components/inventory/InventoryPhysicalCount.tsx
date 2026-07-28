@@ -28,6 +28,12 @@ import { format } from "date-fns";
 // Height (px) of one virtualized product row. Must match the row's actual rendered height.
 const ROW_HEIGHT = 49;
 
+// Shared between the header and every row so their columns always line up pixel-for-pixel.
+// Fixed columns are kept narrow so the flexible "product name" column always keeps enough
+// room on small (mobile) viewports without forcing horizontal scroll. `min-w-0` on the name
+// cell (see below) lets it truncate instead of growing the grid past the container width.
+const ROW_GRID_COLS = "grid grid-cols-[1fr_56px_76px_60px] gap-2 px-3 items-center";
+
 export default function InventoryPhysicalCount() {
   const qc = useQueryClient();
   const { lang } = useLang();
@@ -293,8 +299,8 @@ function CountSessionDialog({
               </div>
 
               <div className="flex-1 min-h-0 border rounded-md flex flex-col">
-                <div className="grid grid-cols-[1fr_100px_128px_100px] gap-2 px-3 py-2 border-b bg-background text-xs font-medium text-muted-foreground sticky top-0 z-10">
-                  <span>{t("Produit", "المنتج")}</span>
+                <div className={`${ROW_GRID_COLS} py-2 bg-background text-xs font-medium text-muted-foreground sticky top-0 z-10`}>
+                  <span className="min-w-0 truncate">{t("Produit", "المنتج")}</span>
                   <span className="text-right">{t("Système", "النظام")}</span>
                   <span className="text-right">{t("Compté", "المعدود")}</span>
                   <span className="text-right">{t("Écart", "الفرق")}</span>
@@ -396,17 +402,21 @@ const CountItemRow = memo(function CountItemRow({
     onCommit(item, num);
   };
 
+  const name = (lang === "ar" ? item.nameAr : item.nameEn) || item.nameEn || item.nameAr;
+
   return (
     <div
-      className="grid grid-cols-[1fr_100px_128px_100px] gap-2 px-3 items-center border-b h-full"
+      className={`${ROW_GRID_COLS} border-b h-full`}
       data-testid={`row-count-item-${item.id}`}
     >
-      <span className="font-medium text-sm truncate">{lang === "ar" ? item.nameAr : item.nameEn}</span>
+      <span className="min-w-0 font-medium text-sm truncate" title={name || undefined}>
+        {name || <span className="italic text-muted-foreground">{lang === "ar" ? "منتج بدون اسم" : "Produit sans nom"}</span>}
+      </span>
       <span className="text-right tabular-nums text-muted-foreground text-sm">{item.systemQuantity}</span>
       <Input
         type="number"
         disabled={disabled}
-        className="h-8 text-right tabular-nums"
+        className="h-8 px-2 text-right tabular-nums"
         value={value}
         onChange={(e) => setValue(e.target.value)}
         onBlur={handleBlur}

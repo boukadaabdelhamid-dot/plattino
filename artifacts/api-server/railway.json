@@ -5,7 +5,7 @@
     "dockerfilePath": "Dockerfile"
   },
   "deploy": {
-    "startCommand": "sh -c \"set -e; node --enable-source-maps /app/artifacts/api-server/dist/consolidate-caisses.mjs && cd /app/lib/db && pnpm exec drizzle-kit push --force --config ./drizzle.config.ts && node --enable-source-maps /app/artifacts/api-server/dist/index.mjs\"",
+    "startCommand": "sh -c \"set -e; node --enable-source-maps /app/artifacts/api-server/dist/consolidate-caisses.mjs && cd /app/lib/db && pnpm exec drizzle-kit push --config ./drizzle.config.ts && node --enable-source-maps /app/artifacts/api-server/dist/index.mjs\"",
     "healthcheckPath": "/api/healthz",
     "healthcheckTimeout": 100,
     "restartPolicyType": "ON_FAILURE",

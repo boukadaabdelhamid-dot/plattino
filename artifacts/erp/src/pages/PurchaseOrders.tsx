@@ -1,16 +1,16 @@
 import React, { useMemo, useState, useCallback } from "react";
 import {
-  useGetPurchaseOrders, useCreatePurchaseOrder, useUpdatePurchaseOrder, useReceivePurchaseOrder,
+  useCreatePurchaseOrder, useUpdatePurchaseOrder, useReceivePurchaseOrder,
   useDeletePurchaseOrder,
   useGetSuppliers, useGetProducts, useCreateSupplier,
   useGetPurchaseOrderItems,
-  getGetPurchaseOrdersQueryKey, getGetPurchaseOrderItemsQueryKey, getGetSuppliersQueryKey,
+  getGetPurchaseOrderItemsQueryKey, getGetSuppliersQueryKey,
   getGetPurchaseAnnexeChargesQueryKey,
   useGetPurchaseAnnexeCharges, useCreatePurchaseAnnexeCharge, useDeletePurchaseAnnexeCharge,
   getProducts, useUpdateProduct,
   type PurchaseOrder, type Supplier, type Product, type PurchaseAnnexeCharge,
 } from "@workspace/api-client-react";
-import { useQueryClient, keepPreviousData } from "@tanstack/react-query";
+import { useQueryClient, keepPreviousData, useQuery } from "@tanstack/react-query";
 import { useLang } from "@/hooks/use-lang";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -41,6 +41,9 @@ import { format } from "date-fns";
 import InvoiceDialog from "@/components/InvoiceDialog";
 import PurchaseHistorySheet from "@/components/PurchaseHistorySheet";
 import { useCurrentStore } from "@/hooks/use-current-store";
+
+const API_BASE = (import.meta.env.VITE_API_URL as string | undefined) ?? "";
+const PO_QUERY_BASE_KEY = ["purchase-orders"] as const;
 
 type TFn = (fr: string, ar: string) => string;
 
@@ -102,12 +105,19 @@ export default function PurchaseOrders() {
   const store = useCurrentStore();
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
-  const poParams = useMemo(() => ({ page, limit: pageSize }), [page, pageSize]);
-  const { data: rawPosRes, isLoading } = useGetPurchaseOrders(poParams, {
-    query: {
-      queryKey: [...getGetPurchaseOrdersQueryKey(poParams), store?.id ?? null],
-      placeholderData: keepPreviousData,
+  const { data: rawPosRes, isLoading } = useQuery({
+    queryKey: [...PO_QUERY_BASE_KEY, store?.id ?? null, page, pageSize],
+    queryFn: async () => {
+      const token = localStorage.getItem("midanic_token") ?? "";
+      const params = new URLSearchParams({ page: String(page), limit: String(pageSize) });
+      const res = await fetch(`${API_BASE}/api/erp/purchase-orders?${params}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) throw new Error("Failed to fetch purchase orders");
+      return res.json() as Promise<{ data: ExtendedPO[]; total: number }>;
     },
+    enabled: !!store?.id,
+    placeholderData: keepPreviousData,
   });
   const pos = (rawPosRes?.data ?? []) as ExtendedPO[];
   const totalPos = rawPosRes?.total ?? 0;
@@ -270,7 +280,7 @@ export default function PurchaseOrders() {
                 {t("Nouvel Achat", "شراء جديد")}
               </Button>
               <Button size="icon" variant="ghost" className="h-8 w-8"
-                onClick={() => qc.invalidateQueries({ queryKey: getGetPurchaseOrdersQueryKey() })}
+                onClick={() => qc.invalidateQueries({ queryKey: [...PO_QUERY_BASE_KEY] })}
                 aria-label={t("Rafraîchir", "تحديث")}>
                 <RefreshCw className="h-4 w-4" />
               </Button>
@@ -426,7 +436,7 @@ export default function PurchaseOrders() {
                                 disabled={po.status !== "pending"}
                                 onClick={() => {
                                   receivePO.mutate({ id: po.id }, {
-                                    onSettled: () => qc.invalidateQueries({ queryKey: getGetPurchaseOrdersQueryKey() }),
+                                    onSettled: () => qc.invalidateQueries({ queryKey: [...PO_QUERY_BASE_KEY] }),
                                   });
                                 }}
                               >
@@ -442,7 +452,7 @@ export default function PurchaseOrders() {
                                     `حذف سند الشراء رقم ${po.id}؟ هذا الإجراء لا يمكن التراجع عنه.`
                                   ))) return;
                                   deletePO.mutate({ id: po.id }, {
-                                    onSuccess: () => qc.invalidateQueries({ queryKey: getGetPurchaseOrdersQueryKey() }),
+                                    onSuccess: () => qc.invalidateQueries({ queryKey: [...PO_QUERY_BASE_KEY] }),
                                     onError: (err) => alert(`Erreur: ${(err as Error).message}`),
                                   });
                                 }}
@@ -533,7 +543,7 @@ export default function PurchaseOrders() {
           if (editingPO) {
             updatePO.mutate({ id: editingPO.id, data: payload as any }, {
               onSuccess: () => {
-                qc.invalidateQueries({ queryKey: getGetPurchaseOrdersQueryKey() });
+                qc.invalidateQueries({ queryKey: [...PO_QUERY_BASE_KEY] });
                 // Remove stale items cache so re-opening the same bon always
                 // fetches fresh data instead of serving pre-save cached items.
                 qc.removeQueries({ queryKey: getGetPurchaseOrderItemsQueryKey(editingPO.id) });
@@ -543,19 +553,19 @@ export default function PurchaseOrders() {
             });
           } else {
             createPO.mutate({ data: payload as any }, {
-              onSuccess: () => { qc.invalidateQueries({ queryKey: getGetPurchaseOrdersQueryKey() }); setEditorOpen(false); },
+              onSuccess: () => { qc.invalidateQueries({ queryKey: [...PO_QUERY_BASE_KEY] }); setEditorOpen(false); },
               onError: (err) => alert(`Erreur: ${(err as Error).message}`),
             });
           }
         }}
         onClose={(po) => {
           receivePO.mutate({ id: po.id }, {
-            onSettled: () => { qc.invalidateQueries({ queryKey: getGetPurchaseOrdersQueryKey() }); setEditorOpen(false); },
+            onSettled: () => { qc.invalidateQueries({ queryKey: [...PO_QUERY_BASE_KEY] }); setEditorOpen(false); },
           });
         }}
         onDelete={(po) => {
           deletePO.mutate({ id: po.id }, {
-            onSuccess: () => { qc.invalidateQueries({ queryKey: getGetPurchaseOrdersQueryKey() }); setEditorOpen(false); },
+            onSuccess: () => { qc.invalidateQueries({ queryKey: [...PO_QUERY_BASE_KEY] }); setEditorOpen(false); },
             onError: (err) => alert(`Erreur: ${(err as Error).message}`),
           });
         }}
@@ -1589,7 +1599,7 @@ function ChargesManagerDialog({
     createCharge.mutate({ data: { description: description.trim(), totalAmount: amountNum, date, notes: notes || undefined, purchaseOrderIds: selectedPoIds } }, {
       onSuccess: () => {
         qc.invalidateQueries({ queryKey: getGetPurchaseAnnexeChargesQueryKey() });
-        qc.invalidateQueries({ queryKey: getGetPurchaseOrdersQueryKey() });
+        qc.invalidateQueries({ queryKey: [...PO_QUERY_BASE_KEY] });
         setShowCreate(false); setDescription(""); setAmount(""); setNotes(""); setSelectedPoIds([]);
       },
       onError: (err) => alert(`Erreur: ${(err as Error).message}`),
@@ -1741,7 +1751,7 @@ function ChargesManagerDialog({
                               deleteCharge.mutate({ id: c.id }, {
                                 onSuccess: () => {
                                   qc.invalidateQueries({ queryKey: getGetPurchaseAnnexeChargesQueryKey() });
-                                  qc.invalidateQueries({ queryKey: getGetPurchaseOrdersQueryKey() });
+                                  qc.invalidateQueries({ queryKey: [...PO_QUERY_BASE_KEY] });
                                 },
                                 onError: err => alert(`Erreur: ${(err as Error).message}`),
                               });

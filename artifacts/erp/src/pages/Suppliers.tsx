@@ -1,12 +1,12 @@
 import React, { useState, useMemo, useEffect } from "react";
 import {
-  useGetSuppliers, useCreateSupplier, useUpdateSupplier,
+  useCreateSupplier, useUpdateSupplier,
   useGetSupplierOperations, useCreateSupplierOperation,
   useGetErpStoresAll,
-  getGetSuppliersQueryKey, getGetSupplierOperationsQueryKey, getGetErpCustomersQueryKey,
+  getGetSupplierOperationsQueryKey, getGetErpCustomersQueryKey,
 } from "@workspace/api-client-react";
 import type { Supplier, SupplierOperation } from "@workspace/api-client-react";
-import { useQueryClient, keepPreviousData } from "@tanstack/react-query";
+import { useQueryClient, keepPreviousData, useQuery } from "@tanstack/react-query";
 import { useLang } from "@/hooks/use-lang";
 import { useStoreContext } from "@/hooks/use-store";
 import { Card, CardContent } from "@/components/ui/card";
@@ -53,7 +53,7 @@ function PaymentDialog({
       { id: supplier.id, data: { amount: parseFloat(amount), date, reference: reference || undefined, note: note || undefined } },
       {
         onSuccess: () => {
-          qc.invalidateQueries({ queryKey: getGetSuppliersQueryKey() });
+          qc.invalidateQueries({ queryKey: ["suppliers"] });
           qc.invalidateQueries({ queryKey: getGetSupplierOperationsQueryKey(supplier.id) });
           onOpenChange(false);
           setAmount(""); setReference(""); setNote("");
@@ -143,7 +143,7 @@ function AjustementDialog({
         body: JSON.stringify({ targetBalance: parsed, date, note: note || undefined }),
       });
       if (!res.ok) { const d = await res.json(); throw new Error(d.error ?? "Erreur serveur"); }
-      qc.invalidateQueries({ queryKey: getGetSuppliersQueryKey() });
+      qc.invalidateQueries({ queryKey: ["suppliers"] });
       qc.invalidateQueries({ queryKey: getGetSupplierOperationsQueryKey(supplier.id) });
       onOpenChange(false);
     } catch (err) {
@@ -252,7 +252,7 @@ function ImportDialog({
         body: JSON.stringify({ targetStoreIds: selected }),
       });
       if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.error ?? "Erreur serveur"); }
-      qc.invalidateQueries({ queryKey: getGetSuppliersQueryKey() });
+      qc.invalidateQueries({ queryKey: ["suppliers"] });
       onOpenChange(false);
     } catch (err) {
       setError((err as Error).message);
@@ -551,13 +551,20 @@ export default function Suppliers() {
   }, [filterName]);
   useEffect(() => { setPage(1); }, [debouncedFilterName]);
 
-  const supplierParams = useMemo(() => ({
-    page, limit: pageSize,
-    ...(debouncedFilterName ? { search: debouncedFilterName } : {}),
-  }), [page, pageSize, debouncedFilterName]);
-
-  const { data: suppliersPage, isLoading } = useGetSuppliers(supplierParams, {
-    query: { queryKey: getGetSuppliersQueryKey(supplierParams), placeholderData: keepPreviousData },
+  const _suppApiBase = (import.meta.env.VITE_API_URL as string | undefined) ?? "";
+  const { data: suppliersPage, isLoading } = useQuery({
+    queryKey: ["suppliers", page, pageSize, debouncedFilterName],
+    queryFn: async () => {
+      const token = localStorage.getItem("midanic_token") ?? "";
+      const params = new URLSearchParams({ page: String(page), limit: String(pageSize) });
+      if (debouncedFilterName) params.set("search", debouncedFilterName);
+      const res = await fetch(`${_suppApiBase}/api/erp/suppliers?${params}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) throw new Error("Failed to fetch suppliers");
+      return res.json() as Promise<{ data: Supplier[]; total: number }>;
+    },
+    placeholderData: keepPreviousData,
   });
   const totalSuppliers = suppliersPage?.total ?? 0;
   const totalPages = Math.max(1, Math.ceil(totalSuppliers / pageSize));
@@ -619,7 +626,7 @@ export default function Suppliers() {
     // message — otherwise a rejected save (e.g. missing email for the customer
     // side) silently closes and looks like it worked.
     const onSuccess = () => {
-      qc.invalidateQueries({ queryKey: getGetSuppliersQueryKey() });
+      qc.invalidateQueries({ queryKey: ["suppliers"] });
       // A customer_supplier also creates/refreshes the customer side — refresh that list too.
       qc.invalidateQueries({ queryKey: getGetErpCustomersQueryKey() });
       setSaveError(null);

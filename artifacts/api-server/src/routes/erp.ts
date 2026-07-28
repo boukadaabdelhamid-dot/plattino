@@ -2758,6 +2758,8 @@ router.get("/erp/inventory/count-sessions/:id", authenticate, requireStaff, requ
       countedQuantity: schema.inventoryCountItemsTable.countedQuantity,
       nameEn: schema.productsTable.nameEn,
       nameAr: schema.productsTable.nameAr,
+      familyId: schema.productsTable.familyId,
+      brandId: schema.productsTable.brandId,
     })
       .from(schema.inventoryCountItemsTable)
       .innerJoin(schema.productsTable, eq(schema.inventoryCountItemsTable.productId, schema.productsTable.id))
@@ -2771,6 +2773,27 @@ router.get("/erp/inventory/count-sessions/:id", authenticate, requireStaff, requ
         difference: it.countedQuantity == null ? null : it.countedQuantity - it.systemQuantity,
       })),
     });
+  } catch (err) { req.log.error(err); res.status(500).json({ error: "Internal server error" }); }
+});
+
+// Families & brands for the current store — powers the family/marque filter dropdowns
+// in the physical count screen. Gated on inventory:view (same as the session detail
+// endpoint above) rather than settings:view, since any staff counting stock should be
+// able to filter without needing settings access.
+router.get("/erp/inventory/filter-options", authenticate, requireStaff, requireStore, requirePermission("inventory", "view"), async (req: AuthRequest, res) => {
+  try {
+    const storeId = req.currentStoreId!;
+    const [families, brands] = await Promise.all([
+      db.select({ id: schema.productFamiliesTable.id, nameFr: schema.productFamiliesTable.nameFr, nameAr: schema.productFamiliesTable.nameAr })
+        .from(schema.productFamiliesTable)
+        .where(eq(schema.productFamiliesTable.storeId, storeId))
+        .orderBy(schema.productFamiliesTable.nameFr),
+      db.select({ id: schema.productBrandsTable.id, nameFr: schema.productBrandsTable.nameFr, nameAr: schema.productBrandsTable.nameAr })
+        .from(schema.productBrandsTable)
+        .where(eq(schema.productBrandsTable.storeId, storeId))
+        .orderBy(schema.productBrandsTable.nameFr),
+    ]);
+    res.json({ families, brands });
   } catch (err) { req.log.error(err); res.status(500).json({ error: "Internal server error" }); }
 });
 

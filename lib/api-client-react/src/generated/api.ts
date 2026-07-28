@@ -101,6 +101,7 @@ import type {
   InventoryCountSession,
   InventoryCountSessionDetail,
   InventoryCountSessionSummary,
+  InventoryFilterOptionsResponse,
   InventoryMovement,
   Leave,
   LoginRequest,
@@ -7100,6 +7101,85 @@ export const useCompleteInventoryCount = <
 > => {
   return useMutation(getCompleteInventoryCountMutationOptions(options));
 };
+
+/**
+ * @summary Product families & brands for the current store (used to filter the physical count list)
+ */
+export const getGetInventoryFilterOptionsUrl = () => {
+  return `/api/erp/inventory/filter-options`;
+};
+
+export const getInventoryFilterOptions = async (
+  options?: RequestInit,
+): Promise<InventoryFilterOptionsResponse> => {
+  return customFetch<InventoryFilterOptionsResponse>(
+    getGetInventoryFilterOptionsUrl(),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export const getGetInventoryFilterOptionsQueryKey = () => {
+  return [`/api/erp/inventory/filter-options`] as const;
+};
+
+export const getGetInventoryFilterOptionsQueryOptions = <
+  TData = Awaited<ReturnType<typeof getInventoryFilterOptions>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getInventoryFilterOptions>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getGetInventoryFilterOptionsQueryKey();
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getInventoryFilterOptions>>
+  > = ({ signal }) => getInventoryFilterOptions({ signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getInventoryFilterOptions>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetInventoryFilterOptionsQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getInventoryFilterOptions>>
+>;
+export type GetInventoryFilterOptionsQueryError = ErrorType<unknown>;
+
+/**
+ * @summary Product families & brands for the current store (used to filter the physical count list)
+ */
+
+export function useGetInventoryFilterOptions<
+  TData = Awaited<ReturnType<typeof getInventoryFilterOptions>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getInventoryFilterOptions>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetInventoryFilterOptionsQueryOptions(options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
 
 /**
  * @summary List transactions

@@ -3,7 +3,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import {
   useGetInventoryCountSessions, useStartInventoryCount, useGetInventoryCountSession,
-  useUpdateInventoryCountItem, useCompleteInventoryCount,
+  useUpdateInventoryCountItem, useCompleteInventoryCount, useGetInventoryFilterOptions,
   getGetInventoryCountSessionsQueryKey, getGetInventoryCountSessionQueryKey,
   getGetInventoryStockQueryKey, getGetInventoryMovementsQueryKey,
   type InventoryCountSessionSummary, type InventoryCountItem, type InventoryCountSessionDetail,
@@ -16,6 +16,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
+import { SearchableSelect } from "@/components/ui/searchable-select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import {
@@ -186,6 +187,8 @@ function CountSessionDialog({
   const t = (fr: string, ar: string) => (lang === "ar" ? ar : fr);
   const [search, setSearch] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
+  const [familyFilter, setFamilyFilter] = useState("");
+  const [brandFilter, setBrandFilter] = useState("");
   const [confirmOpen, setConfirmOpen] = useState(false);
 
   // Debounce the search filter so typing doesn't recompute/re-render the whole list on every keystroke.
@@ -195,6 +198,7 @@ function CountSessionDialog({
   }, [search]);
 
   const { data: session, isLoading } = useGetInventoryCountSession(sessionId);
+  const { data: filterOptions } = useGetInventoryFilterOptions();
   const updateItem = useUpdateInventoryCountItem();
   const completeCount = useCompleteInventoryCount();
 
@@ -202,11 +206,34 @@ function CountSessionDialog({
 
   const isOpen = session?.status === "open";
   const items: InventoryCountItem[] = session?.items ?? [];
+
+  // Reference lists for the family/marque dropdowns. Kept memoized so typing in the
+  // search box (re-rendering this component on every keystroke) doesn't rebuild these
+  // option arrays — they only depend on the store-wide filter-options fetch.
+  const familyOptions = useMemo(
+    () => (filterOptions?.families ?? []).map((f) => ({ value: String(f.id), labelFr: f.nameFr, labelAr: f.nameAr })),
+    [filterOptions],
+  );
+  const brandOptions = useMemo(
+    () => (filterOptions?.brands ?? []).map((b) => ({ value: String(b.id), labelFr: b.nameFr, labelAr: b.nameAr })),
+    [filterOptions],
+  );
+
+  // Family/marque + text search combine cumulatively (AND). Single pass over the
+  // (up to a few thousand) items so applying/changing filters stays smooth.
   const filtered = useMemo(() => {
-    if (!debouncedSearch.trim()) return items;
-    const qLower = debouncedSearch.trim().toLowerCase();
-    return items.filter((it) => it.nameEn?.toLowerCase().includes(qLower) || it.nameAr?.includes(debouncedSearch.trim()));
-  }, [items, debouncedSearch]);
+    const familyId = familyFilter ? Number(familyFilter) : null;
+    const brandId = brandFilter ? Number(brandFilter) : null;
+    const q = debouncedSearch.trim();
+    const qLower = q.toLowerCase();
+    if (familyId == null && brandId == null && !q) return items;
+    return items.filter((it) => {
+      if (familyId != null && it.familyId !== familyId) return false;
+      if (brandId != null && it.brandId !== brandId) return false;
+      if (q && !(it.nameEn?.toLowerCase().includes(qLower) || it.nameAr?.includes(q))) return false;
+      return true;
+    });
+  }, [items, familyFilter, brandFilter, debouncedSearch]);
 
   const countedTotal = useMemo(() => items.filter((it) => it.countedQuantity != null).length, [items]);
   const varianceTotal = useMemo(() => items.reduce((sum, it) => sum + Math.abs(it.difference ?? 0), 0), [items]);
@@ -296,6 +323,44 @@ function CountSessionDialog({
                 <span className="text-sm text-muted-foreground whitespace-nowrap">
                   {countedTotal}/{items.length} {t("comptés", "معدود")}
                 </span>
+              </div>
+
+              <div className="flex items-center gap-2 flex-wrap">
+                <div className="w-full sm:w-44">
+                  <SearchableSelect
+                    value={familyFilter}
+                    onValueChange={setFamilyFilter}
+                    options={familyOptions}
+                    placeholder={t("Toutes les familles", "كل العائلات")}
+                    searchPlaceholder={t("Rechercher une famille…", "ابحث عن عائلة...")}
+                    noneLabel={t("Toutes les familles", "كل العائلات")}
+                    emptyText={t("Aucun résultat", "لا توجد نتائج")}
+                    className="h-9"
+                  />
+                </div>
+                <div className="w-full sm:w-44">
+                  <SearchableSelect
+                    value={brandFilter}
+                    onValueChange={setBrandFilter}
+                    options={brandOptions}
+                    placeholder={t("Toutes les marques", "كل الماركات")}
+                    searchPlaceholder={t("Rechercher une marque…", "ابحث عن ماركة...")}
+                    noneLabel={t("Toutes les marques", "كل الماركات")}
+                    emptyText={t("Aucun résultat", "لا توجد نتائج")}
+                    className="h-9"
+                  />
+                </div>
+                {(familyFilter || brandFilter) && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-9 text-xs text-muted-foreground"
+                    onClick={() => { setFamilyFilter(""); setBrandFilter(""); }}
+                    data-testid="button-clear-count-filters"
+                  >
+                    {t("Réinitialiser", "إعادة تعيين")}
+                  </Button>
+                )}
               </div>
 
               <div className="flex-1 min-h-0 border rounded-md flex flex-col">

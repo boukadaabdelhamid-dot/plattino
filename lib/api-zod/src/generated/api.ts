@@ -2224,6 +2224,8 @@ export const GetInventoryCountSessionResponse = zod
           difference: zod.number().nullish(),
           nameEn: zod.string().optional(),
           nameAr: zod.string().optional(),
+          familyId: zod.number().nullish(),
+          brandId: zod.number().nullish(),
         }),
       ),
     }),
@@ -2249,6 +2251,8 @@ export const UpdateInventoryCountItemResponse = zod.object({
   difference: zod.number().nullish(),
   nameEn: zod.string().optional(),
   nameAr: zod.string().optional(),
+  familyId: zod.number().nullish(),
+  brandId: zod.number().nullish(),
 });
 
 /**
@@ -2264,6 +2268,26 @@ export const CompleteInventoryCountResponse = zod.object({
   notes: zod.string().nullish(),
   createdAt: zod.string().optional(),
   completedAt: zod.string().nullish(),
+});
+
+/**
+ * @summary Product families & brands for the current store (used to filter the physical count list)
+ */
+export const GetInventoryFilterOptionsResponse = zod.object({
+  families: zod.array(
+    zod.object({
+      id: zod.number(),
+      nameFr: zod.string(),
+      nameAr: zod.string(),
+    }),
+  ),
+  brands: zod.array(
+    zod.object({
+      id: zod.number(),
+      nameFr: zod.string(),
+      nameAr: zod.string(),
+    }),
+  ),
 });
 
 /**

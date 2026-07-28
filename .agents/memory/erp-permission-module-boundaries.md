@@ -20,6 +20,9 @@ The `realtime` module permission gates only the RealTime page (route + sidebar +
 - purchase-orders stays `purchases`; `/admin/orders` + retours stay `orders`.
 - employees / attendance / leaves / accounting (transactions + accounting-summary) moved from `requireAdmin` to `requireStaff + requirePermission(section, action)`.
 
+## Shared reference data (families/brands/etc.) is NOT one cross-module endpoint
+`useGetErpSettingsProductsFamilies`/`Brands` (and similar settings-scoped lookup hooks) are gated on `settings:view`. A different module's screen that needs the same family/brand list to power its own UI (e.g. a filter dropdown) must NOT reuse those hooks — a staff member with e.g. `inventory` access but not `settings` would 403. Add a small new endpoint scoped to the *consuming* module's own permission (mirrors the precedent `/erp/purchases/filter-options` under `purchases:view`) instead, even though the underlying query is nearly identical.
+
 ## Multi-store employees (added later)
 Employees may now be assigned to multiple stores (same as admins). Three constraints were removed:
 - `POST /auth/select-store` — customer guard only (employees can now switch stores)

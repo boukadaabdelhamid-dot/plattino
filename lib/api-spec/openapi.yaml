@@ -1853,6 +1853,21 @@ paths:
               schema:
                 $ref: "#/components/schemas/InventoryCountSession"
 
+  /erp/inventory/filter-options:
+    get:
+      operationId: getInventoryFilterOptions
+      tags: [erp]
+      summary: Product families & brands for the current store (used to filter the physical count list)
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Filter options
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InventoryFilterOptionsResponse"
+
   # ── ERP: Accounting ──────────────────────────────────────────────
   /erp/transactions:
     get:
@@ -5327,6 +5342,12 @@ components:
           type: string
         nameAr:
           type: string
+        familyId:
+          type: integer
+          nullable: true
+        brandId:
+          type: integer
+          nullable: true
       required: [id, productId, systemQuantity]
 
     InventoryCountSessionDetail:
@@ -5353,6 +5374,35 @@ components:
         countedQuantity:
           type: number
       required: [countedQuantity]
+
+    InventoryFilterOptionsResponse:
+      type: object
+      properties:
+        families:
+          type: array
+          items:
+            type: object
+            properties:
+              id:
+                type: integer
+              nameFr:
+                type: string
+              nameAr:
+                type: string
+            required: [id, nameFr, nameAr]
+        brands:
+          type: array
+          items:
+            type: object
+            properties:
+              id:
+                type: integer
+              nameFr:
+                type: string
+              nameAr:
+                type: string
+            required: [id, nameFr, nameAr]
+      required: [families, brands]
 
     StoreLite:
       type: object

@@ -1133,6 +1133,8 @@ export interface InventoryCountItem {
   difference?: number | null;
   nameEn?: string;
   nameAr?: string;
+  familyId?: number | null;
+  brandId?: number | null;
 }
 
 export type InventoryCountSessionDetail = InventoryCountSession & {
@@ -1145,6 +1147,23 @@ export interface StartInventoryCountRequest {
 
 export interface UpdateCountItemRequest {
   countedQuantity: number;
+}
+
+export type InventoryFilterOptionsResponseFamiliesItem = {
+  id: number;
+  nameFr: string;
+  nameAr: string;
+};
+
+export type InventoryFilterOptionsResponseBrandsItem = {
+  id: number;
+  nameFr: string;
+  nameAr: string;
+};
+
+export interface InventoryFilterOptionsResponse {
+  families: InventoryFilterOptionsResponseFamiliesItem[];
+  brands: InventoryFilterOptionsResponseBrandsItem[];
 }
 
 export interface StoreLite {

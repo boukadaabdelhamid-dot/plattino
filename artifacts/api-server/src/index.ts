@@ -9,6 +9,7 @@ import { runContactGlobalLinkMigration } from "./lib/contact-global-link-migrati
 import { runProductAttributeDedupMigration } from "./lib/product-attribute-dedup-migration";
 import { runOrderSourceMigration } from "./lib/order-source-migration";
 import { runPaymentMethodMigration } from "./lib/payment-method-migration";
+import { runPurchaseOrdersSchemaMigration } from "./lib/purchase-orders-schema-migration";
 import { getStorageMode, getLocalStorageBase, ensureLocalStorageReady } from "./lib/objectStorage";
 
 const rawPort = process.env["PORT"];
@@ -962,6 +963,7 @@ server.listen(port, async () => {
     logger.info("Online order_source backfill applied.");
   } catch (err) { logger.warn({ err }, "Online order_source backfill skipped."); }
   await runPaymentMethodMigration(pool);
+  await runPurchaseOrdersSchemaMigration(pool);
   await runAttributeUniqueIndexMigration();
   await runWebSettingsMigration();
   await runBootstrap();

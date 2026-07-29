@@ -464,7 +464,7 @@ function CustomerSheet({ customerId, onClose, t, lang, currency, initialTab = "b
                   <div>
                     <p className="text-sm font-medium">#{o.id}</p>
                     <p className="text-xs text-muted-foreground">
-                      {o.createdAt ? format(new Date(o.createdAt), "dd/MM/yyyy") : ""}
+                      {o.createdAt ? format(new Date(o.createdAt), "dd/MM/yyyy HH:mm") : ""}
                     </p>
                   </div>
                   <div className="text-right">

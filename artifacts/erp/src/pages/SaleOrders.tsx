@@ -447,7 +447,7 @@ export default function SaleOrders() {
                     )}
                   </TableCell>
                   <TableCell className="text-sm text-muted-foreground">
-                    {order.created_at ? format(new Date(order.created_at), "dd/MM/yyyy") : "—"}
+                    {order.created_at ? format(new Date(order.created_at), "dd/MM/yyyy HH:mm") : "—"}
                   </TableCell>
                   <TableCell className="text-right font-semibold text-sm">
                     {parseFloat(order.total_amount).toFixed(2)} {currency}

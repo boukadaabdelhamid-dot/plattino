@@ -399,7 +399,7 @@ export default function PurchaseOrders() {
                         className="cursor-pointer hover:bg-blue-50/50" onClick={() => openExisting(po)}>
                         <TableCell className="font-medium text-slate-700">{refOf(po.id)}</TableCell>
                         <TableCell className="text-sm text-muted-foreground">
-                          {po.createdAt ? format(new Date(po.createdAt), "yyyy-MM-dd HH:mm:ss") : "—"}
+                          {po.createdAt ? format(new Date(po.createdAt), "dd/MM/yyyy HH:mm") : "—"}
                         </TableCell>
                         <TableCell className="font-medium uppercase">
                           {supplierMap[po.supplierId]?.name ?? `#${po.supplierId}`}

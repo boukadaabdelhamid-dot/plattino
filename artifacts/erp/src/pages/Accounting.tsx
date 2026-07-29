@@ -305,7 +305,7 @@ export default function Accounting() {
                     {pagedTx.map((tx: Transaction) => (
                       <TableRow key={tx.id} data-testid={`row-tx-${tx.id}`}>
                         <TableCell className="text-sm text-muted-foreground whitespace-nowrap">
-                          {tx.date ? format(new Date(tx.date), "dd/MM/yyyy") : "—"}
+                          {tx.date ? format(new Date(tx.date), "dd/MM/yyyy HH:mm") : "—"}
                         </TableCell>
                         <TableCell>
                           <span className={`text-xs px-2 py-0.5 rounded font-medium ${tx.type === "income" ? "bg-emerald-100 text-emerald-700" : "bg-red-100 text-red-700"}`}>

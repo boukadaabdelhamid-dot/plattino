@@ -279,7 +279,7 @@ function RetoursHistory({ onPrint, onNewRetour }: {
                         {retour.reason ?? <span className="italic">—</span>}
                       </TableCell>
                       <TableCell className="text-sm text-muted-foreground">
-                        {retour.createdAt ? format(new Date(retour.createdAt), "dd/MM/yyyy") : "—"}
+                        {retour.createdAt ? format(new Date(retour.createdAt), "dd/MM/yyyy HH:mm") : "—"}
                       </TableCell>
                       <TableCell className="text-right">
                         <Button size="sm" variant="outline" className="h-8 text-xs"

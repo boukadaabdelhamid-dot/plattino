@@ -3703,23 +3703,42 @@ router.post("/erp/customers/:id/import-to-stores", authenticate, requireStaff, r
 
           // Wire contact link if missing → this counts as linked_existing, not already_linked
           if (existing.contactId == null && srcContact) {
-            const [nc] = await tx.insert(schema.contactsTable).values({
-              storeId: targetStoreId,
-              name: srcContact.name, contactName: srcContact.contactName, email: srcContact.email,
-              phone: srcContact.phone, address: srcContact.address, notes: srcContact.notes,
-              contactType: srcContact.contactType,
-            }).returning({ id: schema.contactsTable.id });
+            // Reuse an existing contact in the target store if one already shares the same
+            // globalContactId (e.g. created by a prior supplier import). Creating a second
+            // contact with the same globalContactId would violate contacts_one_global_per_store.
+            let resolvedContactId: number | null = null;
+            if (srcContact.globalContactId) {
+              const [found] = await tx.select({ id: schema.contactsTable.id })
+                .from(schema.contactsTable)
+                .where(and(
+                  eq(schema.contactsTable.storeId, targetStoreId),
+                  eq(schema.contactsTable.globalContactId, srcContact.globalContactId),
+                ))
+                .limit(1);
+              if (found) resolvedContactId = found.id;
+            }
+            if (resolvedContactId === null) {
+              const [nc] = await tx.insert(schema.contactsTable).values({
+                storeId: targetStoreId,
+                name: srcContact.name, contactName: srcContact.contactName, email: srcContact.email,
+                phone: srcContact.phone, address: srcContact.address, notes: srcContact.notes,
+                contactType: srcContact.contactType,
+              }).returning({ id: schema.contactsTable.id });
+              resolvedContactId = nc.id;
+              await linkContactsGlobally(tx, srcContact.id, resolvedContactId);
+            }
             await tx.update(schema.customerProfilesTable)
-              .set({ contactId: nc.id })
+              .set({ contactId: resolvedContactId })
               .where(eq(schema.customerProfilesTable.id, existing.id));
-            linkedContactId = nc.id;
-            await linkContactsGlobally(tx, srcContact.id, nc.id);
+            linkedContactId = resolvedContactId;
 
-            // Ensure supplier role for customer_supplier on existing profiles
+            // Ensure supplier role for customer_supplier on existing profiles.
+            // The target contact may already have a supplier (from a prior supplier import);
+            // check before inserting to avoid suppliers_contact_id_uniq violation.
             if (cpType === "customer_supplier" && srcSupplier) {
-              const [existingSupplier] = await tx.select({ id: schema.suppliersTable.id })
+              const [existingSupplier] = await tx.select({ id: schema.suppliersTable.id, contactType: schema.suppliersTable.contactType })
                 .from(schema.suppliersTable)
-                .where(and(eq(schema.suppliersTable.contactId, nc.id), eq(schema.suppliersTable.storeId, targetStoreId)))
+                .where(and(eq(schema.suppliersTable.contactId, resolvedContactId), eq(schema.suppliersTable.storeId, targetStoreId)))
                 .limit(1);
               if (!existingSupplier) {
                 await tx.insert(schema.suppliersTable).values({
@@ -3727,14 +3746,18 @@ router.post("/erp/customers/:id/import-to-stores", authenticate, requireStaff, r
                   name: srcSupplier.name, contactName: srcSupplier.contactName,
                   email: srcSupplier.email, phone: srcSupplier.phone,
                   address: srcSupplier.address, notes: srcSupplier.notes,
-                  contactType: "customer_supplier", contactId: nc.id,
+                  contactType: "customer_supplier", contactId: resolvedContactId,
                 });
+              } else if (existingSupplier.contactType !== "customer_supplier") {
+                await tx.update(schema.suppliersTable)
+                  .set({ contactType: "customer_supplier" })
+                  .where(eq(schema.suppliersTable.id, existingSupplier.id));
               }
             }
 
-            await recomputeContactBalance(tx, nc.id);
-            // Do NOT call syncLinkedContactBalances here: nc has balance 0 and would
-            // clobber the source store's real balance before the authoritative
+            await recomputeContactBalance(tx, resolvedContactId);
+            // Do NOT call syncLinkedContactBalances here: the contact may have balance 0
+            // and would clobber the source store's real balance before the authoritative
             // syncLinkedContactBalances(srcContact) runs after the loop.
             results.push({ targetStoreId, status: "linked_existing", customerId: userId });
             continue;
@@ -3772,14 +3795,32 @@ router.post("/erp/customers/:id/import-to-stores", authenticate, requireStaff, r
         // source store after the loop (see syncLinkedCustomerBalances below).
         let targetContactId: number | undefined;
         if (srcContact) {
-          const [nc] = await tx.insert(schema.contactsTable).values({
-            storeId: targetStoreId,
-            name: srcContact.name, contactName: srcContact.contactName, email: srcContact.email,
-            phone: srcContact.phone, address: srcContact.address, notes: srcContact.notes,
-            contactType: srcContact.contactType,
-          }).returning({ id: schema.contactsTable.id });
-          targetContactId = nc.id;
-          await linkContactsGlobally(tx, srcContact.id, nc.id);
+          // Reuse an existing contact in the target store if one already shares the same
+          // globalContactId (e.g. created by a prior supplier import). Creating a second
+          // contact with the same globalContactId would violate contacts_one_global_per_store.
+          let foundContact: number | null = null;
+          if (srcContact.globalContactId) {
+            const [existing] = await tx.select({ id: schema.contactsTable.id })
+              .from(schema.contactsTable)
+              .where(and(
+                eq(schema.contactsTable.storeId, targetStoreId),
+                eq(schema.contactsTable.globalContactId, srcContact.globalContactId),
+              ))
+              .limit(1);
+            if (existing) foundContact = existing.id;
+          }
+          if (foundContact !== null) {
+            targetContactId = foundContact;
+          } else {
+            const [nc] = await tx.insert(schema.contactsTable).values({
+              storeId: targetStoreId,
+              name: srcContact.name, contactName: srcContact.contactName, email: srcContact.email,
+              phone: srcContact.phone, address: srcContact.address, notes: srcContact.notes,
+              contactType: srcContact.contactType,
+            }).returning({ id: schema.contactsTable.id });
+            targetContactId = nc.id;
+            await linkContactsGlobally(tx, srcContact.id, targetContactId);
+          }
         }
 
         await tx.insert(schema.customerProfilesTable).values({
@@ -3790,17 +3831,32 @@ router.post("/erp/customers/:id/import-to-stores", authenticate, requireStaff, r
         }).onConflictDoNothing();
 
         if (cpType === "customer_supplier" && srcSupplier && targetContactId !== undefined) {
-          await tx.insert(schema.suppliersTable).values({
-            storeId: targetStoreId,
-            name: srcSupplier.name,
-            contactName: srcSupplier.contactName,
-            email: srcSupplier.email,
-            phone: srcSupplier.phone,
-            address: srcSupplier.address,
-            notes: srcSupplier.notes,
-            contactType: "customer_supplier",
-            contactId: targetContactId,
-          });
+          // The target contact may already have a supplier row (created by a prior supplier
+          // import). Check for it: if missing insert; if present with wrong type, upgrade.
+          const [existingTargetSup] = await tx.select({ id: schema.suppliersTable.id, contactType: schema.suppliersTable.contactType })
+            .from(schema.suppliersTable)
+            .where(and(
+              eq(schema.suppliersTable.contactId, targetContactId),
+              eq(schema.suppliersTable.storeId, targetStoreId),
+            ))
+            .limit(1);
+          if (!existingTargetSup) {
+            await tx.insert(schema.suppliersTable).values({
+              storeId: targetStoreId,
+              name: srcSupplier.name,
+              contactName: srcSupplier.contactName,
+              email: srcSupplier.email,
+              phone: srcSupplier.phone,
+              address: srcSupplier.address,
+              notes: srcSupplier.notes,
+              contactType: "customer_supplier",
+              contactId: targetContactId,
+            });
+          } else if (existingTargetSup.contactType !== "customer_supplier") {
+            await tx.update(schema.suppliersTable)
+              .set({ contactType: "customer_supplier" })
+              .where(eq(schema.suppliersTable.id, existingTargetSup.id));
+          }
         }
 
         if (targetContactId !== undefined) {

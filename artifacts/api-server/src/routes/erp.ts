@@ -4649,7 +4649,57 @@ router.get("/erp/purchases/needed", authenticate, requireStaff, requireStore, re
           ? sql` AND o.created_at < (${dateTo}::timestamp + INTERVAL '1 day')`
           : sql``;
 
+    // ── Optimised query: pre-aggregated CTEs replace per-row LATERAL subqueries ──
+    // Before: two LATERAL joins + one NOT EXISTS ran once per low-stock product row.
+    // After:  each heavy table is scanned once, results hashed, then joined.
     const result = await db.execute(sql`
+      WITH
+      -- 1. Sales totals for every product in this store (one pass over order_items)
+      sales_agg AS (
+        SELECT
+          oi.product_id,
+          SUM(oi.quantity::numeric *
+              (oi.unit_price::numeric
+               - COALESCE(oi.cost_price, 0)::numeric))   AS benefice,
+          SUM(oi.quantity::numeric)                       AS total_qty_sold
+        FROM   order_items oi
+        JOIN   orders      o  ON o.id = oi.order_id
+        WHERE  o.store_id   = ${storeId}
+          AND  o.status NOT IN ('cancelled', 'draft')
+          ${dateFilter}
+        GROUP  BY oi.product_id
+      ),
+      -- 2. Last received supplier per product (one pass over purchase_items)
+      last_sup AS (
+        SELECT DISTINCT ON (pi.product_id)
+          pi.product_id,
+          po.supplier_id
+        FROM   purchase_items  pi
+        JOIN   purchase_orders po ON po.id = pi.purchase_order_id
+        WHERE  po.store_id = ${storeId}
+          AND  po.status   = 'received'
+        ORDER  BY pi.product_id,
+                  COALESCE(po.received_at, po.created_at) DESC
+      ),
+      -- 3. Snoozed products for this store (tiny scan)
+      snoozed AS (
+        SELECT product_id
+        FROM   purchase_snooze
+        WHERE  store_id     = ${storeId}
+          AND  snoozed_until > NOW()
+      ),
+      -- 4. Cross-store in-stock references/barcodes (one scan, used for anti-join)
+      cross_avail AS (
+        SELECT reference, barcode
+        FROM   products
+        WHERE  store_id  != ${storeId}
+          AND  is_active  = true
+          AND  stock      > 0
+          AND  (
+            (reference IS NOT NULL AND reference != '')
+            OR (barcode IS NOT NULL AND barcode != '')
+          )
+      )
       SELECT
         p.id,
         p.name_en        AS designation,
@@ -4663,74 +4713,40 @@ router.get("/erp/purchases/needed", authenticate, requireStaff, requireStore, re
         pf.name_fr       AS famille,
         pf.name_ar       AS famille_ar,
         pb.name_fr       AS marque,
-        s.id             AS supplier_id,
-        s.name           AS supplier_name,
-        s.address        AS supplier_city,
-        s.phone          AS supplier_phone,
-        COALESCE(ben.benefice, 0)    AS benefice,
-        COALESCE(ben.total_qty_sold, 0) AS total_qty_sold
-      FROM products p
-      LEFT JOIN product_families pf  ON pf.id = p.family_id
-      LEFT JOIN product_brands   pb  ON pb.id = p.brand_id
-      LEFT JOIN LATERAL (
-        SELECT po.supplier_id
-        FROM   purchase_items  pi
-        JOIN   purchase_orders po ON po.id = pi.purchase_order_id
-        WHERE  pi.product_id  = p.id
-          AND  po.store_id    = ${storeId}
-          AND  po.status      = 'received'
-        ORDER  BY COALESCE(po.received_at, po.created_at) DESC
-        LIMIT  1
-      ) last_sup ON true
-      LEFT JOIN suppliers s ON s.id = last_sup.supplier_id
-      LEFT JOIN LATERAL (
-        SELECT
-          COALESCE(SUM(
-            CAST(oi.quantity AS numeric) *
-            (CAST(oi.unit_price AS numeric) - COALESCE(CAST(p2.cost_price AS numeric), 0))
-          ), 0) AS benefice,
-          COALESCE(SUM(CAST(oi.quantity AS numeric)), 0) AS total_qty_sold
-        FROM   order_items oi
-        JOIN   orders      o  ON o.id  = oi.order_id
-        JOIN   products    p2 ON p2.id = oi.product_id
-        WHERE  oi.product_id = p.id
-          AND  o.store_id    = ${storeId}
-          AND  o.status NOT IN ('cancelled', 'draft')
-          ${dateFilter}
-      ) ben ON true
-      WHERE p.store_id  = ${storeId}
-        AND p.is_active  = true
-        AND (
+        sup.id           AS supplier_id,
+        sup.name         AS supplier_name,
+        sup.address      AS supplier_city,
+        sup.phone        AS supplier_phone,
+        COALESCE(sa.benefice,       0) AS benefice,
+        COALESCE(sa.total_qty_sold, 0) AS total_qty_sold
+      FROM   products         p
+      LEFT JOIN product_families  pf  ON pf.id  = p.family_id
+      LEFT JOIN product_brands    pb  ON pb.id  = p.brand_id
+      LEFT JOIN last_sup          ls  ON ls.product_id  = p.id
+      LEFT JOIN suppliers         sup ON sup.id = ls.supplier_id
+      LEFT JOIN sales_agg         sa  ON sa.product_id  = p.id
+      LEFT JOIN snoozed            sn  ON sn.product_id  = p.id
+      WHERE  p.store_id              = ${storeId}
+        AND  p.is_active             = true
+        AND  (
           p.stock = 0
           OR (p.min_stock IS NOT NULL AND p.stock <= p.min_stock)
         )
-        AND p.excluded_from_purchase = false
-        AND NOT EXISTS (
-          SELECT 1 FROM purchase_snooze ps
-          WHERE  ps.product_id   = p.id
-            AND  ps.store_id     = ${storeId}
-            AND  ps.snoozed_until > NOW()
-        )
-        AND NOT EXISTS (
-          SELECT 1 FROM products p_other
-          WHERE  p_other.store_id  != ${storeId}
-            AND  p_other.is_active  = true
-            AND  p_other.stock      > 0
-            AND  (
-              (p.reference IS NOT NULL AND p.reference != ''
-                AND p_other.reference = p.reference)
-              OR
-              (COALESCE(p.reference, '') = ''
-                AND p.barcode IS NOT NULL AND p.barcode != ''
-                AND p_other.barcode = p.barcode)
-            )
+        AND  p.excluded_from_purchase = false
+        AND  sn.product_id IS NULL
+        AND NOT (
+          (p.reference IS NOT NULL AND p.reference != ''
+            AND EXISTS (SELECT 1 FROM cross_avail ca WHERE ca.reference = p.reference))
+          OR
+          (COALESCE(p.reference, '') = '' AND p.barcode IS NOT NULL AND p.barcode != ''
+            AND EXISTS (SELECT 1 FROM cross_avail ca WHERE ca.barcode = p.barcode))
         )
         ${familyFilter}
         ${brandFilter}
         ${searchFilter}
         ${supplierFilter}
         ${cityFilter}
-      ORDER BY ${orderByQty ? sql`COALESCE(ben.total_qty_sold, 0) DESC NULLS LAST` : sql`COALESCE(ben.benefice, 0) DESC NULLS LAST`}
+      ORDER BY ${orderByQty ? sql`COALESCE(sa.total_qty_sold, 0) DESC NULLS LAST` : sql`COALESCE(sa.benefice, 0) DESC NULLS LAST`}
     `);
     res.json(result.rows);
   } catch (err) { req.log.error(err); res.status(500).json({ error: "Internal server error" }); }

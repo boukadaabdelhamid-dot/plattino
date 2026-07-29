@@ -936,6 +936,39 @@ async function runStaffEmployeeBackfill() {
   }
 }
 
+async function runPurchaseNeededIndexMigration() {
+  // These indexes are critical for the /erp/purchases/needed query performance.
+  // Without them every join does a full-table seq-scan, causing O(n×m) latency.
+  const idxDefs: [string, string][] = [
+    // order_items — product_id (lateral/CTE join) and order_id (join to orders)
+    ["idx_order_items_product_id",       "CREATE INDEX IF NOT EXISTS idx_order_items_product_id       ON order_items  (product_id)"],
+    ["idx_order_items_order_id",         "CREATE INDEX IF NOT EXISTS idx_order_items_order_id         ON order_items  (order_id)"],
+    // orders — store_id + status covering for main filter + date
+    ["idx_orders_store_status",          "CREATE INDEX IF NOT EXISTS idx_orders_store_status          ON orders       (store_id, status)"],
+    ["idx_orders_store_status_created",  "CREATE INDEX IF NOT EXISTS idx_orders_store_status_created  ON orders       (store_id, status, created_at)"],
+    // purchase_items — product_id and purchase_order_id
+    ["idx_purchase_items_product_id",    "CREATE INDEX IF NOT EXISTS idx_purchase_items_product_id    ON purchase_items  (product_id)"],
+    ["idx_purchase_items_po_id",         "CREATE INDEX IF NOT EXISTS idx_purchase_items_po_id         ON purchase_items  (purchase_order_id)"],
+    // purchase_orders — store_id + status (last-supplier lookup)
+    ["idx_purchase_orders_store_status", "CREATE INDEX IF NOT EXISTS idx_purchase_orders_store_status ON purchase_orders (store_id, status)"],
+    // products — composite for main WHERE clause
+    ["idx_products_store_active_stock",  "CREATE INDEX IF NOT EXISTS idx_products_store_active_stock  ON products (store_id, is_active, stock)"],
+    // products — cross-store reference / barcode lookup
+    ["idx_products_reference",           "CREATE INDEX IF NOT EXISTS idx_products_reference           ON products (reference) WHERE reference IS NOT NULL AND reference != ''"],
+    ["idx_products_barcode",             "CREATE INDEX IF NOT EXISTS idx_products_barcode             ON products (barcode)   WHERE barcode IS NOT NULL AND barcode != ''"],
+  ];
+  let built = 0;
+  for (const [name, stmt] of idxDefs) {
+    try {
+      await pool.query(stmt);
+      built++;
+    } catch (err: any) {
+      logger.warn({ err: err?.message, index: name }, "purchase-needed index skipped (non-fatal)");
+    }
+  }
+  logger.info({ built }, "purchase-needed performance indexes ready.");
+}
+
 async function runWebSettingsMigration() {
   try {
     await pool.query(`
@@ -981,6 +1014,7 @@ server.listen(port, async () => {
   await runPurchaseOrdersSchemaMigration(pool);
   await runAttributeUniqueIndexMigration();
   await runWebSettingsMigration();
+  await runPurchaseNeededIndexMigration();
   await runBootstrap();
   // Backfill runs after bootstrap so the initial admin account (created there) is also linked.
   await runStaffEmployeeBackfill();

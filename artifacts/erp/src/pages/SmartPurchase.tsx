@@ -1303,6 +1303,19 @@ export default function SmartPurchase() {
           const isSnoozePending = pendingSnooze.has(row.id);
           const imgUrl = resolveImg(row.image_url);
 
+          // ── Suggested quantity ──────────────────────────────────────────────
+          const cardStock = Number(row.stock);
+          const cardMinStock = row.min_stock != null ? Number(row.min_stock) : null;
+          const cardMinStockQty = cardMinStock != null ? Math.max(1, cardMinStock - cardStock) : null;
+          const cardSalesQty = (() => {
+            if (Number(row.total_qty_sold) <= 0) return null;
+            const days = filterDateFrom && filterDateTo
+              ? Math.max(1, (new Date(filterDateTo).getTime() - new Date(filterDateFrom).getTime()) / 86_400_000 + 1)
+              : 30;
+            return Math.max(1, Math.ceil((Number(row.total_qty_sold) / days) * 7 * 4));
+          })();
+          const suggestedQty = cardSalesQty ?? cardMinStockQty;
+
           return (
             <div key={row.id}
               className="rounded-2xl bg-white border shadow-sm overflow-hidden">
@@ -1370,6 +1383,21 @@ export default function SmartPurchase() {
                     )}
                   </div>
                 </div>
+
+                {/* Suggested quantity */}
+                {suggestedQty != null && (
+                  <div className="flex items-center justify-between text-xs px-1">
+                    <span className="text-muted-foreground">
+                      {t("Qté à commander", "الكمية المقترحة")}
+                      {cardSalesQty != null && (
+                        <span className="ml-1 text-[10px] text-muted-foreground/70">({t("moy. 4 sem.", "متوسط 4 أسابيع")})</span>
+                      )}
+                    </span>
+                    <span className="font-bold text-orange-700 bg-orange-50 border border-orange-200 rounded-full px-2.5 py-0.5 tabular-nums">
+                      {suggestedQty.toLocaleString("fr-DZ")}
+                    </span>
+                  </div>
+                )}
 
                 {/* Supplier */}
                 {row.supplier_name && (

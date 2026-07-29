@@ -721,6 +721,8 @@ router.put("/erp/permissions/:userId", authenticate, requireAdmin, requireStore,
       "print_barcode", "view_history", "bulk_actions",
       // purchases
       "receive", "manage_charges", "column_settings",
+      // inventory
+      "count",
       // settings
       "edit_store_name", "edit_default_customer", "manage_permissions", "manage_stores",
       // customers (granular)

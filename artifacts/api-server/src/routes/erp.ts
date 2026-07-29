@@ -709,7 +709,7 @@ router.put("/erp/permissions/:userId", authenticate, requireAdmin, requireStore,
     if (!Number.isFinite(userId)) { res.status(400).json({ error: "Invalid userId" }); return; }
     const perms = req.body as { section: string; action: string; granted: boolean }[];
     if (!Array.isArray(perms) || perms.length === 0) { res.status(400).json({ error: "perms array required" }); return; }
-    const VALID_SECTIONS = new Set(["dashboard", "orders", "products", "inventory", "customers", "purchases", "settings", "caisse", "suppliers", "employees", "realtime", "attendance", "leaves", "accounting"]);
+    const VALID_SECTIONS = new Set(["dashboard", "orders", "products", "inventory", "customers", "purchases", "settings", "caisse", "suppliers", "employees", "realtime", "attendance", "leaves", "accounting", "web_store"]);
     const VALID_ACTIONS = new Set([
       // base actions (all modules)
       "view", "create", "edit", "delete",
@@ -717,12 +717,16 @@ router.put("/erp/permissions/:userId", authenticate, requireAdmin, requireStore,
       "close", "print", "change_payment", "edit_line_price", "view_profit", "view_sale_orders",
       // products
       "edit_price", "view_purchase_price", "expose", "manage_stock",
-      "manage_images", "duplicate", "copy_to_store", "import",
+      "manage_images", "manage_barcodes", "duplicate", "copy_to_store", "import",
       "print_barcode", "view_history", "bulk_actions",
       // purchases
       "receive", "manage_charges", "column_settings",
       // settings
       "edit_store_name", "edit_default_customer", "manage_permissions", "manage_stores",
+      // customers (granular)
+      "view_balance",
+      // web_store
+      "edit_settings", "manage_featured", "manage_orders",
     ]);
     for (const p of perms) {
       if (!VALID_SECTIONS.has(p.section) || !VALID_ACTIONS.has(p.action)) {

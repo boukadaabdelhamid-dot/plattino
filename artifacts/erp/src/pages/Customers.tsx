@@ -1357,7 +1357,7 @@ function CustomerOperationsSheet({ customerId, customerName, onClose, t, lang, c
               {opsWithBalance.map(({ op, runningBalance }) => (
                 <TableRow key={op.id}>
                   <TableCell className="text-xs">
-                    {op.date ? format(new Date(op.date), "dd/MM/yyyy") : "—"}
+                    {op.date ? format(new Date(op.date), "dd/MM/yyyy HH:mm") : "—"}
                   </TableCell>
                   <TableCell>
                     {op.type === "versement" ? (

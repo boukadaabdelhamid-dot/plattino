@@ -352,12 +352,12 @@ function PurchaseNeedsPrint({
 }) {
   const today = new Date().toLocaleDateString("fr-DZ");
   return (
-    <div id="purchase-needs-print" style={{ display: "none" }}>
+    <div id="purchase-needs-print" style={{ visibility: "hidden", position: "absolute", height: 0, overflow: "hidden", pointerEvents: "none" }}>
       <style>{`
         @media print {
           body * { visibility: hidden !important; }
           #purchase-needs-print, #purchase-needs-print * { visibility: visible !important; }
-          #purchase-needs-print { position: fixed; inset: 0; font-family: Arial, sans-serif; font-size: 12px; color: #000; background: #fff; padding: 24px; }
+          #purchase-needs-print { position: fixed; inset: 0; height: auto !important; overflow: visible !important; font-family: Arial, sans-serif; font-size: 12px; color: #000; background: #fff; padding: 24px; }
           #purchase-needs-print table { width: 100%; border-collapse: collapse; margin-top: 12px; }
           #purchase-needs-print th { background: #1e293b; color: #fff; padding: 6px 8px; text-align: left; font-size: 11px; }
           #purchase-needs-print td { border-bottom: 1px solid #e2e8f0; padding: 5px 8px; vertical-align: middle; }

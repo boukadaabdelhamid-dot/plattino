@@ -355,7 +355,7 @@ function FilterChip({ label, onRemove }: { label: string; onRemove: () => void }
 
 // ── Quick order drawer ───────────────────────────────────────────────────────
 function QuickOrderDrawer({
-  product, suppliers, onClose, onOrdered, t, lang,
+  product, suppliers, onClose, onOrdered, t, lang, dateFrom, dateTo,
 }: {
   product: NeededRow | null;
   suppliers: Array<{ id: number; name: string }>;
@@ -363,6 +363,8 @@ function QuickOrderDrawer({
   onOrdered: (productId: number) => void;
   t: (fr: string, ar: string) => string;
   lang: string;
+  dateFrom: string;
+  dateTo: string;
 }) {
   const [mode, setMode] = useState<"new" | "existing">("new");
   // New-bon state
@@ -373,6 +375,8 @@ function QuickOrderDrawer({
   // Shared
   const [quantity, setQuantity] = useState("1");
   const [unitCost, setUnitCost] = useState("");
+  // Quantity suggestion
+  const [nWeeks, setNWeeks] = useState(4);
   const [submitting, setSubmitting] = useState(false);
   const [success, setSuccess] = useState<{ id: number; itemCount: number; merged?: boolean } | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -428,6 +432,23 @@ function QuickOrderDrawer({
     if (lastUnitCost == null || priceEditedRef.current || success != null) return;
     setUnitCost(Number(lastUnitCost).toFixed(2));
   }, [lastUnitCost, success]);
+
+  // ── Quantity suggestion helpers ──────────────────────────────────────────
+  const minStockQty = product != null && product.min_stock != null
+    ? Math.max(1, product.min_stock - product.stock)
+    : 1;
+
+  const salesQty = useMemo(() => {
+    if (!product || Number(product.total_qty_sold) <= 0) return null;
+    // Derive period length: use filter dates if set, else assume 30 days
+    let days = 30;
+    if (dateFrom && dateTo) {
+      const diff = (new Date(dateTo).getTime() - new Date(dateFrom).getTime()) / 86_400_000;
+      if (diff > 0) days = diff;
+    }
+    const dailyRate = Number(product.total_qty_sold) / days;
+    return Math.max(1, Math.ceil(dailyRate * 7 * nWeeks));
+  }, [product, dateFrom, dateTo, nWeeks]);
 
   const handleSubmit = async () => {
     if (!product) return;
@@ -599,6 +620,47 @@ function QuickOrderDrawer({
               {/* ── Quantity ── */}
               <div className="space-y-1.5">
                 <label className="text-sm font-medium">{t("Quantité", "الكمية")} *</label>
+                {/* Quick-fill buttons */}
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setQuantity(String(minStockQty))}
+                    className={`flex-1 py-2 px-3 text-xs font-semibold rounded-lg border transition-colors ${
+                      quantity === String(minStockQty)
+                        ? "bg-slate-700 text-white border-slate-700"
+                        : "bg-white text-slate-700 border-slate-300 hover:bg-slate-50"
+                    }`}
+                  >
+                    {t("Min stock", "الحد الأدنى")} ({minStockQty})
+                  </button>
+                  {salesQty != null ? (
+                    <div className="flex flex-1 gap-1 items-center">
+                      <button
+                        type="button"
+                        onClick={() => setQuantity(String(salesQty))}
+                        className={`flex-1 py-2 px-2 text-xs font-semibold rounded-lg border transition-colors ${
+                          quantity === String(salesQty)
+                            ? "bg-blue-600 text-white border-blue-600"
+                            : "bg-white text-blue-700 border-blue-300 hover:bg-blue-50"
+                        }`}
+                      >
+                        {t("Ventes", "المبيعات")} ({salesQty})
+                      </button>
+                      {/* nWeeks stepper */}
+                      <div className="flex items-center gap-0.5 shrink-0">
+                        <button type="button" onClick={() => setNWeeks(w => Math.max(1, w - 1))}
+                          className="w-6 h-6 flex items-center justify-center rounded border text-slate-500 hover:bg-slate-50 text-sm leading-none">−</button>
+                        <span className="text-xs font-semibold text-slate-600 w-6 text-center">{nWeeks}s</span>
+                        <button type="button" onClick={() => setNWeeks(w => Math.min(26, w + 1))}
+                          className="w-6 h-6 flex items-center justify-center rounded border text-slate-500 hover:bg-slate-50 text-sm leading-none">+</button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="flex-1 py-2 px-3 text-xs text-muted-foreground rounded-lg border border-dashed text-center">
+                      {t("Pas de données ventes", "لا توجد بيانات مبيعات")}
+                    </div>
+                  )}
+                </div>
                 <Input type="number" min="1" step="1" className="h-12 rounded-xl"
                   value={quantity} onChange={(e) => setQuantity(e.target.value)} />
               </div>
@@ -1548,6 +1610,8 @@ export default function SmartPurchase() {
         onOrdered={(id) => snoozeMut.mutate(id)}
         t={t}
         lang={lang}
+        dateFrom={filterDateFrom}
+        dateTo={filterDateTo}
       />
     </div>
   );

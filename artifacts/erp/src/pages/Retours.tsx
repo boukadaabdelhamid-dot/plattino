@@ -95,7 +95,7 @@ export default function Retours() {
   );
 }
 
-function RetourPrintDialog({ retourId, open, onOpenChange }: {
+export function RetourPrintDialog({ retourId, open, onOpenChange }: {
   retourId: number | null;
   open: boolean;
   onOpenChange: (o: boolean) => void;

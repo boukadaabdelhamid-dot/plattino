@@ -55,6 +55,7 @@ import { ShippingLabelModal } from "@/components/ShippingLabelModal";
 import { useCurrentStore } from "@/hooks/use-current-store";
 import { usePermissions } from "@/hooks/use-permissions";
 import { SaleOrderViewDialog, type SaleOrderDetail } from "@/pages/SaleOrders";
+import { RetourPrintDialog } from "@/pages/Retours";
 
 type TFn = (fr: string, ar: string) => string;
 
@@ -593,6 +594,25 @@ function CustomerDetailSheet({ customerId, onClose, t, lang, currency }: {
   const [viewOpen, setViewOpen] = useState(false);
   const [viewingOrder, setViewingOrder] = useState<SaleOrderDetail | null>(null);
 
+  // Retours state
+  const [bonRetours, setBonRetours] = useState<{ id: number; createdAt: string | null; totalAmount: number; retourType: string | null }[]>([]);
+  const [retourViewId, setRetourViewId] = useState<number | null>(null);
+  const [retourViewOpen, setRetourViewOpen] = useState(false);
+
+  // Fetch bon_retours for this customer
+  React.useEffect(() => {
+    const token = localStorage.getItem("midanic_token") ?? "";
+    const apiBase = (import.meta.env.VITE_API_URL as string | undefined) ?? "";
+    fetch(`${apiBase}/api/admin/retours?clientUserId=${customerId}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+      .then((r) => r.ok ? r.json() : [])
+      .then((data: { id: number; createdAt: string | null; totalAmount: number; retourType: string | null }[]) => {
+        setBonRetours(Array.isArray(data) ? data : []);
+      })
+      .catch(() => setBonRetours([]));
+  }, [customerId]);
+
   const openOrderView = async (orderId: number) => {
     try {
       const token = localStorage.getItem("midanic_token") ?? "";
@@ -628,8 +648,7 @@ function CustomerDetailSheet({ customerId, onClose, t, lang, currency }: {
   const currentBalance = Number(profile.currentBalance ?? 0);
 
   const orders = customer.orders ?? [];
-  const ventes = orders.filter((o) => (o.status as string) !== "returned");
-  const retours = orders.filter((o) => (o.status as string) === "returned");
+  const ventes = orders; // all orders are sales; returns are in bon_retours table
 
   function handleQuickOp() {
     const num = Number(quickForm.amount);
@@ -967,24 +986,28 @@ function CustomerDetailSheet({ customerId, onClose, t, lang, currency }: {
         {/* ── RETOURS ── */}
         <TabsContent value="retours" className="flex-1 overflow-y-auto p-6 mt-0 space-y-3">
           <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
-            {t("Retours", "المرتجعات")} ({retours.length})
+            {t("Retours", "المرتجعات")} ({bonRetours.length})
           </p>
-          {retours.length === 0 ? (
+          {bonRetours.length === 0 ? (
             <p className="text-sm text-muted-foreground text-center py-8">{t("Aucun retour", "لا توجد مرتجعات")}</p>
           ) : (
             <div className="space-y-1">
-              {retours.map((o) => (
-                <div key={o.id} className="flex items-center justify-between py-2.5 border-b border-muted last:border-0 gap-3">
+              {bonRetours.map((r) => (
+                <div
+                  key={r.id}
+                  onClick={() => { setRetourViewId(r.id); setRetourViewOpen(true); }}
+                  className="flex items-center justify-between py-2.5 border-b border-muted last:border-0 gap-3 cursor-pointer hover:bg-accent/40 rounded-md px-2 -mx-2 transition-colors"
+                >
                   <div className="min-w-0">
-                    <p className="text-sm font-semibold">#{o.id}</p>
+                    <p className="text-sm font-semibold">RT-{String(r.id).padStart(5, "0")}</p>
                     <p className="text-[11px] text-muted-foreground mt-0.5">
-                      {fmtDt(o.createdAt)}
+                      {fmtDt(r.createdAt)}
                     </p>
                   </div>
                   <div className="text-right shrink-0">
-                    <p className="text-sm font-bold text-red-600">{Number(o.totalAmount).toFixed(2)} {currency}</p>
+                    <p className="text-sm font-bold text-red-600">{Number(r.totalAmount).toFixed(2)} {currency}</p>
                     <span className="text-[10px] border rounded px-1.5 py-0.5 font-medium bg-red-50 border-red-200 text-red-600">
-                      {t("Retourné", "مرتجع")}
+                      {r.retourType === "remboursement" ? t("Remboursé", "مُسترد") : t("Avoir", "رصيد")}
                     </span>
                   </div>
                 </div>
@@ -1125,6 +1148,13 @@ function CustomerDetailSheet({ customerId, onClose, t, lang, currency }: {
         open={viewOpen}
         onOpenChange={setViewOpen}
         order={viewingOrder}
+      />
+
+      {/* Retour print dialog — opened from RETOURS tab */}
+      <RetourPrintDialog
+        retourId={retourViewId}
+        open={retourViewOpen}
+        onOpenChange={setRetourViewOpen}
       />
     </div>
   );

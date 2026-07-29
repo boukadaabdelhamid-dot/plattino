@@ -1666,9 +1666,22 @@ router.post("/admin/retours", authenticate, requireStaff, requireStore, requireP
 router.get("/admin/retours", authenticate, requireStaff, requireStore, requirePermission("orders", "view"), async (req: AuthRequest, res) => {
   try {
     const storeId = req.currentStoreId!;
-    const retours = await db.select().from(schema.bonRetoursTable)
-      .where(eq(schema.bonRetoursTable.storeId, storeId))
-      .orderBy(desc(schema.bonRetoursTable.createdAt));
+    const clientUserIdParam = req.query.clientUserId ? parseInt(req.query.clientUserId as string, 10) : null;
+    const retours = clientUserIdParam
+      ? await db.execute(sql`
+          SELECT * FROM bon_retours
+          WHERE store_id = ${storeId}
+            AND (
+              client_user_id = ${clientUserIdParam}
+              OR original_order_id IN (
+                SELECT id FROM orders WHERE user_id = ${clientUserIdParam} AND store_id = ${storeId}
+              )
+            )
+          ORDER BY created_at DESC
+        `).then((r) => r.rows as typeof schema.bonRetoursTable.$inferSelect[])
+      : await db.select().from(schema.bonRetoursTable)
+          .where(eq(schema.bonRetoursTable.storeId, storeId))
+          .orderBy(desc(schema.bonRetoursTable.createdAt));
 
     const enriched = await Promise.all(retours.map(async (r) => {
       const items = await db.select().from(schema.bonRetourItemsTable)

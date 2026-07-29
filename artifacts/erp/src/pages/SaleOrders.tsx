@@ -26,7 +26,7 @@ import type { InvoiceData } from "@/components/InvoiceTemplate";
 
 type SaleOrderStatus = "draft" | "pending" | "processing" | "shipped" | "delivered" | "cancelled";
 
-type SaleOrder = {
+export type SaleOrder = {
   id: number;
   status: SaleOrderStatus;
   order_source: "bon" | "pos" | "online";
@@ -41,7 +41,7 @@ type SaleOrder = {
   updated_at: string;
 };
 
-type SaleOrderItem = {
+export type SaleOrderItem = {
   id: number;
   product_id: number;
   quantity: number;
@@ -52,7 +52,7 @@ type SaleOrderItem = {
   product_reference: string | null;
 };
 
-type SaleOrderDetail = SaleOrder & { items: SaleOrderItem[] };
+export type SaleOrderDetail = SaleOrder & { items: SaleOrderItem[] };
 
 type EditLine = {
   productId: number;
@@ -1128,7 +1128,7 @@ function AddLineBvDialog({
 
 // ─── View dialog ──────────────────────────────────────────────────────────────
 
-function SaleOrderViewDialog({ open, onOpenChange, order }: {
+export function SaleOrderViewDialog({ open, onOpenChange, order }: {
   open: boolean;
   onOpenChange: (o: boolean) => void;
   order: SaleOrderDetail | null;

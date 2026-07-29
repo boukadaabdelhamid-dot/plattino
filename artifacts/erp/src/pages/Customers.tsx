@@ -54,6 +54,7 @@ import { ContactFormDialog } from "@/components/ContactFormDialog";
 import { ShippingLabelModal } from "@/components/ShippingLabelModal";
 import { useCurrentStore } from "@/hooks/use-current-store";
 import { usePermissions } from "@/hooks/use-permissions";
+import { SaleOrderViewDialog, type SaleOrderDetail } from "@/pages/SaleOrders";
 
 type TFn = (fr: string, ar: string) => string;
 
@@ -587,6 +588,24 @@ function CustomerDetailSheet({ customerId, onClose, t, lang, currency }: {
   const [resetPwdValue, setResetPwdValue] = useState("");
   const [resetPwdError, setResetPwdError] = useState<string | null>(null);
   const [resetPwdSuccess, setResetPwdSuccess] = useState(false);
+
+  // Sale order view dialog
+  const [viewOpen, setViewOpen] = useState(false);
+  const [viewingOrder, setViewingOrder] = useState<SaleOrderDetail | null>(null);
+
+  const openOrderView = async (orderId: number) => {
+    try {
+      const token = localStorage.getItem("midanic_token") ?? "";
+      const apiBase = (import.meta.env.VITE_API_URL as string | undefined) ?? "";
+      const res = await fetch(`${apiBase}/api/erp/sale-orders/${orderId}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) return;
+      const detail: SaleOrderDetail = await res.json();
+      setViewingOrder(detail);
+      setViewOpen(true);
+    } catch { /* silent */ }
+  };
   const updateCustomerPwd = useUpdateErpCustomer();
 
   const fmtDt = (d: string | null | undefined) => {
@@ -918,7 +937,11 @@ function CustomerDetailSheet({ customerId, onClose, t, lang, currency }: {
           ) : (
             <div className="space-y-1">
               {ventes.map((o) => (
-                <div key={o.id} className="flex items-center justify-between py-2.5 border-b border-muted last:border-0 gap-3">
+                <div
+                  key={o.id}
+                  onClick={() => openOrderView(o.id)}
+                  className="flex items-center justify-between py-2.5 border-b border-muted last:border-0 gap-3 cursor-pointer hover:bg-accent/40 rounded-md px-2 -mx-2 transition-colors"
+                >
                   <div className="min-w-0">
                     <p className="text-sm font-semibold">#{o.id}</p>
                     <p className="text-[11px] text-muted-foreground mt-0.5">
@@ -1096,6 +1119,13 @@ function CustomerDetailSheet({ customerId, onClose, t, lang, currency }: {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Sale order view dialog — opened from VENTES tab */}
+      <SaleOrderViewDialog
+        open={viewOpen}
+        onOpenChange={setViewOpen}
+        order={viewingOrder}
+      />
     </div>
   );
 }

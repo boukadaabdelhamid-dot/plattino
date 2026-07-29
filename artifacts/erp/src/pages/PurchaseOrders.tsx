@@ -46,6 +46,12 @@ import { useCurrentStore } from "@/hooks/use-current-store";
 const API_BASE = (import.meta.env.VITE_API_URL as string | undefined) ?? "";
 const PO_QUERY_BASE_KEY = ["purchase-orders"] as const;
 
+/** Resolve a stored image URL to an absolute URL.
+ *  In production the upload endpoint stores a relative path (/api/uploads/…);
+ *  prepend API_BASE so the browser fetches from the API server, not the ERP port. */
+const resolveImg = (url: string | null | undefined): string | null =>
+  url ? (url.startsWith("http") ? url : `${API_BASE}${url}`) : null;
+
 type TFn = (fr: string, ar: string) => string;
 
 type ColumnSettings = {
@@ -424,7 +430,7 @@ export default function PurchaseOrders() {
                           <div className="flex items-center justify-end gap-1.5">
                             {(po as ExtendedPO).receiptImageUrl && (
                               <a
-                                href={(po as ExtendedPO).receiptImageUrl!}
+                                href={resolveImg((po as ExtendedPO).receiptImageUrl)!}
                                 target="_blank"
                                 rel="noopener noreferrer"
                                 onClick={(e) => e.stopPropagation()}
@@ -1012,10 +1018,10 @@ function PurchaseEditor({
                 <Label className="text-xs mb-1.5 block">{t("Image du bon (optionnel)", "صورة الوصل (اختياري)")}</Label>
                 {receiptImageUrl ? (
                   <div className="flex items-center gap-2">
-                    <a href={receiptImageUrl} target="_blank" rel="noopener noreferrer" className="flex-1 min-w-0">
+                    <a href={resolveImg(receiptImageUrl)!} target="_blank" rel="noopener noreferrer" className="flex-1 min-w-0">
                       <div className="relative rounded-md border overflow-hidden bg-slate-50 flex items-center gap-2 px-3 py-2 hover:bg-slate-100 transition-colors cursor-pointer">
                         <img
-                          src={receiptImageUrl}
+                          src={resolveImg(receiptImageUrl)!}
                           alt=""
                           className="h-12 w-12 rounded object-cover border flex-shrink-0"
                           onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }}

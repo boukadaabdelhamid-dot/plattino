@@ -376,6 +376,17 @@ function QuickOrderDrawer({
   const [submitting, setSubmitting] = useState(false);
   const [success, setSuccess] = useState<{ id: number; itemCount: number; merged?: boolean } | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Track whether user has manually edited the price so we don't override their input
+  const priceEditedRef = React.useRef(false);
+
+  // Fetch purchase history to get last real unit_cost
+  const { data: historyData } = useQuery<HistoryRow[]>({
+    queryKey: ["purchase-history", product?.id],
+    queryFn: () => fetchHistory(product!.id),
+    enabled: product != null,
+    staleTime: 60_000,
+  });
+  const lastUnitCost = historyData?.[0]?.unit_cost ?? null;
 
   // Fetch pending (draft) bons
   const { data: draftPOs = [] } = useQuery<DraftPO[]>({
@@ -400,15 +411,23 @@ function QuickOrderDrawer({
   // Reset when product changes
   useEffect(() => {
     if (!product) return;
+    priceEditedRef.current = false;
     setSupplierId(product.supplier_id ? String(product.supplier_id) : "");
     const needed = product.min_stock != null ? Math.max(1, product.min_stock - product.stock) : 1;
     setQuantity(String(needed));
+    // Start with CUMP cost_price; history effect will override with last real price once loaded
     setUnitCost(product.cost_price ? String(Number(product.cost_price).toFixed(2)) : "");
     setSuccess(null);
     setError(null);
     setMode("new");
     setSelectedPoId("");
   }, [product?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Apply last real unit_cost from history once it loads (if user hasn't manually edited)
+  useEffect(() => {
+    if (lastUnitCost == null || priceEditedRef.current || success != null) return;
+    setUnitCost(Number(lastUnitCost).toFixed(2));
+  }, [lastUnitCost, success]);
 
   const handleSubmit = async () => {
     if (!product) return;
@@ -590,7 +609,14 @@ function QuickOrderDrawer({
                   {t("Prix d'achat unitaire (DA)", "سعر الشراء الوحدوي (دج)")} *
                 </label>
                 <Input type="number" min="0" step="0.01" placeholder="0.00" className="h-12 rounded-xl"
-                  value={unitCost} onChange={(e) => setUnitCost(e.target.value)} />
+                  value={unitCost}
+                  onChange={(e) => { priceEditedRef.current = true; setUnitCost(e.target.value); }}
+                />
+                {lastUnitCost != null && (
+                  <p className="text-xs text-muted-foreground px-1">
+                    {t("Dernier prix:", "آخر سعر شراء:")} <span className="font-semibold text-slate-700 tabular-nums">{fmtNum(lastUnitCost)} DA</span>
+                  </p>
+                )}
               </div>
 
               {/* ── Payment method (new only — existing PO keeps its own) ── */}

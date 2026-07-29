@@ -2939,9 +2939,36 @@ router.get("/erp/transactions", authenticate, requireStaff, requireStore, requir
 
 router.post("/erp/transactions", authenticate, requireStaff, requireStore, requirePermission("accounting", "create"), async (req: AuthRequest, res) => {
   try {
-    const body = { ...req.body, storeId: req.currentStoreId! };
-    const [tx] = await db.insert(schema.transactionsTable).values(body).returning();
-    res.status(201).json(tx);
+    const storeId = req.currentStoreId!;
+    const actorUserId = req.user!.id;
+    const body = { ...req.body, storeId };
+    const amount = parseFloat(body.amount ?? "0");
+    const isExpense = body.type === "expense";
+
+    const result = await db.transaction(async (dbTx) => {
+      const [transaction] = await dbTx.insert(schema.transactionsTable).values(body).returning();
+
+      if (isExpense && amount > 0) {
+        // Deduct from the staff member's caisse
+        const staffCaisse = await ensureCaisse(storeId, actorUserId, dbTx);
+        const { oldBalance, newBalance } = await applyCaisseDelta(dbTx, staffCaisse.id, -amount);
+        await dbTx.insert(schema.caisseMovementsTable).values({
+          caisseId: staffCaisse.id,
+          type: "debit",
+          amount: amount.toFixed(2),
+          reason: "expense",
+          actorUserId,
+          notes: body.description || body.category || "Charge",
+          balanceBefore: oldBalance.toFixed(2),
+          balanceAfter: newBalance.toFixed(2),
+        });
+        broadcastCaisseChanged(storeId, staffCaisse.id);
+      }
+
+      return transaction;
+    });
+
+    res.status(201).json(result);
   } catch (err) { req.log.error(err); res.status(500).json({ error: "Internal server error" }); }
 });
 

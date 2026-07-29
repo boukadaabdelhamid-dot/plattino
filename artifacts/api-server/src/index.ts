@@ -445,6 +445,8 @@ ALTER TABLE "user_permissions" ADD CONSTRAINT "user_permissions_user_id_users_id
 ALTER TYPE "public"."caisse_movement_reason" ADD VALUE IF NOT EXISTS 'customer_payment';--> statement-breakpoint
 ALTER TYPE "public"."caisse_movement_reason" ADD VALUE IF NOT EXISTS 'supplier_payment';--> statement-breakpoint
 ALTER TYPE "public"."caisse_movement_reason" ADD VALUE IF NOT EXISTS 'purchase_payment';--> statement-breakpoint
+ALTER TYPE "public"."caisse_movement_reason" ADD VALUE IF NOT EXISTS 'salary_payment';--> statement-breakpoint
+ALTER TYPE "public"."caisse_movement_reason" ADD VALUE IF NOT EXISTS 'expense';--> statement-breakpoint
 -- ─── Schema-alignment patch (idempotent): brings MIGRATION_SQL in sync with lib/db/src/schema/*.ts ───
 CREATE TYPE "public"."caisse_session_status" AS ENUM('open', 'closed');--> statement-breakpoint
 CREATE TYPE "public"."contact_type" AS ENUM('customer', 'customer_supplier');--> statement-breakpoint

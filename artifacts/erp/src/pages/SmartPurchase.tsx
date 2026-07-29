@@ -18,6 +18,7 @@ import {
 
 // ── Types ────────────────────────────────────────────────────────────────────
 type SortBy = "profit" | "qty_sold";
+type StockFilter = "all" | "rupture" | "low";
 
 type NeededRow = {
   id: number;
@@ -758,6 +759,7 @@ export default function SmartPurchase() {
 
   // Sort + filter state
   const [sortBy, setSortBy] = useState<SortBy>("profit");
+  const [stockFilter, setStockFilter] = useState<StockFilter>("all");
   const [search, setSearch] = useState("");
   const [filterSupplierId, setFilterSupplierId] = useState<string>("");
   const [filterFamilyId, setFilterFamilyId] = useState<string>("");
@@ -868,7 +870,14 @@ export default function SmartPurchase() {
     activeFilters.push({ label, onRemove: () => { setFilterDateFrom(""); setFilterDateTo(""); } });
   }
 
-  const displayRows = rows ?? [];
+  const allRows = rows ?? [];
+  const ruptureCount = allRows.filter((r) => Number(r.stock) === 0).length;
+  const lowCount = allRows.filter((r) => Number(r.stock) > 0).length;
+  const displayRows = stockFilter === "rupture"
+    ? allRows.filter((r) => Number(r.stock) === 0)
+    : stockFilter === "low"
+      ? allRows.filter((r) => Number(r.stock) > 0)
+      : allRows;
 
   return (
     <div className="flex flex-col min-h-screen bg-gray-50">
@@ -961,6 +970,39 @@ export default function SmartPurchase() {
               {t("Qté vendue", "الأعلى كمية")}
             </button>
           </div>
+
+          {/* Stock filter: Tout / En rupture / Stock faible */}
+          {!isLoading && allRows.length > 0 && (
+            <div className="flex rounded-xl border bg-gray-100 p-1 gap-1">
+              {([
+                { key: "all",     labelFr: "Tout",        labelAr: "الكل",          count: allRows.length },
+                { key: "rupture", labelFr: "En rupture",  labelAr: "نفد المخزون",   count: ruptureCount },
+                { key: "low",     labelFr: "Stock faible", labelAr: "مخزون منخفض",  count: lowCount },
+              ] as { key: StockFilter; labelFr: string; labelAr: string; count: number }[]).map(({ key, labelFr, labelAr, count }) => (
+                <button
+                  key={key}
+                  type="button"
+                  onClick={() => setStockFilter(key)}
+                  className={`flex-1 flex items-center justify-center gap-1 rounded-lg px-2 py-1.5 text-xs font-semibold transition-all ${
+                    stockFilter === key
+                      ? key === "rupture"
+                        ? "bg-red-600 text-white shadow-sm"
+                        : key === "low"
+                          ? "bg-amber-500 text-white shadow-sm"
+                          : "bg-white text-slate-800 shadow-sm"
+                      : "text-gray-500 hover:text-gray-700"
+                  }`}
+                >
+                  {t(labelFr, labelAr)}
+                  <span className={`text-[10px] px-1.5 py-0 rounded-full font-bold ${
+                    stockFilter === key ? "bg-white/20 text-inherit" : "bg-white text-slate-600"
+                  }`}>
+                    {count}
+                  </span>
+                </button>
+              ))}
+            </div>
+          )}
 
           {/* Search bar */}
           <div className="relative">

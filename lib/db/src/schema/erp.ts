@@ -616,6 +616,7 @@ export const purchaseSuggestionsTable = pgTable("purchase_suggestions", {
   imageUrl: text("image_url"),
   notes: text("notes"),
   demandCount: integer("demand_count").notNull().default(0),
+  marketPrice: text("market_price"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 

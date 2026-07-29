@@ -936,6 +936,18 @@ async function runStaffEmployeeBackfill() {
   }
 }
 
+async function runPurchaseSuggestionsSchemaMigration() {
+  try {
+    await pool.query(`
+      ALTER TABLE purchase_suggestions
+        ADD COLUMN IF NOT EXISTS market_price text
+    `);
+    logger.info("purchase_suggestions schema migration applied (market_price).");
+  } catch (err: any) {
+    logger.warn({ err: err?.message }, "purchase_suggestions schema migration skipped (non-fatal)");
+  }
+}
+
 async function runPurchaseNeededIndexMigration() {
   // These indexes are critical for the /erp/purchases/needed query performance.
   // Without them every join does a full-table seq-scan, causing O(n×m) latency.
@@ -1014,6 +1026,7 @@ server.listen(port, async () => {
   await runPurchaseOrdersSchemaMigration(pool);
   await runAttributeUniqueIndexMigration();
   await runWebSettingsMigration();
+  await runPurchaseSuggestionsSchemaMigration();
   await runPurchaseNeededIndexMigration();
   await runBootstrap();
   // Backfill runs after bootstrap so the initial admin account (created there) is also linked.

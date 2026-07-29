@@ -15,7 +15,7 @@ import {
   ShoppingBasket, SlidersHorizontal, X, History, CheckCircle2,
   Package, Search, RefreshCw, MapPin, Phone, TrendingUp, ShoppingCart,
   LayoutGrid, List, Ban, Printer, MessageSquarePlus, ThumbsUp, Trash2,
-  Lightbulb,
+  Lightbulb, Pencil,
 } from "lucide-react";
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -115,6 +115,7 @@ type PurchaseSuggestion = {
   product_name: string;
   image_url: string | null;
   notes: string | null;
+  market_price: string | null;
   demand_count: number;
   staff_id: number;
   staff_name: string | null;
@@ -127,9 +128,19 @@ async function fetchSuggestions(): Promise<PurchaseSuggestion[]> {
   return res.json() as Promise<PurchaseSuggestion[]>;
 }
 
-async function createSuggestion(body: { product_name: string; notes?: string; image_url?: string }): Promise<PurchaseSuggestion> {
+async function createSuggestion(body: { product_name: string; notes?: string; image_url?: string; market_price?: string }): Promise<PurchaseSuggestion> {
   const res = await fetch(`${API_BASE}/api/erp/purchase-suggestions`, {
     method: "POST",
+    headers: { ...authHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) { const d = await res.json() as { error?: string }; throw new Error(d.error ?? "Erreur"); }
+  return res.json() as Promise<PurchaseSuggestion>;
+}
+
+async function updateSuggestion(id: number, body: { product_name?: string; notes?: string; image_url?: string; market_price?: string }): Promise<PurchaseSuggestion> {
+  const res = await fetch(`${API_BASE}/api/erp/purchase-suggestions/${id}`, {
+    method: "PATCH",
     headers: { ...authHeaders(), "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
@@ -1000,27 +1011,45 @@ function NeededListRow({
   );
 }
 
-// ── SuggestDrawer ─────────────────────────────────────────────────────────────
+// ── SuggestDrawer (create & edit) ─────────────────────────────────────────────
 function SuggestDrawer({
   open,
   onOpenChange,
   onCreated,
+  editTarget,
   t,
 }: {
   open: boolean;
   onOpenChange: (v: boolean) => void;
   onCreated: () => void;
+  editTarget?: PurchaseSuggestion | null;
   t: (fr: string, ar: string) => string;
 }) {
+  const isEdit = !!editTarget;
   const [productName, setProductName] = useState("");
   const [notes, setNotes] = useState("");
+  const [marketPrice, setMarketPrice] = useState("");
   const [imageFile, setImageFile] = useState<File | null>(null);
   const [imagePreview, setImagePreview] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Populate fields when opened in edit mode
+  useEffect(() => {
+    if (open && editTarget) {
+      setProductName(editTarget.product_name);
+      setNotes(editTarget.notes ?? "");
+      setMarketPrice(editTarget.market_price ?? "");
+      setImagePreview(editTarget.image_url ? resolveImg(editTarget.image_url) : null);
+      setImageFile(null);
+      setError(null);
+    } else if (open && !editTarget) {
+      setProductName(""); setNotes(""); setMarketPrice(""); setImageFile(null); setImagePreview(null); setError(null);
+    }
+  }, [open, editTarget]);
+
   const reset = () => {
-    setProductName(""); setNotes(""); setImageFile(null); setImagePreview(null); setError(null);
+    setProductName(""); setNotes(""); setMarketPrice(""); setImageFile(null); setImagePreview(null); setError(null);
   };
 
   const handleClose = (v: boolean) => {
@@ -1045,7 +1074,21 @@ function SuggestDrawer({
       if (imageFile) {
         imageUrl = await uploadImage(imageFile);
       }
-      await createSuggestion({ product_name: productName.trim(), notes: notes.trim() || undefined, image_url: imageUrl });
+      if (isEdit && editTarget) {
+        await updateSuggestion(editTarget.id, {
+          product_name: productName.trim(),
+          notes: notes.trim() || undefined,
+          market_price: marketPrice.trim() || undefined,
+          image_url: imageUrl ?? editTarget.image_url ?? undefined,
+        });
+      } else {
+        await createSuggestion({
+          product_name: productName.trim(),
+          notes: notes.trim() || undefined,
+          market_price: marketPrice.trim() || undefined,
+          image_url: imageUrl,
+        });
+      }
       reset();
       onOpenChange(false);
       onCreated();
@@ -1062,8 +1105,10 @@ function SuggestDrawer({
         <DrawerHeader className="pb-2">
           <div className="flex items-center justify-between">
             <DrawerTitle className="flex items-center gap-2">
-              <Lightbulb className="h-5 w-5 text-amber-500" />
-              {t("Suggérer un produit", "اقتراح منتج")}
+              {isEdit
+                ? <><Pencil className="h-5 w-5 text-blue-500" />{t("Modifier la suggestion", "تعديل الاقتراح")}</>
+                : <><Lightbulb className="h-5 w-5 text-amber-500" />{t("Suggérer un produit", "اقتراح منتج")}</>
+              }
             </DrawerTitle>
             <DrawerClose asChild>
               <button type="button" className="p-1 rounded-full hover:bg-gray-100">
@@ -1083,6 +1128,20 @@ function SuggestDrawer({
                 value={productName}
                 onChange={(e) => setProductName(e.target.value)}
               />
+            </div>
+
+            {/* Market price */}
+            <div className="space-y-1.5">
+              <label className="text-sm font-medium">{t("Prix marché (optionnel)", "سعر السوق (اختياري)")}</label>
+              <div className="relative">
+                <Input
+                  className="h-11 rounded-xl pr-12"
+                  placeholder={t("Ex: 1500 DA", "مثال: 1500 دج")}
+                  value={marketPrice}
+                  onChange={(e) => setMarketPrice(e.target.value)}
+                />
+                <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-muted-foreground font-medium">DA</span>
+              </div>
             </div>
 
             {/* Image */}
@@ -1124,9 +1183,14 @@ function SuggestDrawer({
             <button
               type="submit"
               disabled={submitting || !productName.trim()}
-              className="w-full h-12 rounded-xl bg-amber-500 hover:bg-amber-600 text-white font-semibold transition-colors disabled:opacity-60"
+              className={`w-full h-12 rounded-xl text-white font-semibold transition-colors disabled:opacity-60 ${isEdit ? "bg-blue-600 hover:bg-blue-700" : "bg-amber-500 hover:bg-amber-600"}`}
             >
-              {submitting ? t("Envoi…", "جارٍ…") : t("Soumettre la suggestion", "إرسال الاقتراح")}
+              {submitting
+                ? t("Envoi…", "جارٍ…")
+                : isEdit
+                  ? t("Enregistrer les modifications", "حفظ التعديلات")
+                  : t("Soumettre la suggestion", "إرسال الاقتراح")
+              }
             </button>
           </form>
         </div>
@@ -1167,6 +1231,7 @@ export default function SmartPurchase() {
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [historyProduct, setHistoryProduct] = useState<{ id: number; name: string } | null>(null);
   const [suggestOpen, setSuggestOpen] = useState(false);
+  const [editSuggestion, setEditSuggestion] = useState<PurchaseSuggestion | null>(null);
 
   // Suggestions query + mutations
   const { data: suggestions, refetch: refetchSuggestions } = useQuery<PurchaseSuggestion[]>({
@@ -1544,6 +1609,7 @@ export default function SmartPurchase() {
             ) : (
               (suggestions ?? []).map((s) => {
                 const imgUrl = resolveImg(s.image_url);
+                const canEdit = isMeAdmin || s.staff_id === me?.id;
                 const canDelete = isMeAdmin || s.staff_id === me?.id;
                 return (
                   <div key={s.id} className="rounded-2xl bg-white border shadow-sm overflow-hidden">
@@ -1563,6 +1629,12 @@ export default function SmartPurchase() {
                           <p className="text-[11px] text-muted-foreground mt-0.5">
                             {s.staff_name ?? t("Employé", "موظف")} · {new Date(s.created_at).toLocaleDateString(lang === "ar" ? "ar-DZ" : "fr-DZ")}
                           </p>
+                          {/* Market price badge */}
+                          {s.market_price && (
+                            <span className="inline-flex items-center gap-1 mt-1 px-2 py-0.5 rounded-full bg-emerald-50 border border-emerald-200 text-[11px] font-semibold text-emerald-700">
+                              🏷 {s.market_price}
+                            </span>
+                          )}
                           {s.notes && (
                             <p className="text-xs text-slate-500 mt-1 line-clamp-2">{s.notes}</p>
                           )}
@@ -1617,13 +1689,24 @@ export default function SmartPurchase() {
                         {t("Commander", "اطلب")}
                       </button>
 
+                      {/* Edit — admin or creator only */}
+                      {canEdit && (
+                        <button
+                          type="button"
+                          onClick={() => setEditSuggestion(s)}
+                          className="px-3.5 flex items-center justify-center text-slate-400 hover:bg-slate-50 hover:text-blue-600 active:bg-slate-100 transition-colors border-r"
+                        >
+                          <Pencil className="h-4 w-4" />
+                        </button>
+                      )}
+
                       {/* Delete — admin or creator only */}
                       {canDelete && (
                         <button
                           type="button"
                           disabled={deleteSuggestMut.isPending}
                           onClick={() => deleteSuggestMut.mutate(s.id)}
-                          className="px-4 flex items-center justify-center text-red-400 hover:bg-red-50 hover:text-red-600 active:bg-red-100 transition-colors disabled:opacity-60"
+                          className="px-3.5 flex items-center justify-center text-red-400 hover:bg-red-50 hover:text-red-600 active:bg-red-100 transition-colors disabled:opacity-60"
                         >
                           <Trash2 className="h-4 w-4" />
                         </button>
@@ -1880,11 +1963,12 @@ export default function SmartPurchase() {
         ))}
       </div>
 
-      {/* ── Suggest drawer ── */}
+      {/* ── Suggest / Edit drawer ── */}
       <SuggestDrawer
-        open={suggestOpen}
-        onOpenChange={setSuggestOpen}
+        open={suggestOpen || !!editSuggestion}
+        onOpenChange={(v) => { if (!v) { setSuggestOpen(false); setEditSuggestion(null); } }}
         onCreated={() => void refetchSuggestions()}
+        editTarget={editSuggestion}
         t={t}
       />
 

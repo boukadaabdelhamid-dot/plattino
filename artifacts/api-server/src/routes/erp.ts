@@ -5639,6 +5639,7 @@ router.get("/erp/purchase-suggestions", authenticate, requireStaff, requireStore
         product_name: schema.purchaseSuggestionsTable.productName,
         image_url: schema.purchaseSuggestionsTable.imageUrl,
         notes: schema.purchaseSuggestionsTable.notes,
+        market_price: schema.purchaseSuggestionsTable.marketPrice,
         demand_count: schema.purchaseSuggestionsTable.demandCount,
         staff_id: schema.purchaseSuggestionsTable.staffId,
         staff_name: schema.usersTable.name,
@@ -5657,10 +5658,11 @@ router.post("/erp/purchase-suggestions", authenticate, requireStaff, requireStor
   try {
     const storeId = req.currentStoreId!;
     const staffId = req.user!.id;
-    const { product_name, image_url, notes } = req.body as {
+    const { product_name, image_url, notes, market_price } = req.body as {
       product_name?: string;
       image_url?: string;
       notes?: string;
+      market_price?: string;
     };
     if (!product_name || !String(product_name).trim()) {
       res.status(400).json({ error: "product_name is required" });
@@ -5674,10 +5676,52 @@ router.post("/erp/purchase-suggestions", authenticate, requireStaff, requireStor
         productName: String(product_name).trim(),
         imageUrl: image_url ?? null,
         notes: notes ?? null,
+        marketPrice: market_price ?? null,
         demandCount: 0,
       })
       .returning();
     res.status(201).json(row);
+  } catch (err) { req.log.error(err); res.status(500).json({ error: "Internal server error" }); }
+});
+
+// PATCH /erp/purchase-suggestions/:id — edit (creator or admin only)
+router.patch("/erp/purchase-suggestions/:id", authenticate, requireStaff, requireStore, async (req: AuthRequest, res) => {
+  try {
+    const storeId = req.currentStoreId!;
+    const id = pid(req, "id");
+    const userId = req.user!.id;
+    const admin = isAdmin(req);
+    const { product_name, image_url, notes, market_price } = req.body as {
+      product_name?: string;
+      image_url?: string;
+      notes?: string;
+      market_price?: string;
+    };
+    // Check ownership
+    const [existing] = await db
+      .select({ staffId: schema.purchaseSuggestionsTable.staffId })
+      .from(schema.purchaseSuggestionsTable)
+      .where(and(
+        eq(schema.purchaseSuggestionsTable.id, id),
+        eq(schema.purchaseSuggestionsTable.storeId, storeId),
+      ));
+    if (!existing) { res.status(404).json({ error: "Suggestion not found" }); return; }
+    if (!admin && existing.staffId !== userId) {
+      res.status(403).json({ error: "Not authorized to edit this suggestion" });
+      return;
+    }
+    const updates: Record<string, unknown> = {};
+    if (product_name !== undefined) updates.productName = String(product_name).trim() || undefined;
+    if (image_url !== undefined) updates.imageUrl = image_url || null;
+    if (notes !== undefined) updates.notes = notes.trim() || null;
+    if (market_price !== undefined) updates.marketPrice = market_price.trim() || null;
+    if (Object.keys(updates).length === 0) { res.json({ ok: true }); return; }
+    const [updated] = await db
+      .update(schema.purchaseSuggestionsTable)
+      .set(updates)
+      .where(eq(schema.purchaseSuggestionsTable.id, id))
+      .returning();
+    res.json(updated);
   } catch (err) { req.log.error(err); res.status(500).json({ error: "Internal server error" }); }
 });
 

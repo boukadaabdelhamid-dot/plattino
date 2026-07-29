@@ -1899,6 +1899,7 @@ export default function Customers() {
   const qc = useQueryClient();
   const { isAdmin } = useMe();
   const { can } = usePermissions();
+  const canViewBalance = can("customers", "view_balance");
   const { lang } = useLang();
   const t = (fr: string, ar: string) => lang === "ar" ? ar : fr;
   const currency = lang === "ar" ? "دج" : "DA";
@@ -2109,7 +2110,7 @@ export default function Customers() {
                     <TableHead className="text-xs">{t("Classification", "التصنيف")}</TableHead>
                     <TableHead className="text-xs">{t("Grille", "الشريحة")}</TableHead>
                     <TableHead className="text-xs">{t("Cmd.", "طلبات")}</TableHead>
-                    {isAdmin && <TableHead className="text-xs">{t("Solde", "الرصيد")}</TableHead>}
+                    {canViewBalance && <TableHead className="text-xs">{t("Solde", "الرصيد")}</TableHead>}
                     <TableHead className="text-xs w-16"></TableHead>
                   </TableRow>
                 </TableHeader>
@@ -2130,7 +2131,7 @@ export default function Customers() {
                       <TableCell><ClassifBadge c={c.classification} /></TableCell>
                       <TableCell><TierBadge pt={c.priceTier} lang={lang} /></TableCell>
                       <TableCell className="text-sm">{Number(c.total_orders ?? 0)}</TableCell>
-                      {isAdmin && (() => {
+                      {canViewBalance && (() => {
                         const bal = Number(c.current_balance ?? 0);
                         const color = bal > 0 ? "text-red-600" : bal < 0 ? "text-green-600" : "text-muted-foreground";
                         return (
@@ -2193,7 +2194,7 @@ export default function Customers() {
                   ))}
                   {displayedCustomers.length === 0 && (
                     <TableRow>
-                      <TableCell colSpan={isAdmin ? 8 : 7} className="text-center py-8 text-muted-foreground">
+                      <TableCell colSpan={canViewBalance ? 8 : 7} className="text-center py-8 text-muted-foreground">
                         {t("Aucun client trouvé", "لا يوجد عملاء")}
                       </TableCell>
                     </TableRow>

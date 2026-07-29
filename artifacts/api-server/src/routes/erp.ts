@@ -4063,15 +4063,8 @@ router.post("/erp/customers/:id/operations", authenticate, requireStaff, require
           balanceBefore: caisseOld.toFixed(2),
           balanceAfter: caisseNew.toFixed(2),
         });
-        await tx.insert(schema.transactionsTable).values({
-          storeId,
-          type: "expense",
-          category: "other",
-          amount: amountStr,
-          description: `Remboursement client #${customerId}${reference ? ` - ${reference}` : ""}`,
-          date,
-          reference: reference || null,
-        });
+        // No accounting transaction for remboursement — it is already accounted for
+        // in the returns P&L; recording it as an expense here would double-count it.
       } else if (type === "vente_a_terme") {
         // Recognize income at time of sale (deferred receivable)
         await tx.insert(schema.transactionsTable).values({

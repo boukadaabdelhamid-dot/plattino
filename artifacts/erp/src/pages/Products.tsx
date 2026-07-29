@@ -13,6 +13,7 @@ import {
 } from "@workspace/api-client-react";
 import { useToast } from "@/hooks/use-toast";
 import { useLang } from "@/hooks/use-lang";
+import { resolveImg } from "@/lib/utils";
 import JsBarcode from "jsbarcode";
 import { useQueryClient, keepPreviousData, useQuery, useMutation as useRQMutation } from "@tanstack/react-query";
 import { Card, CardContent } from "@/components/ui/card";
@@ -197,12 +198,6 @@ const emptyForm: ProductForm = {
 };
 
 const API_BASE = (import.meta.env.VITE_API_URL as string | undefined) ?? "";
-
-function resolveImg(url: string | null | undefined): string | undefined {
-  if (!url) return undefined;
-  if (url.startsWith("/")) return `${API_BASE}${url}`;
-  return url;
-}
 
 const EMPTY_FILTERS = {
   name: "", code: "", brand: "", family: "", stock: "",

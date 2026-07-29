@@ -1,5 +1,6 @@
 import React from "react";
 import type { Store } from "@workspace/api-client-react";
+import { resolveImg } from "@/lib/utils";
 
 export type InvoiceLine = {
   designation: string;
@@ -140,7 +141,7 @@ export default function InvoiceTemplate({ data, currency = "دج" }: { data: Inv
           <div style={{ display: "flex", gap: 12, alignItems: "flex-start" }}>
             {store?.logoUrl ? (
               // eslint-disable-next-line @next/next/no-img-element
-              <img src={store.logoUrl} alt="" style={{ height: 60, width: 60, objectFit: "contain", borderRadius: 6 }} />
+              <img src={resolveImg(store.logoUrl)} alt="" style={{ height: 60, width: 60, objectFit: "contain", borderRadius: 6 }} />
             ) : (
               <div style={{ height: 60, width: 60, background: "#1B3057", color: "#F5F5F0", borderRadius: 6, display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 800, fontSize: 22 }}>
                 {(store?.nameEn ?? "M").slice(0, 1)}

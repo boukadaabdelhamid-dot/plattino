@@ -41,6 +41,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Pencil, Trash2, Plus, Loader2, Layers, Tag, Palette, LayoutGrid, Image as ImageIcon, Upload, X, Send } from "lucide-react";
 import CopyAttributesToStoresModal from "@/components/CopyAttributesToStoresModal";
+import { resolveImg } from "@/lib/utils";
 
 const API_BASE = (import.meta.env.VITE_API_URL as string | undefined) ?? "";
 const tok = () => localStorage.getItem("midanic_token") ?? "";
@@ -112,7 +113,7 @@ function AttributeTable({
                   {showImage && (
                     <TableCell>
                       {item.imageUrl ? (
-                        <img src={item.imageUrl} alt={item.nameFr} className="h-10 w-10 object-cover rounded-md border" />
+                        <img src={resolveImg(item.imageUrl)} alt={item.nameFr} className="h-10 w-10 object-cover rounded-md border" />
                       ) : (
                         <div className="h-10 w-10 rounded-md border bg-muted flex items-center justify-center">
                           <ImageIcon className="h-4 w-4 text-muted-foreground" />
@@ -468,7 +469,7 @@ export default function ProductSettings() {
                   <div className="space-y-2">
                     <div className="relative inline-block">
                       <img
-                        src={form.imageUrl}
+                        src={resolveImg(form.imageUrl)}
                         alt="Preview"
                         className="h-24 w-24 object-cover rounded-lg border"
                       />

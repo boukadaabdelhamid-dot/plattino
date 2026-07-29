@@ -11,6 +11,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Separator } from "@/components/ui/separator";
+import { resolveImg } from "@/lib/utils";
 import {
   Globe, Image, Phone, Mail, MapPin, Facebook, Instagram,
   ExternalLink, Save, AlertTriangle, Eye, Upload, Loader2, X, ShoppingCart, Package,
@@ -281,7 +282,7 @@ export default function WebStoreSettings() {
                 disabled={uploadingLogo}
               >
                 {identity.logoUrl ? (
-                  <img src={identity.logoUrl} alt="logo" className="h-full w-full object-contain" />
+                  <img src={resolveImg(identity.logoUrl)} alt="logo" className="h-full w-full object-contain" />
                 ) : (
                   <div className="flex flex-col items-center gap-1 text-muted-foreground group-hover:text-primary transition-colors">
                     {uploadingLogo ? <Loader2 className="h-6 w-6 animate-spin" /> : <Upload className="h-6 w-6" />}
@@ -428,7 +429,7 @@ export default function WebStoreSettings() {
             {form.bannerUrl ? (
               <div className="space-y-2">
                 <div className="relative">
-                  <img src={form.bannerUrl} alt="banner preview" className="rounded-lg max-h-48 object-cover w-full border" />
+                  <img src={resolveImg(form.bannerUrl)} alt="banner preview" className="rounded-lg max-h-48 object-cover w-full border" />
                   <button
                     type="button"
                     className="absolute top-2 right-2 h-7 w-7 rounded-full bg-destructive text-white flex items-center justify-center shadow-md"

@@ -7,6 +7,7 @@ import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
 } from "@/components/ui/dialog";
 import { format } from "date-fns";
+import { resolveImg } from "@/lib/utils";
 
 function escHtml(str: string | null | undefined): string {
   return String(str ?? "")
@@ -249,7 +250,7 @@ function LabelPreview({
           <div style={{ display: "flex", alignItems: "center", gap: "2mm" }}>
             {store!.logoUrl && (
               <img
-                src={store!.logoUrl}
+                src={resolveImg(store!.logoUrl)}
                 alt="logo"
                 style={{ height: cfg.storeNamePx * 1.4, maxWidth: `${cfg.widthMm * 0.2}mm`, objectFit: "contain", display: "block" }}
               />
@@ -323,7 +324,7 @@ export function ShippingLabelModal({ open, onClose, customer, storeInfo, lang }:
 
     let logoBase64: string | null = null;
     if (storeInfo?.logoUrl) {
-      logoBase64 = await toBase64(storeInfo.logoUrl);
+      logoBase64 = await toBase64(resolveImg(storeInfo.logoUrl)!);
       /* If conversion failed, logoBase64 stays null — no remote URL fallback */
     }
     setPrinting(false);
@@ -420,7 +421,7 @@ export function ShippingLabelModal({ open, onClose, customer, storeInfo, lang }:
                   {isAr ? "المرسِل" : "Expéditeur"}
                 </p>
                 {storeInfo.logoUrl && (
-                  <img src={storeInfo.logoUrl} alt="logo" className="h-6 object-contain mb-1" />
+                  <img src={resolveImg(storeInfo.logoUrl)} alt="logo" className="h-6 object-contain mb-1" />
                 )}
                 {storeInfo.name && <p className="font-bold text-foreground">{storeInfo.name}</p>}
                 {storeInfo.phone && <p className="text-muted-foreground">📞 {storeInfo.phone}</p>}

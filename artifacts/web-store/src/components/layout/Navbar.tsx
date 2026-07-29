@@ -6,6 +6,7 @@ import { useLang } from "@/hooks/use-lang";
 import { useStoreConfig } from "@/hooks/use-store-config";
 import { useGetCart, getGetCartQueryKey, type CartItem } from "@workspace/api-client-react";
 import { Button } from "@/components/ui/button";
+import { resolveImg } from "@/lib/utils";
 
 const fallbackLogo = `${import.meta.env.BASE_URL}midanic-logo.jpg`;
 
@@ -32,7 +33,7 @@ export function Navbar() {
       <div className="container flex h-16 items-center justify-between mx-auto px-4 md:px-6">
         <div className="flex items-center gap-6">
           <Link href="/" className="flex items-center gap-2">
-            <img src={logoUrl ?? fallbackLogo} alt={nameEn} className="h-8 w-8 object-contain rounded" />
+            <img src={resolveImg(logoUrl) ?? fallbackLogo} alt={nameEn} className="h-8 w-8 object-contain rounded" />
             <span className="font-serif font-bold text-lg tracking-tight text-primary">
               {nameEn} {nameAr}
             </span>

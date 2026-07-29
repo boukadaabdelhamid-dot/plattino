@@ -6,13 +6,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { ShoppingCart } from "lucide-react";
 import { useLang } from "@/hooks/use-lang";
-
-const API_BASE = (import.meta.env.VITE_API_URL as string | undefined) ?? "";
-function resolveImg(url: string | null | undefined): string | undefined {
-  if (!url) return undefined;
-  if (url.startsWith("/")) return `${API_BASE}${url}`;
-  return url;
-}
+import { resolveImg } from "@/lib/utils";
 
 export function ProductPickerDialog({
   open, onOpenChange, products, onPick, extraBarcodesMap = new Map(),

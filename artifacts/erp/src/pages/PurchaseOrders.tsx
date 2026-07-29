@@ -42,15 +42,10 @@ import { format } from "date-fns";
 import InvoiceDialog from "@/components/InvoiceDialog";
 import PurchaseHistorySheet from "@/components/PurchaseHistorySheet";
 import { useCurrentStore } from "@/hooks/use-current-store";
+import { resolveImg } from "@/lib/utils";
 
 const API_BASE = (import.meta.env.VITE_API_URL as string | undefined) ?? "";
 const PO_QUERY_BASE_KEY = ["purchase-orders"] as const;
-
-/** Resolve a stored image URL to an absolute URL.
- *  In production the upload endpoint stores a relative path (/api/uploads/…);
- *  prepend API_BASE so the browser fetches from the API server, not the ERP port. */
-const resolveImg = (url: string | null | undefined): string | null =>
-  url ? (url.startsWith("http") ? url : `${API_BASE}${url}`) : null;
 
 type TFn = (fr: string, ar: string) => string;
 

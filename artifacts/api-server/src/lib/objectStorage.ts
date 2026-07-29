@@ -181,24 +181,18 @@ export async function ensureLocalStorageReady(): Promise<void> {
 }
 
 /**
- * Public base URL prepended to served image URLs. Uploaded image URLs are
- * stored on products and rendered as plain <img src> from the ERP (port 3001)
- * and web-store (port 5000) origins, which differ from the API origin in dev.
- * A relative "/api/uploads/x" would resolve against the frontend origin and
- * 404, so we return an absolute URL.
- *
- * Mirrors the frontends' own VITE_API_URL derivation exactly:
- *   - dev (Replit):   https://<REPLIT_DEV_DOMAIN>:8080
- *   - production:     "" (relative — frontends and API share one origin)
- * An explicit PUBLIC_ASSET_BASE_URL overrides both (e.g. a CDN/custom domain).
+ * Public base URL prepended to served image URLs.
+ * We always store relative paths (/api/uploads/…) so URLs never go stale
+ * when the Replit dev domain changes between sessions.
+ * Frontends resolve via resolveImg() + VITE_API_URL, and both Vite configs
+ * proxy /api/* → localhost:8080 in dev as a safety net.
+ * Set PUBLIC_ASSET_BASE_URL to override with a CDN/custom domain.
  */
 function getPublicBaseUrl(): string {
   if (process.env.PUBLIC_ASSET_BASE_URL) {
     return process.env.PUBLIC_ASSET_BASE_URL.replace(/\/+$/, "");
   }
-  if (process.env.NODE_ENV !== "production" && process.env.REPLIT_DEV_DOMAIN) {
-    return `https://${process.env.REPLIT_DEV_DOMAIN}:8080`;
-  }
+  // Always relative — never bake a dev domain into stored URLs.
   return "";
 }
 

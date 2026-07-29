@@ -11,6 +11,7 @@ import { Badge } from "@/components/ui/badge";
 import {
   Drawer, DrawerContent, DrawerHeader, DrawerTitle, DrawerClose,
 } from "@/components/ui/drawer";
+import { resolveImg } from "@/lib/utils";
 import {
   ShoppingBasket, SlidersHorizontal, X, History, CheckCircle2,
   Package, Search, RefreshCw, MapPin, Phone, TrendingUp, ShoppingCart,
@@ -253,12 +254,6 @@ async function putAddToPO(
     throw new Error(data.error ?? "Erreur");
   }
   return { id: poId, itemCount: allItems.length, merged };
-}
-
-function resolveImg(url: string | null | undefined): string | undefined {
-  if (!url) return undefined;
-  if (url.startsWith("/")) return `${API_BASE}${url}`;
-  return url;
 }
 
 function fmtNum(n: number | string | null | undefined): string {

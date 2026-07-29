@@ -10,6 +10,7 @@ import { Input } from "@/components/ui/input";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { useGetErpStoresAll } from "@workspace/api-client-react";
 import { CreateTransferDialog, type LineDraft, type ProductLite } from "@/pages/Transfers";
+import { resolveImg } from "@/lib/utils";
 import {
   AlertTriangle, Package, ArrowLeftRight, RefreshCw,
   Store as StoreIcon, Clock, TrendingDown, Check,
@@ -157,12 +158,6 @@ function expiryCardStyle(daysLeft: number): { card: string; badge: string; label
     badge: "bg-yellow-100 text-yellow-800 border-yellow-200",
     label: `${daysLeft}j`,
   };
-}
-
-function resolveImg(url: string | null | undefined): string | undefined {
-  if (!url) return undefined;
-  if (url.startsWith("/")) return `${API_BASE}${url}`;
-  return url;
 }
 
 function formatDate(iso: string | null): string {

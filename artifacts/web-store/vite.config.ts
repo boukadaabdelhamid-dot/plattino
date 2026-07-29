@@ -74,6 +74,14 @@ export default defineConfig({
     fs: {
       strict: true,
     },
+    // Proxy /api/* to the API server so relative image URLs work in dev
+    // without needing an absolute base URL baked into stored image paths.
+    proxy: {
+      "/api": {
+        target: "http://localhost:8080",
+        changeOrigin: true,
+      },
+    },
   },
   preview: {
     port,

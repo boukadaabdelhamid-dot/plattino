@@ -18,7 +18,9 @@ export type PermSection =
   | "attendance"
   | "leaves"
   | "accounting"
-  | "web_store";
+  | "web_store"
+  | "alerts"
+  | "transfers";
 
 export type PermAction =
   | "view" | "create" | "edit" | "delete"

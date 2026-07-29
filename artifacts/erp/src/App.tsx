@@ -183,10 +183,10 @@ function Router() {
         <ProtectedRoute component={Inventory} section="inventory" />
       </Route>
       <Route path="/transfers">
-        <ProtectedRoute component={Transfers} section="inventory" />
+        <ProtectedRoute component={Transfers} section="transfers" />
       </Route>
       <Route path="/alerts">
-        <ProtectedRoute component={Alertes} section="inventory" />
+        <ProtectedRoute component={Alertes} section="alerts" />
       </Route>
       <Route path="/accounting">
         <ProtectedRoute component={Accounting} section="accounting" />

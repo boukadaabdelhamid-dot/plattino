@@ -55,7 +55,9 @@ const SECTIONS: { key: string; labelFr: string; labelAr: string }[] = [
   { key: "accounting",labelFr: "Comptabilité",      labelAr: "المحاسبة"      },
   { key: "realtime",  labelFr: "Temps Réel",        labelAr: "الوقت الفعلي"  },
   { key: "settings",  labelFr: "Paramètres",        labelAr: "الإعدادات"     },
-  { key: "web_store", labelFr: "Boutique en ligne", labelAr: "المتجر الإلكتروني" },
+  { key: "transfers", labelFr: "Transferts de stock", labelAr: "تحويلات المخزون" },
+  { key: "alerts",    labelFr: "Alertes",             labelAr: "التنبيهات"         },
+  { key: "web_store", labelFr: "Boutique en ligne",   labelAr: "المتجر الإلكتروني" },
 ];
 
 /** Default 4 actions — used for all sections not listed in SECTION_ACTIONS */

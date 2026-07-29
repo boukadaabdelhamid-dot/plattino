@@ -76,7 +76,7 @@ async function actorInvolved(req: AuthRequest, t: { sourceStoreId: number; desti
 }
 
 // ─── LIST ──────────────────────────────────────────────────────────
-router.get("/erp/transfers", authenticate, requireStaff, requireStore, requirePermission("inventory", "view"), async (req: AuthRequest, res) => {
+router.get("/erp/transfers", authenticate, requireStaff, requireStore, requirePermission("transfers", "view"), async (req: AuthRequest, res) => {
   try {
     const storeId = req.currentStoreId!;
     const { direction, status } = req.query as Record<string, string | undefined>;
@@ -150,7 +150,7 @@ router.get("/erp/transfers", authenticate, requireStaff, requireStore, requirePe
 });
 
 // ─── DETAIL ────────────────────────────────────────────────────────
-router.get("/erp/transfers/:id", authenticate, requireStaff, requireStore, requirePermission("inventory", "view"), async (req: AuthRequest, res) => {
+router.get("/erp/transfers/:id", authenticate, requireStaff, requireStore, requirePermission("transfers", "view"), async (req: AuthRequest, res) => {
   try {
     const t = await loadTransferOr404(pid(req, "id"));
     if (!t) { res.status(404).json({ error: "Transfer not found" }); return; }
@@ -213,7 +213,7 @@ router.get("/erp/transfers/:id", authenticate, requireStaff, requireStore, requi
 //   - destination-initiated: destination asks source to send goods (pull request)
 // 'send' (admin only, source-initiated only): created in 'prepared',
 //   source stock decremented immediately.
-router.post("/erp/transfers", authenticate, requireStaff, requireStore, requirePermission("inventory", "create"), async (req: AuthRequest, res) => {
+router.post("/erp/transfers", authenticate, requireStaff, requireStore, requirePermission("transfers", "create"), async (req: AuthRequest, res) => {
   try {
     const currentStoreId = req.currentStoreId!;
     const userId = req.user!.id;
@@ -380,7 +380,7 @@ function ensure(req: AuthRequest, ok: boolean, res: import("express").Response, 
 // transaction with a conditional UPDATE filtered by current status. If the
 // row was changed by another request in between, the UPDATE affects 0 rows
 // and we 409 — preventing double-transitions racing past each other.
-router.post("/erp/transfers/:id/approve", authenticate, requireStaff, requireStore, requirePermission("inventory", "edit"), async (req: AuthRequest, res) => {
+router.post("/erp/transfers/:id/approve", authenticate, requireStaff, requireStore, requirePermission("transfers", "edit"), async (req: AuthRequest, res) => {
   try {
     const id = pid(req, "id");
     const t = await loadTransferOr404(id);
@@ -409,7 +409,7 @@ router.post("/erp/transfers/:id/approve", authenticate, requireStaff, requireSto
   }
 });
 
-router.post("/erp/transfers/:id/reject", authenticate, requireStaff, requireStore, requirePermission("inventory", "edit"), async (req: AuthRequest, res) => {
+router.post("/erp/transfers/:id/reject", authenticate, requireStaff, requireStore, requirePermission("transfers", "edit"), async (req: AuthRequest, res) => {
   try {
     const id = pid(req, "id");
     const t = await loadTransferOr404(id);
@@ -438,7 +438,7 @@ router.post("/erp/transfers/:id/reject", authenticate, requireStaff, requireStor
   }
 });
 
-router.post("/erp/transfers/:id/prepare", authenticate, requireStaff, requireStore, requirePermission("inventory", "edit"), async (req: AuthRequest, res) => {
+router.post("/erp/transfers/:id/prepare", authenticate, requireStaff, requireStore, requirePermission("transfers", "edit"), async (req: AuthRequest, res) => {
   try {
     const t = await loadTransferOr404(pid(req, "id"));
     if (!t) { res.status(404).json({ error: "Transfer not found" }); return; }
@@ -481,7 +481,7 @@ router.post("/erp/transfers/:id/prepare", authenticate, requireStaff, requireSto
   }
 });
 
-router.post("/erp/transfers/:id/ship", authenticate, requireStaff, requireStore, requirePermission("inventory", "edit"), async (req: AuthRequest, res) => {
+router.post("/erp/transfers/:id/ship", authenticate, requireStaff, requireStore, requirePermission("transfers", "edit"), async (req: AuthRequest, res) => {
   try {
     const id = pid(req, "id");
     const t = await loadTransferOr404(id);
@@ -510,7 +510,7 @@ router.post("/erp/transfers/:id/ship", authenticate, requireStaff, requireStore,
   }
 });
 
-router.post("/erp/transfers/:id/receive", authenticate, requireStaff, requireStore, requirePermission("inventory", "edit"), async (req: AuthRequest, res) => {
+router.post("/erp/transfers/:id/receive", authenticate, requireStaff, requireStore, requirePermission("transfers", "edit"), async (req: AuthRequest, res) => {
   try {
     const t = await loadTransferOr404(pid(req, "id"));
     if (!t) { res.status(404).json({ error: "Transfer not found" }); return; }
@@ -597,7 +597,7 @@ router.post("/erp/transfers/:id/receive", authenticate, requireStaff, requireSto
   }
 });
 
-router.post("/erp/transfers/:id/cancel", authenticate, requireStaff, requireStore, requirePermission("inventory", "edit"), async (req: AuthRequest, res) => {
+router.post("/erp/transfers/:id/cancel", authenticate, requireStaff, requireStore, requirePermission("transfers", "edit"), async (req: AuthRequest, res) => {
   try {
     const t = await loadTransferOr404(pid(req, "id"));
     if (!t) { res.status(404).json({ error: "Transfer not found" }); return; }

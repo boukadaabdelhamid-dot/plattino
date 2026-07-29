@@ -709,7 +709,7 @@ router.put("/erp/permissions/:userId", authenticate, requireAdmin, requireStore,
     if (!Number.isFinite(userId)) { res.status(400).json({ error: "Invalid userId" }); return; }
     const perms = req.body as { section: string; action: string; granted: boolean }[];
     if (!Array.isArray(perms) || perms.length === 0) { res.status(400).json({ error: "perms array required" }); return; }
-    const VALID_SECTIONS = new Set(["dashboard", "orders", "products", "inventory", "customers", "purchases", "settings", "caisse", "suppliers", "employees", "realtime", "attendance", "leaves", "accounting", "web_store", "payroll"]);
+    const VALID_SECTIONS = new Set(["dashboard", "orders", "products", "inventory", "customers", "purchases", "settings", "caisse", "suppliers", "employees", "realtime", "attendance", "leaves", "accounting", "web_store", "payroll", "alerts", "transfers"]);
     const VALID_ACTIONS = new Set([
       // base actions (all modules)
       "view", "create", "edit", "delete",
@@ -5234,7 +5234,7 @@ router.delete("/erp/sale-orders/:id", authenticate, requireStaff, requireStore, 
 // GET /erp/alerts/cross-store-missing
 // Products available in sibling stores (stock > 0) but absent or stock=0 here.
 // Matches by reference first, barcode as fallback (same logic as Besoin d'Achats).
-router.get("/erp/alerts/cross-store-missing", authenticate, requireStaff, requireStore, requirePermission("inventory", "view"), async (req: AuthRequest, res) => {
+router.get("/erp/alerts/cross-store-missing", authenticate, requireStaff, requireStore, requirePermission("alerts", "view"), async (req: AuthRequest, res) => {
   try {
     const storeId = req.currentStoreId!;
     const result = await db.execute(sql`
@@ -5285,7 +5285,7 @@ router.get("/erp/alerts/cross-store-missing", authenticate, requireStaff, requir
 // Products with stock > 0 that have not appeared in a completed sale in the last N days
 // (or have never been sold at all).
 // Returns { items: [...], stats: { count, slowValue, totalValue, pctOfTotal } }
-router.get("/erp/alerts/slow-movers", authenticate, requireStaff, requireStore, requirePermission("inventory", "view"), async (req: AuthRequest, res) => {
+router.get("/erp/alerts/slow-movers", authenticate, requireStaff, requireStore, requirePermission("alerts", "view"), async (req: AuthRequest, res) => {
   try {
     const storeId = req.currentStoreId!;
     const rawDays = parseInt((req.query["days"] as string | undefined) ?? "30", 10);
@@ -5496,7 +5496,7 @@ router.delete("/erp/products/:id/barcodes/:barcodeId", authenticate, requireStaf
 });
 
 // GET /erp/alerts/expiring-products?days=N — batches expiring within N days
-router.get("/erp/alerts/expiring-products", authenticate, requireStaff, requireStore, requirePermission("inventory", "view"), async (req: AuthRequest, res) => {
+router.get("/erp/alerts/expiring-products", authenticate, requireStaff, requireStore, requirePermission("alerts", "view"), async (req: AuthRequest, res) => {
   try {
     const storeId = req.currentStoreId!;
     const days = Math.max(1, Math.min(365, parseInt(String(req.query.days ?? "30"), 10) || 30));
@@ -5527,7 +5527,7 @@ router.get("/erp/alerts/expiring-products", authenticate, requireStaff, requireS
 
 // GET /erp/alerts/count — lightweight badge count (sum of all alert types)
 // Uses a fixed 30-day window for slow-movers in the badge (detail page can filter further).
-router.get("/erp/alerts/count", authenticate, requireStaff, requireStore, requirePermission("inventory", "view"), async (req: AuthRequest, res) => {
+router.get("/erp/alerts/count", authenticate, requireStaff, requireStore, requirePermission("alerts", "view"), async (req: AuthRequest, res) => {
   try {
     const storeId = req.currentStoreId!;
 

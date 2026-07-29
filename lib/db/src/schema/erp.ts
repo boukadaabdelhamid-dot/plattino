@@ -606,3 +606,17 @@ export const payrollAdjustmentsTable = pgTable("payroll_adjustments", {
 export type PayrollRun = typeof payrollRunsTable.$inferSelect;
 export type Payslip = typeof payslipsTable.$inferSelect;
 export type PayrollAdjustment = typeof payrollAdjustmentsTable.$inferSelect;
+
+// ─── Purchase suggestions (employee-driven product requests) ─────────────────
+export const purchaseSuggestionsTable = pgTable("purchase_suggestions", {
+  id: serial("id").primaryKey(),
+  storeId: integer("store_id").references(() => storesTable.id, { onDelete: "cascade" }).notNull(),
+  staffId: integer("staff_id").references(() => usersTable.id, { onDelete: "cascade" }).notNull(),
+  productName: text("product_name").notNull(),
+  imageUrl: text("image_url"),
+  notes: text("notes"),
+  demandCount: integer("demand_count").notNull().default(0),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+export type PurchaseSuggestion = typeof purchaseSuggestionsTable.$inferSelect;

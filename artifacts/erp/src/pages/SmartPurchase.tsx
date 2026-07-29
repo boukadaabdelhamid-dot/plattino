@@ -2,6 +2,7 @@ import React, { useState, useCallback, useMemo, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useLang } from "@/hooks/use-lang";
 import { useCurrentStore } from "@/hooks/use-current-store";
+import { useMe } from "@/hooks/use-me";
 import { useGetSuppliers } from "@workspace/api-client-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -13,12 +14,13 @@ import {
 import {
   ShoppingBasket, SlidersHorizontal, X, History, CheckCircle2,
   Package, Search, RefreshCw, MapPin, Phone, TrendingUp, ShoppingCart,
-  LayoutGrid, List, Ban, Printer,
+  LayoutGrid, List, Ban, Printer, MessageSquarePlus, ThumbsUp, Trash2,
+  Lightbulb,
 } from "lucide-react";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 type SortBy = "profit" | "qty_sold";
-type StockFilter = "all" | "rupture" | "low";
+type StockFilter = "all" | "rupture" | "low" | "suggestions";
 
 type NeededRow = {
   id: number;
@@ -105,6 +107,58 @@ async function fetchFilterOptions(): Promise<FilterOptions> {
   const res = await fetch(`${API_BASE}/api/erp/purchases/filter-options`, { headers: authHeaders() });
   if (!res.ok) throw new Error("filter-options failed");
   return res.json() as Promise<FilterOptions>;
+}
+
+// ── Suggestion types & helpers ────────────────────────────────────────────────
+type PurchaseSuggestion = {
+  id: number;
+  product_name: string;
+  image_url: string | null;
+  notes: string | null;
+  demand_count: number;
+  staff_id: number;
+  staff_name: string | null;
+  created_at: string;
+};
+
+async function fetchSuggestions(): Promise<PurchaseSuggestion[]> {
+  const res = await fetch(`${API_BASE}/api/erp/purchase-suggestions`, { headers: authHeaders() });
+  if (!res.ok) throw new Error("fetch suggestions failed");
+  return res.json() as Promise<PurchaseSuggestion[]>;
+}
+
+async function createSuggestion(body: { product_name: string; notes?: string; image_url?: string }): Promise<PurchaseSuggestion> {
+  const res = await fetch(`${API_BASE}/api/erp/purchase-suggestions`, {
+    method: "POST",
+    headers: { ...authHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) { const d = await res.json() as { error?: string }; throw new Error(d.error ?? "Erreur"); }
+  return res.json() as Promise<PurchaseSuggestion>;
+}
+
+async function tapSuggestion(id: number): Promise<{ demand_count: number }> {
+  const res = await fetch(`${API_BASE}/api/erp/purchase-suggestions/${id}/tap`, {
+    method: "POST", headers: authHeaders(),
+  });
+  if (!res.ok) throw new Error("tap failed");
+  return res.json() as Promise<{ demand_count: number }>;
+}
+
+async function deleteSuggestion(id: number): Promise<void> {
+  const res = await fetch(`${API_BASE}/api/erp/purchase-suggestions/${id}`, {
+    method: "DELETE", headers: authHeaders(),
+  });
+  if (!res.ok) throw new Error("delete failed");
+}
+
+async function uploadImage(file: File): Promise<string> {
+  const fd = new FormData();
+  fd.append("file", file);
+  const res = await fetch(`${API_BASE}/api/uploads`, { method: "POST", headers: authHeaders(), body: fd });
+  if (!res.ok) throw new Error("upload failed");
+  const data = await res.json() as { url: string };
+  return data.url;
 }
 
 async function postQuickOrder(body: {
@@ -946,12 +1000,148 @@ function NeededListRow({
   );
 }
 
+// ── SuggestDrawer ─────────────────────────────────────────────────────────────
+function SuggestDrawer({
+  open,
+  onOpenChange,
+  onCreated,
+  t,
+}: {
+  open: boolean;
+  onOpenChange: (v: boolean) => void;
+  onCreated: () => void;
+  t: (fr: string, ar: string) => string;
+}) {
+  const [productName, setProductName] = useState("");
+  const [notes, setNotes] = useState("");
+  const [imageFile, setImageFile] = useState<File | null>(null);
+  const [imagePreview, setImagePreview] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const reset = () => {
+    setProductName(""); setNotes(""); setImageFile(null); setImagePreview(null); setError(null);
+  };
+
+  const handleClose = (v: boolean) => {
+    if (!v) reset();
+    onOpenChange(v);
+  };
+
+  const handleFile = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setImageFile(file);
+    setImagePreview(URL.createObjectURL(file));
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!productName.trim()) { setError(t("Nom du produit requis", "اسم المنتج مطلوب")); return; }
+    setSubmitting(true);
+    setError(null);
+    try {
+      let imageUrl: string | undefined;
+      if (imageFile) {
+        imageUrl = await uploadImage(imageFile);
+      }
+      await createSuggestion({ product_name: productName.trim(), notes: notes.trim() || undefined, image_url: imageUrl });
+      reset();
+      onOpenChange(false);
+      onCreated();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : t("Erreur", "خطأ"));
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <Drawer open={open} onOpenChange={handleClose}>
+      <DrawerContent className="max-h-[85vh]">
+        <DrawerHeader className="pb-2">
+          <div className="flex items-center justify-between">
+            <DrawerTitle className="flex items-center gap-2">
+              <Lightbulb className="h-5 w-5 text-amber-500" />
+              {t("Suggérer un produit", "اقتراح منتج")}
+            </DrawerTitle>
+            <DrawerClose asChild>
+              <button type="button" className="p-1 rounded-full hover:bg-gray-100">
+                <X className="h-4 w-4" />
+              </button>
+            </DrawerClose>
+          </div>
+        </DrawerHeader>
+        <div className="overflow-y-auto px-4 pb-6 space-y-4">
+          <form onSubmit={(e) => { void handleSubmit(e); }} className="space-y-4">
+            {/* Product name */}
+            <div className="space-y-1.5">
+              <label className="text-sm font-medium">{t("Nom du produit", "اسم المنتج")} *</label>
+              <Input
+                className="h-11 rounded-xl"
+                placeholder={t("Ex: Huile moteur 5W40…", "مثال: زيت موتور 5W40…")}
+                value={productName}
+                onChange={(e) => setProductName(e.target.value)}
+              />
+            </div>
+
+            {/* Image */}
+            <div className="space-y-1.5">
+              <label className="text-sm font-medium">{t("Photo (optionnel)", "صورة (اختياري)")}</label>
+              {imagePreview ? (
+                <div className="relative w-24 h-24">
+                  <img src={imagePreview} alt="" className="w-24 h-24 rounded-xl object-cover border" />
+                  <button
+                    type="button"
+                    onClick={() => { setImageFile(null); setImagePreview(null); }}
+                    className="absolute -top-1.5 -right-1.5 bg-white rounded-full border shadow p-0.5"
+                  >
+                    <X className="h-3 w-3 text-slate-600" />
+                  </button>
+                </div>
+              ) : (
+                <label className="flex items-center gap-3 px-4 py-3 rounded-xl border border-dashed border-gray-300 bg-gray-50 cursor-pointer hover:bg-gray-100 transition-colors">
+                  <Package className="h-5 w-5 text-gray-400" />
+                  <span className="text-sm text-muted-foreground">{t("Choisir une image", "اختر صورة")}</span>
+                  <input type="file" accept="image/*" className="hidden" onChange={handleFile} />
+                </label>
+              )}
+            </div>
+
+            {/* Notes */}
+            <div className="space-y-1.5">
+              <label className="text-sm font-medium">{t("Remarques (optionnel)", "ملاحظات (اختياري)")}</label>
+              <textarea
+                className="w-full rounded-xl border bg-background px-3 py-2 text-sm resize-none h-20 focus:outline-none focus:ring-2 focus:ring-ring"
+                placeholder={t("Fournisseur habituel, taille, couleur…", "المورد المعتاد، الحجم، اللون…")}
+                value={notes}
+                onChange={(e) => setNotes(e.target.value)}
+              />
+            </div>
+
+            {error && <p className="text-sm text-red-600">{error}</p>}
+
+            <button
+              type="submit"
+              disabled={submitting || !productName.trim()}
+              className="w-full h-12 rounded-xl bg-amber-500 hover:bg-amber-600 text-white font-semibold transition-colors disabled:opacity-60"
+            >
+              {submitting ? t("Envoi…", "جارٍ…") : t("Soumettre la suggestion", "إرسال الاقتراح")}
+            </button>
+          </form>
+        </div>
+      </DrawerContent>
+    </Drawer>
+  );
+}
+
 // ── Main page ────────────────────────────────────────────────────────────────
 export default function SmartPurchase() {
   const { lang } = useLang();
   const t = useCallback((fr: string, ar: string) => lang === "ar" ? ar : fr, [lang]);
   const store = useCurrentStore();
   const qc = useQueryClient();
+  const { user: me, isAdmin: isMeAdmin } = useMe();
 
   // Sort + filter state
   const [sortBy, setSortBy] = useState<SortBy>("profit");
@@ -976,6 +1166,25 @@ export default function SmartPurchase() {
   // Drawer state
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [historyProduct, setHistoryProduct] = useState<{ id: number; name: string } | null>(null);
+  const [suggestOpen, setSuggestOpen] = useState(false);
+
+  // Suggestions query + mutations
+  const { data: suggestions, refetch: refetchSuggestions } = useQuery<PurchaseSuggestion[]>({
+    queryKey: ["purchase-suggestions", store?.id],
+    queryFn: fetchSuggestions,
+    enabled: !!store?.id,
+    staleTime: 15_000,
+  });
+  const suggestionCount = suggestions?.length ?? 0;
+
+  const tapMut = useMutation({
+    mutationFn: (id: number) => tapSuggestion(id),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ["purchase-suggestions"] }),
+  });
+  const deleteSuggestMut = useMutation({
+    mutationFn: (id: number) => deleteSuggestion(id),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ["purchase-suggestions"] }),
+  });
 
   // Snooze pending set (for immediate UI feedback)
   const [pendingSnooze, setPendingSnooze] = useState<Set<number>>(new Set());
@@ -1094,7 +1303,22 @@ export default function SmartPurchase() {
               )}
             </div>
             <div className="flex items-center gap-1.5">
-              {displayRows.length > 0 && (
+              {/* Suggest button */}
+              <Button
+                size="icon" variant="ghost"
+                className="h-10 w-10 rounded-full relative"
+                onClick={() => setSuggestOpen(true)}
+                aria-label={t("Suggérer un produit", "اقتراح منتج")}
+              >
+                <MessageSquarePlus className="h-4 w-4" />
+                {suggestionCount > 0 && (
+                  <span className="absolute -top-0.5 -right-0.5 bg-amber-500 text-white text-[9px] font-bold rounded-full w-4 h-4 flex items-center justify-center leading-none">
+                    {suggestionCount > 9 ? "9+" : suggestionCount}
+                  </span>
+                )}
+              </Button>
+
+              {displayRows.length > 0 && stockFilter !== "suggestions" && (
                 <Button
                   size="icon" variant="ghost"
                   className="h-10 w-10 rounded-full"
@@ -1177,26 +1401,21 @@ export default function SmartPurchase() {
             </button>
           </div>
 
-          {/* Stock filter: Tout / En rupture / Stock faible */}
-          {!isLoading && allRows.length > 0 && (
+          {/* Stock filter: Tout / En rupture / Stock faible / Suggestions */}
+          {!isLoading && (allRows.length > 0 || suggestionCount > 0) && (
             <div className="flex rounded-xl border bg-gray-100 p-1 gap-1">
               {([
-                { key: "all",     labelFr: "Tout",        labelAr: "الكل",          count: allRows.length },
-                { key: "rupture", labelFr: "En rupture",  labelAr: "نفد المخزون",   count: ruptureCount },
-                { key: "low",     labelFr: "Stock faible", labelAr: "مخزون منخفض",  count: lowCount },
-              ] as { key: StockFilter; labelFr: string; labelAr: string; count: number }[]).map(({ key, labelFr, labelAr, count }) => (
+                { key: "all",         labelFr: "Tout",         labelAr: "الكل",          count: allRows.length,  activeColor: "bg-white text-slate-800" },
+                { key: "rupture",     labelFr: "En rupture",   labelAr: "نفد المخزون",   count: ruptureCount,   activeColor: "bg-red-600 text-white" },
+                { key: "low",         labelFr: "Stock faible", labelAr: "مخزون منخفض",  count: lowCount,       activeColor: "bg-orange-500 text-white" },
+                { key: "suggestions", labelFr: "Idées",        labelAr: "اقتراحات",      count: suggestionCount, activeColor: "bg-amber-500 text-white" },
+              ] as { key: StockFilter; labelFr: string; labelAr: string; count: number; activeColor: string }[]).map(({ key, labelFr, labelAr, count, activeColor }) => (
                 <button
                   key={key}
                   type="button"
                   onClick={() => setStockFilter(key)}
                   className={`flex-1 flex items-center justify-center gap-1 rounded-lg px-2 py-1.5 text-xs font-semibold transition-all ${
-                    stockFilter === key
-                      ? key === "rupture"
-                        ? "bg-red-600 text-white shadow-sm"
-                        : key === "low"
-                          ? "bg-amber-500 text-white shadow-sm"
-                          : "bg-white text-slate-800 shadow-sm"
-                      : "text-gray-500 hover:text-gray-700"
+                    stockFilter === key ? `${activeColor} shadow-sm` : "text-gray-500 hover:text-gray-700"
                   }`}
                 >
                   {t(labelFr, labelAr)}
@@ -1302,7 +1521,123 @@ export default function SmartPurchase() {
 
       {/* ── Main list ── */}
       <div className="flex-1 px-4 py-4 max-w-2xl mx-auto w-full space-y-3">
-        {isLoading && (
+
+        {/* ── Suggestions panel ── */}
+        {stockFilter === "suggestions" && (
+          <>
+            {(suggestions ?? []).length === 0 ? (
+              <div className="text-center py-20 space-y-3">
+                <div className="w-16 h-16 rounded-full bg-amber-100 flex items-center justify-center mx-auto">
+                  <Lightbulb className="h-8 w-8 text-amber-500" />
+                </div>
+                <p className="font-semibold text-gray-700">{t("Aucune suggestion pour l'instant", "لا توجد اقتراحات بعد")}</p>
+                <p className="text-sm text-muted-foreground">{t("Appuyez sur + pour suggérer un produit demandé par un client.", "اضغط + لاقتراح منتج طلبه عميل.")}</p>
+                <button
+                  type="button"
+                  onClick={() => setSuggestOpen(true)}
+                  className="mx-auto flex items-center gap-2 px-5 py-2.5 rounded-full bg-amber-500 hover:bg-amber-600 text-white text-sm font-semibold transition-colors"
+                >
+                  <MessageSquarePlus className="h-4 w-4" />
+                  {t("Suggérer un produit", "اقتراح منتج")}
+                </button>
+              </div>
+            ) : (
+              (suggestions ?? []).map((s) => {
+                const imgUrl = resolveImg(s.image_url);
+                const canDelete = isMeAdmin || s.staff_id === me?.id;
+                return (
+                  <div key={s.id} className="rounded-2xl bg-white border shadow-sm overflow-hidden">
+                    <div className="p-4 space-y-3">
+                      {/* Top row */}
+                      <div className="flex items-start gap-3">
+                        {imgUrl ? (
+                          <img src={imgUrl} alt={s.product_name}
+                            className="w-14 h-14 rounded-xl object-cover border shrink-0" />
+                        ) : (
+                          <div className="w-14 h-14 rounded-xl bg-amber-50 border border-amber-100 flex items-center justify-center shrink-0">
+                            <Lightbulb className="h-6 w-6 text-amber-400" />
+                          </div>
+                        )}
+                        <div className="flex-1 min-w-0">
+                          <p className="font-semibold text-slate-800 leading-tight line-clamp-2">{s.product_name}</p>
+                          <p className="text-[11px] text-muted-foreground mt-0.5">
+                            {s.staff_name ?? t("Employé", "موظف")} · {new Date(s.created_at).toLocaleDateString(lang === "ar" ? "ar-DZ" : "fr-DZ")}
+                          </p>
+                          {s.notes && (
+                            <p className="text-xs text-slate-500 mt-1 line-clamp-2">{s.notes}</p>
+                          )}
+                        </div>
+                        {/* Demand counter */}
+                        <div className="shrink-0 flex flex-col items-center gap-1">
+                          <span className="text-2xl font-extrabold tabular-nums text-amber-600 leading-none">{s.demand_count}</span>
+                          <span className="text-[10px] text-muted-foreground uppercase tracking-wide">{t("demandes", "طلب")}</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Action row */}
+                    <div className="flex border-t">
+                      {/* +1 tap */}
+                      <button
+                        type="button"
+                        disabled={tapMut.isPending}
+                        onClick={() => tapMut.mutate(s.id)}
+                        className="flex-1 flex items-center justify-center gap-1.5 py-3.5 text-sm font-semibold text-amber-700 hover:bg-amber-50 active:bg-amber-100 transition-colors border-r disabled:opacity-60"
+                      >
+                        <ThumbsUp className="h-4 w-4" />
+                        {t("+1 client demande", "+1 عميل طلب")}
+                      </button>
+
+                      {/* Commander */}
+                      <button
+                        type="button"
+                        onClick={() => setQuickOrderProduct({
+                          id: 0,
+                          designation: s.product_name,
+                          designation_ar: s.product_name,
+                          image_url: s.image_url,
+                          stock: 0,
+                          min_stock: Math.max(1, s.demand_count),
+                          cost_price: null,
+                          price: null,
+                          reference: null,
+                          famille: null,
+                          famille_ar: null,
+                          marque: null,
+                          supplier_id: null,
+                          supplier_name: null,
+                          supplier_city: null,
+                          supplier_phone: null,
+                          benefice: 0,
+                          total_qty_sold: 0,
+                        })}
+                        className="flex-1 flex items-center justify-center gap-1.5 py-3.5 text-sm font-semibold text-blue-700 hover:bg-blue-50 active:bg-blue-100 transition-colors border-r"
+                      >
+                        <ShoppingCart className="h-4 w-4" />
+                        {t("Commander", "اطلب")}
+                      </button>
+
+                      {/* Delete — admin or creator only */}
+                      {canDelete && (
+                        <button
+                          type="button"
+                          disabled={deleteSuggestMut.isPending}
+                          onClick={() => deleteSuggestMut.mutate(s.id)}
+                          className="px-4 flex items-center justify-center text-red-400 hover:bg-red-50 hover:text-red-600 active:bg-red-100 transition-colors disabled:opacity-60"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                );
+              })
+            )}
+          </>
+        )}
+
+        {/* Product list — hidden when in suggestions tab */}
+        {stockFilter !== "suggestions" && isLoading && (
           [...Array(5)].map((_, i) => (
             <div key={i} className="rounded-2xl bg-white border p-4 shadow-sm space-y-3">
               <Skeleton className="h-5 w-3/4" />
@@ -1312,7 +1647,7 @@ export default function SmartPurchase() {
           ))
         )}
 
-        {!isLoading && displayRows.length === 0 && (
+        {stockFilter !== "suggestions" && !isLoading && displayRows.length === 0 && (
           <div className="text-center py-20 space-y-3">
             <div className="w-16 h-16 rounded-full bg-emerald-100 flex items-center justify-center mx-auto">
               <CheckCircle2 className="h-8 w-8 text-emerald-600" />
@@ -1325,7 +1660,7 @@ export default function SmartPurchase() {
         )}
 
         {/* ── Cards view ── */}
-        {viewMode === "cards" && displayRows.map((row) => {
+        {stockFilter !== "suggestions" && viewMode === "cards" && displayRows.map((row) => {
           const isSnoozePending = pendingSnooze.has(row.id);
           const imgUrl = resolveImg(row.image_url);
 
@@ -1523,7 +1858,7 @@ export default function SmartPurchase() {
         })}
 
         {/* ── List view ── */}
-        {viewMode === "list" && displayRows.map((row) => (
+        {stockFilter !== "suggestions" && viewMode === "list" && displayRows.map((row) => (
           <NeededListRow
             key={row.id}
             row={row}
@@ -1544,6 +1879,14 @@ export default function SmartPurchase() {
           />
         ))}
       </div>
+
+      {/* ── Suggest drawer ── */}
+      <SuggestDrawer
+        open={suggestOpen}
+        onOpenChange={setSuggestOpen}
+        onCreated={() => void refetchSuggestions()}
+        t={t}
+      />
 
       {/* ── Filters bottom drawer ── */}
       <Drawer open={filtersOpen} onOpenChange={setFiltersOpen}>

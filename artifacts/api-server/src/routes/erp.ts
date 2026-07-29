@@ -5611,4 +5611,103 @@ router.get("/erp/alerts/count", authenticate, requireStaff, requireStore, requir
   } catch (err) { req.log.error(err); res.status(500).json({ error: "Internal server error" }); }
 });
 
+// ─── Purchase suggestions ────────────────────────────────────────────────────
+
+// GET /erp/purchase-suggestions — list by store, ordered by demand_count DESC
+router.get("/erp/purchase-suggestions", authenticate, requireStaff, requireStore, async (req: AuthRequest, res) => {
+  try {
+    const storeId = req.currentStoreId!;
+    const rows = await db
+      .select({
+        id: schema.purchaseSuggestionsTable.id,
+        product_name: schema.purchaseSuggestionsTable.productName,
+        image_url: schema.purchaseSuggestionsTable.imageUrl,
+        notes: schema.purchaseSuggestionsTable.notes,
+        demand_count: schema.purchaseSuggestionsTable.demandCount,
+        staff_id: schema.purchaseSuggestionsTable.staffId,
+        staff_name: schema.usersTable.name,
+        created_at: schema.purchaseSuggestionsTable.createdAt,
+      })
+      .from(schema.purchaseSuggestionsTable)
+      .leftJoin(schema.usersTable, eq(schema.purchaseSuggestionsTable.staffId, schema.usersTable.id))
+      .where(eq(schema.purchaseSuggestionsTable.storeId, storeId))
+      .orderBy(desc(schema.purchaseSuggestionsTable.demandCount));
+    res.json(rows);
+  } catch (err) { req.log.error(err); res.status(500).json({ error: "Internal server error" }); }
+});
+
+// POST /erp/purchase-suggestions — create a suggestion
+router.post("/erp/purchase-suggestions", authenticate, requireStaff, requireStore, async (req: AuthRequest, res) => {
+  try {
+    const storeId = req.currentStoreId!;
+    const staffId = req.user!.id;
+    const { product_name, image_url, notes } = req.body as {
+      product_name?: string;
+      image_url?: string;
+      notes?: string;
+    };
+    if (!product_name || !String(product_name).trim()) {
+      res.status(400).json({ error: "product_name is required" });
+      return;
+    }
+    const [row] = await db
+      .insert(schema.purchaseSuggestionsTable)
+      .values({
+        storeId,
+        staffId,
+        productName: String(product_name).trim(),
+        imageUrl: image_url ?? null,
+        notes: notes ?? null,
+        demandCount: 0,
+      })
+      .returning();
+    res.status(201).json(row);
+  } catch (err) { req.log.error(err); res.status(500).json({ error: "Internal server error" }); }
+});
+
+// POST /erp/purchase-suggestions/:id/tap — increment demand_count by 1
+router.post("/erp/purchase-suggestions/:id/tap", authenticate, requireStaff, requireStore, async (req: AuthRequest, res) => {
+  try {
+    const storeId = req.currentStoreId!;
+    const id = pid(req, "id");
+    const [row] = await db
+      .update(schema.purchaseSuggestionsTable)
+      .set({ demandCount: sql`${schema.purchaseSuggestionsTable.demandCount} + 1` })
+      .where(and(
+        eq(schema.purchaseSuggestionsTable.id, id),
+        eq(schema.purchaseSuggestionsTable.storeId, storeId),
+      ))
+      .returning();
+    if (!row) { res.status(404).json({ error: "Suggestion not found" }); return; }
+    res.json({ demand_count: row.demandCount });
+  } catch (err) { req.log.error(err); res.status(500).json({ error: "Internal server error" }); }
+});
+
+// DELETE /erp/purchase-suggestions/:id — admin or creator only
+router.delete("/erp/purchase-suggestions/:id", authenticate, requireStaff, requireStore, async (req: AuthRequest, res) => {
+  try {
+    const storeId = req.currentStoreId!;
+    const id = pid(req, "id");
+    const userId = req.user!.id;
+    const admin = isAdmin(req);
+    // Fetch first to check ownership
+    const [existing] = await db
+      .select({ staffId: schema.purchaseSuggestionsTable.staffId })
+      .from(schema.purchaseSuggestionsTable)
+      .where(and(
+        eq(schema.purchaseSuggestionsTable.id, id),
+        eq(schema.purchaseSuggestionsTable.storeId, storeId),
+      ));
+    if (!existing) { res.status(404).json({ error: "Suggestion not found" }); return; }
+    if (!admin && existing.staffId !== userId) {
+      res.status(403).json({ error: "Not authorized to delete this suggestion" });
+      return;
+    }
+    await db
+      .delete(schema.purchaseSuggestionsTable)
+      .where(eq(schema.purchaseSuggestionsTable.id, id));
+    res.json({ ok: true });
+  } catch (err) { req.log.error(err); res.status(500).json({ error: "Internal server error" }); }
+});
+
 export default router;

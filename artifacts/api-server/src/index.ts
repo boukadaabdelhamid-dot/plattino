@@ -746,6 +746,19 @@ CREATE TABLE IF NOT EXISTS "inventory_count_items" (
   "created_at" timestamp DEFAULT now() NOT NULL
 );--> statement-breakpoint
 CREATE UNIQUE INDEX IF NOT EXISTS "inventory_count_items_session_product_unique" ON "inventory_count_items" ("session_id", "product_id");--> statement-breakpoint
+-- ─── Purchase suggestions (employee-driven product requests) ─────────────────
+CREATE TABLE IF NOT EXISTS "purchase_suggestions" (
+  "id" serial PRIMARY KEY NOT NULL,
+  "store_id" integer NOT NULL,
+  "staff_id" integer NOT NULL,
+  "product_name" text NOT NULL,
+  "image_url" text,
+  "notes" text,
+  "demand_count" integer NOT NULL DEFAULT 0,
+  "created_at" timestamp DEFAULT now() NOT NULL
+);--> statement-breakpoint
+ALTER TABLE "purchase_suggestions" ADD CONSTRAINT "purchase_suggestions_store_id_fk" FOREIGN KEY ("store_id") REFERENCES "public"."stores"("id") ON DELETE CASCADE;--> statement-breakpoint
+ALTER TABLE "purchase_suggestions" ADD CONSTRAINT "purchase_suggestions_staff_id_fk" FOREIGN KEY ("staff_id") REFERENCES "public"."users"("id") ON DELETE CASCADE;--> statement-breakpoint
 `;
 
 

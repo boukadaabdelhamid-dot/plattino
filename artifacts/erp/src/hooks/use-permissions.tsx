@@ -17,7 +17,8 @@ export type PermSection =
   | "realtime"
   | "attendance"
   | "leaves"
-  | "accounting";
+  | "accounting"
+  | "web_store";
 
 export type PermAction =
   | "view" | "create" | "edit" | "delete"
@@ -25,7 +26,7 @@ export type PermAction =
   | "close" | "print" | "change_payment" | "edit_line_price" | "view_profit"
   // products
   | "edit_price" | "view_purchase_price" | "expose" | "manage_stock"
-  | "manage_images" | "duplicate" | "copy_to_store" | "import"
+  | "manage_images" | "manage_barcodes" | "duplicate" | "copy_to_store" | "import"
   | "print_barcode" | "view_history" | "bulk_actions"
   // purchases
   | "receive" | "manage_charges" | "column_settings"
@@ -34,7 +35,11 @@ export type PermAction =
   // orders – sidebar child visibility
   | "view_sale_orders"
   // inventory
-  | "count";
+  | "count"
+  // customers (granular)
+  | "view_balance" | "view_history"
+  // web_store
+  | "edit_settings" | "manage_featured" | "manage_orders";
 
 export type PermRow = { section: string; action: string; granted: boolean };
 

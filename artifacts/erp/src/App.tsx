@@ -237,7 +237,7 @@ function Router() {
         <ProtectedRoute component={SettingsCustomers} section="settings" />
       </Route>
       <Route path="/settings/web-store">
-        <ProtectedRoute component={WebStoreSettings} adminOnly section="settings" />
+        <ProtectedRoute component={WebStoreSettings} section="web_store" />
       </Route>
       <Route component={NotFound} />
     </Switch>

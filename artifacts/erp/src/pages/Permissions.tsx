@@ -55,6 +55,7 @@ const SECTIONS: { key: string; labelFr: string; labelAr: string }[] = [
   { key: "accounting",labelFr: "Comptabilité",      labelAr: "المحاسبة"      },
   { key: "realtime",  labelFr: "Temps Réel",        labelAr: "الوقت الفعلي"  },
   { key: "settings",  labelFr: "Paramètres",        labelAr: "الإعدادات"     },
+  { key: "web_store", labelFr: "Boutique en ligne", labelAr: "المتجر الإلكتروني" },
 ];
 
 /** Default 4 actions — used for all sections not listed in SECTION_ACTIONS */
@@ -95,6 +96,7 @@ const SECTION_ACTIONS: Record<string, ActionDef[]> = {
     { key: "print_barcode",        labelFr: "Imprimer les codes-barres / étiquettes",   labelAr: "طباعة الباركود والملصقات",    icon: QrCode    },
     { key: "view_history",         labelFr: "Voir l'historique des mouvements de stock", labelAr: "عرض سجل حركات المخزون",      icon: History   },
     { key: "bulk_actions",         labelFr: "Actions en masse (exposer / masquer / supprimer)", labelAr: "إجراءات جماعية",     icon: LayoutGrid},
+    { key: "manage_barcodes",      labelFr: "Gérer les codes-barres supplémentaires",    labelAr: "إدارة الباركودات الإضافية",  icon: QrCode    },
   ],
   purchases: [
     { key: "view",            labelFr: "Voir les bons d'achat",               labelAr: "عرض سندات الشراء",         icon: Eye      },
@@ -119,6 +121,20 @@ const SECTION_ACTIONS: Record<string, ActionDef[]> = {
     { key: "edit_default_customer", labelFr: "Modifier le client comptoir par défaut",  labelAr: "تغيير عميل الكاونتر الافتراضي", icon: User     },
     { key: "manage_permissions",    labelFr: "Accéder à la gestion des permissions",    labelAr: "الوصول لإدارة الصلاحيات",       icon: Shield   },
     { key: "manage_stores",         labelFr: "Accéder à la gestion des magasins",       labelAr: "الوصول لإدارة المتاجر",         icon: Building2},
+  ],
+  customers: [
+    { key: "view",          labelFr: "Accéder au module Clients",             labelAr: "الوصول لقسم العملاء",             icon: Eye        },
+    { key: "create",        labelFr: "Créer un client",                       labelAr: "إنشاء عميل",                      icon: Plus       },
+    { key: "edit",          labelFr: "Modifier le profil client",             labelAr: "تعديل ملف العميل",                icon: PenLine    },
+    { key: "delete",        labelFr: "Supprimer un client",                   labelAr: "حذف عميل",                        icon: Trash2     },
+    { key: "view_balance",  labelFr: "Voir le solde & l'historique financier",labelAr: "عرض الرصيد والسجل المالي",        icon: TrendingUp },
+    { key: "view_history",  labelFr: "Voir les ventes & retours client",      labelAr: "عرض مبيعات ومرتجعات العميل",      icon: Receipt    },
+  ],
+  web_store: [
+    { key: "view",            labelFr: "Accéder à la boutique en ligne",          labelAr: "الوصول للمتجر الإلكتروني",        icon: Globe        },
+    { key: "edit_settings",   labelFr: "Modifier les paramètres de la boutique",  labelAr: "تعديل إعدادات المتجر الإلكتروني", icon: Store        },
+    { key: "manage_featured", labelFr: "Gérer les produits & catégories vedettes",labelAr: "إدارة المنتجات والتصنيفات المميزة", icon: Package     },
+    { key: "manage_orders",   labelFr: "Gérer les commandes en ligne",            labelAr: "إدارة الطلبيات الإلكترونية",      icon: ShoppingCart },
   ],
 };
 

@@ -575,6 +575,10 @@ function CustomerDetailSheet({ customerId, onClose, t, lang, currency }: {
   });
   const createOp = useCreateCustomerOperation();
 
+  const { can } = usePermissions();
+  const canViewBalance  = can("customers", "view_balance");
+  const canViewHistory  = can("customers", "view_history");
+
   const [activeTab, setActiveTab] = useState("detail");
   const [quickOp, setQuickOp] = useState<{ type: "versement" | "remboursement" } | null>(null);
   const [quickForm, setQuickForm] = useState({ amount: "", date: new Date().toISOString().slice(0, 10), reference: "", note: "" });
@@ -684,9 +688,9 @@ function CustomerDetailSheet({ customerId, onClose, t, lang, currency }: {
         <div className="px-4 pt-3 border-b shrink-0">
           <TabsList className="h-9 text-xs">
             <TabsTrigger value="detail"  className="text-xs px-3">DÉTAIL</TabsTrigger>
-            <TabsTrigger value="balance" className="text-xs px-3">BALANCE</TabsTrigger>
-            <TabsTrigger value="ventes"  className="text-xs px-3">VENTES</TabsTrigger>
-            <TabsTrigger value="retours" className="text-xs px-3">RETOURS</TabsTrigger>
+            {canViewBalance  && <TabsTrigger value="balance" className="text-xs px-3">BALANCE</TabsTrigger>}
+            {canViewHistory  && <TabsTrigger value="ventes"  className="text-xs px-3">VENTES</TabsTrigger>}
+            {canViewHistory  && <TabsTrigger value="retours" className="text-xs px-3">RETOURS</TabsTrigger>}
           </TabsList>
         </div>
 

@@ -100,7 +100,7 @@ const navEntries: NavEntry[] = [
       { href: "/settings/backup", icon: HardDrive, labelEn: "Sauvegarde", labelAr: "النسخ الاحتياطي" },
       { href: "/settings/staff", icon: Shield, labelEn: "Accès / Staff", labelAr: "الصلاحيات" },
       { href: "/settings/customers", icon: UserCheck, labelEn: "Clients", labelAr: "إعدادات العملاء" },
-      { href: "/settings/web-store", icon: Globe, labelEn: "Boutique en ligne", labelAr: "المتجر الإلكتروني", adminOnly: true },
+      { href: "/settings/web-store", icon: Globe, labelEn: "Boutique en ligne", labelAr: "المتجر الإلكتروني", section: "web_store" as import("@/hooks/use-permissions").PermSection },
     ],
   },
 ];

@@ -3204,7 +3204,7 @@ router.post("/erp/customers", authenticate, requireStaff, requireStore, requireP
   }
 });
 
-router.get("/erp/customers/:id", authenticate, requireStaff, requireStore, requirePermission("customers", "edit"), async (req: AuthRequest, res) => {
+router.get("/erp/customers/:id", authenticate, requireStaff, requireStore, requirePermission("customers", "view"), async (req: AuthRequest, res) => {
   try {
     const storeId = req.currentStoreId!;
     const userId = pid(req, "id");
@@ -5417,6 +5417,74 @@ router.delete("/erp/expiry-batches/:batchId", authenticate, requireStaff, requir
       RETURNING id
     `);
     if (!result.rows.length) return res.status(404).json({ error: "Batch not found" });
+    res.json({ ok: true });
+  } catch (err) { req.log.error(err); res.status(500).json({ error: "Internal server error" }); }
+});
+
+// ── Product extra barcodes ─────────────────────────────────────────────────
+// GET /erp/products/:id/barcodes — list additional barcodes for a product
+router.get("/erp/products/:id/barcodes", authenticate, requireStaff, requireStore, requirePermission("products", "view"), async (req: AuthRequest, res) => {
+  try {
+    const storeId = req.currentStoreId!;
+    const productId = parseInt(req.params.id!, 10);
+    if (isNaN(productId)) return res.status(400).json({ error: "Invalid product id" });
+
+    // Verify product belongs to store
+    const prod = await db.execute(sql`SELECT id FROM products WHERE id = ${productId} AND store_id = ${storeId} LIMIT 1`);
+    if (!prod.rows.length) return res.status(404).json({ error: "Product not found" });
+
+    const rows = await db.execute(sql`
+      SELECT id, barcode, created_at
+      FROM product_barcodes
+      WHERE product_id = ${productId} AND store_id = ${storeId}
+      ORDER BY created_at ASC
+    `);
+    res.json(rows.rows);
+  } catch (err) { req.log.error(err); res.status(500).json({ error: "Internal server error" }); }
+});
+
+// POST /erp/products/:id/barcodes — add a new barcode to a product
+router.post("/erp/products/:id/barcodes", authenticate, requireStaff, requireStore, requirePermission("products", "manage_barcodes"), async (req: AuthRequest, res) => {
+  try {
+    const storeId = req.currentStoreId!;
+    const productId = parseInt(req.params.id!, 10);
+    if (isNaN(productId)) return res.status(400).json({ error: "Invalid product id" });
+
+    const { barcode } = req.body as { barcode?: string };
+    if (!barcode || !String(barcode).trim()) return res.status(400).json({ error: "Barcode is required" });
+    const bc = String(barcode).trim();
+
+    // Verify product belongs to store
+    const prod = await db.execute(sql`SELECT id FROM products WHERE id = ${productId} AND store_id = ${storeId} LIMIT 1`);
+    if (!prod.rows.length) return res.status(404).json({ error: "Product not found" });
+
+    const result = await db.execute(sql`
+      INSERT INTO product_barcodes (product_id, store_id, barcode)
+      VALUES (${productId}, ${storeId}, ${bc})
+      RETURNING id, barcode, created_at
+    `);
+    res.status(201).json(result.rows[0]);
+  } catch (err: unknown) {
+    const pg = err as { code?: string };
+    if (pg.code === "23505") return res.status(409).json({ error: "Ce barcode existe déjà" });
+    req.log.error(err); res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// DELETE /erp/products/:id/barcodes/:barcodeId — remove an extra barcode
+router.delete("/erp/products/:id/barcodes/:barcodeId", authenticate, requireStaff, requireStore, requirePermission("products", "manage_barcodes"), async (req: AuthRequest, res) => {
+  try {
+    const storeId = req.currentStoreId!;
+    const productId = parseInt(req.params.id!, 10);
+    const barcodeId = parseInt(req.params.barcodeId!, 10);
+    if (isNaN(productId) || isNaN(barcodeId)) return res.status(400).json({ error: "Invalid id" });
+
+    const result = await db.execute(sql`
+      DELETE FROM product_barcodes
+      WHERE id = ${barcodeId} AND product_id = ${productId} AND store_id = ${storeId}
+      RETURNING id
+    `);
+    if (!result.rows.length) return res.status(404).json({ error: "Barcode not found" });
     res.json({ ok: true });
   } catch (err) { req.log.error(err); res.status(500).json({ error: "Internal server error" }); }
 });

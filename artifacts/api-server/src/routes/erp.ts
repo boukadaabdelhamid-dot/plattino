@@ -709,7 +709,7 @@ router.put("/erp/permissions/:userId", authenticate, requireAdmin, requireStore,
     if (!Number.isFinite(userId)) { res.status(400).json({ error: "Invalid userId" }); return; }
     const perms = req.body as { section: string; action: string; granted: boolean }[];
     if (!Array.isArray(perms) || perms.length === 0) { res.status(400).json({ error: "perms array required" }); return; }
-    const VALID_SECTIONS = new Set(["dashboard", "orders", "products", "inventory", "customers", "purchases", "settings", "caisse", "suppliers", "employees", "realtime", "attendance", "leaves", "accounting", "web_store"]);
+    const VALID_SECTIONS = new Set(["dashboard", "orders", "products", "inventory", "customers", "purchases", "settings", "caisse", "suppliers", "employees", "realtime", "attendance", "leaves", "accounting", "web_store", "payroll"]);
     const VALID_ACTIONS = new Set([
       // base actions (all modules)
       "view", "create", "edit", "delete",

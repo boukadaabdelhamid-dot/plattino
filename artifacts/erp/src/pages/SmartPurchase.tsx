@@ -13,7 +13,7 @@ import {
 import {
   ShoppingBasket, SlidersHorizontal, X, History, CheckCircle2,
   Package, Search, RefreshCw, MapPin, Phone, TrendingUp, ShoppingCart,
-  LayoutGrid, List, Ban,
+  LayoutGrid, List, Ban, Printer,
 } from "lucide-react";
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -337,6 +337,88 @@ function HistoryDrawerContent({
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+// ── Print component ───────────────────────────────────────────────────────────
+function PurchaseNeedsPrint({
+  rows, storeName, activeFilterLabels, lang,
+}: {
+  rows: NeededRow[];
+  storeName: string;
+  activeFilterLabels: string[];
+  lang: string;
+}) {
+  const today = new Date().toLocaleDateString("fr-DZ");
+  return (
+    <div id="purchase-needs-print" style={{ display: "none" }}>
+      <style>{`
+        @media print {
+          body * { visibility: hidden !important; }
+          #purchase-needs-print, #purchase-needs-print * { visibility: visible !important; }
+          #purchase-needs-print { position: fixed; inset: 0; font-family: Arial, sans-serif; font-size: 12px; color: #000; background: #fff; padding: 24px; }
+          #purchase-needs-print table { width: 100%; border-collapse: collapse; margin-top: 12px; }
+          #purchase-needs-print th { background: #1e293b; color: #fff; padding: 6px 8px; text-align: left; font-size: 11px; }
+          #purchase-needs-print td { border-bottom: 1px solid #e2e8f0; padding: 5px 8px; vertical-align: middle; }
+          #purchase-needs-print tr:nth-child(even) td { background: #f8fafc; }
+          @page { margin: 1cm; size: A4 landscape; }
+        }
+      `}</style>
+      {/* Header */}
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 8 }}>
+        <div>
+          <h2 style={{ margin: 0, fontSize: 18, fontWeight: 700 }}>Besoin d'Achats — {storeName}</h2>
+          {activeFilterLabels.length > 0 && (
+            <p style={{ margin: "4px 0 0", fontSize: 11, color: "#64748b" }}>
+              Filtres : {activeFilterLabels.join(" · ")}
+            </p>
+          )}
+        </div>
+        <div style={{ textAlign: "right", fontSize: 11, color: "#64748b" }}>
+          <div>{today}</div>
+          <div>{rows.length} produit(s)</div>
+        </div>
+      </div>
+      {/* Table */}
+      <table>
+        <thead>
+          <tr>
+            <th>Produit</th>
+            <th>Référence</th>
+            <th style={{ textAlign: "center" }}>Stock actuel</th>
+            <th style={{ textAlign: "center" }}>Min stock</th>
+            <th style={{ textAlign: "center" }}>Qté à commander</th>
+            <th style={{ textAlign: "right" }}>Prix achat (DA)</th>
+            <th>Fournisseur</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => {
+            const name = lang === "ar" && row.designation_ar ? row.designation_ar : row.designation;
+            const stock = Number(row.stock);
+            const minStock = row.min_stock != null ? Number(row.min_stock) : null;
+            const needed = minStock != null ? Math.max(1, minStock - stock) : 1;
+            const isRupture = stock === 0;
+            return (
+              <tr key={row.id}>
+                <td style={{ fontWeight: 600, maxWidth: 200 }}>{name}</td>
+                <td style={{ color: "#64748b", fontFamily: "monospace" }}>{row.reference ?? "—"}</td>
+                <td style={{ textAlign: "center" }}>
+                  <span className={isRupture ? "rupture" : "low"}>{stock}</span>
+                  {isRupture && <span style={{ fontSize: 9, marginLeft: 4, color: "#dc2626" }}>RUPTURE</span>}
+                </td>
+                <td style={{ textAlign: "center", color: "#64748b" }}>{minStock ?? "—"}</td>
+                <td style={{ textAlign: "center", fontWeight: 700 }}>{needed}</td>
+                <td style={{ textAlign: "right" }}>
+                  {row.cost_price ? Number(row.cost_price).toFixed(2) : "—"}
+                </td>
+                <td style={{ color: "#1d4ed8" }}>{row.supplier_name ?? "—"}</td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
     </div>
   );
 }
@@ -986,6 +1068,16 @@ export default function SmartPurchase() {
               )}
             </div>
             <div className="flex items-center gap-1.5">
+              {displayRows.length > 0 && (
+                <Button
+                  size="icon" variant="ghost"
+                  className="h-10 w-10 rounded-full"
+                  onClick={() => window.print()}
+                  aria-label={t("Imprimer", "طباعة")}
+                >
+                  <Printer className="h-4 w-4" />
+                </Button>
+              )}
               <Button
                 size="icon" variant="ghost"
                 className="h-10 w-10 rounded-full"
@@ -1612,6 +1704,14 @@ export default function SmartPurchase() {
         lang={lang}
         dateFrom={filterDateFrom}
         dateTo={filterDateTo}
+      />
+
+      {/* ── Hidden print document (visibility revealed via @media print CSS) ── */}
+      <PurchaseNeedsPrint
+        rows={displayRows}
+        storeName={store?.nameEn ?? store?.nameAr ?? ""}
+        activeFilterLabels={activeFilters.map((f) => f.label)}
+        lang={lang}
       />
     </div>
   );

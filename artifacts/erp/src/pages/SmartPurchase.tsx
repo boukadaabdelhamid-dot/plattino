@@ -809,18 +809,32 @@ function QuickOrderDrawer({
 function NeededListRow({
   row, lang, sortBy, isSnoozePending, isExcludePending, confirmExclude, t,
   onHistory, onOrder, onSnooze, onExcludeRequest, onExcludeConfirm, onExcludeCancel,
+  dateFrom, dateTo,
 }: {
   row: NeededRow; lang: string; sortBy: SortBy; isSnoozePending: boolean;
   isExcludePending: boolean; confirmExclude: number | null;
   t: (fr: string, ar: string) => string;
   onHistory: () => void; onOrder: () => void; onSnooze: () => void;
   onExcludeRequest: () => void; onExcludeConfirm: () => void; onExcludeCancel: () => void;
+  dateFrom: string; dateTo: string;
 }) {
   const name = lang === "ar" && row.designation_ar ? row.designation_ar : row.designation;
   const famille = lang === "ar" && row.famille_ar ? row.famille_ar : row.famille;
   const stock = Number(row.stock);
   const minStock = row.min_stock != null ? Number(row.min_stock) : null;
   const stockColor = stock === 0 ? "text-red-600" : "text-amber-600";
+
+  // Suggested order quantity
+  const minStockQty = minStock != null ? Math.max(1, minStock - stock) : null;
+  const salesQty = (() => {
+    if (Number(row.total_qty_sold) <= 0) return null;
+    const days = dateFrom && dateTo
+      ? Math.max(1, (new Date(dateTo).getTime() - new Date(dateFrom).getTime()) / 86_400_000 + 1)
+      : 30;
+    return Math.max(1, Math.ceil((Number(row.total_qty_sold) / days) * 7 * 4));
+  })();
+  const suggestedQty = salesQty ?? minStockQty;
+  const costPrice = row.cost_price ? Number(row.cost_price) : null;
 
   return (
     <div className="bg-white border rounded-xl overflow-hidden">
@@ -869,14 +883,26 @@ function NeededListRow({
           )}
         </div>
       </div>
-      {/* Bottom row: supplier + action buttons */}
+      {/* Bottom row: supplier + qty + price + action buttons */}
       <div className="flex items-center border-t">
-        <div className="flex-1 min-w-0 px-3 py-1.5">
+        <div className="flex-1 min-w-0 px-3 py-1.5 space-y-0.5">
           {row.supplier_name ? (
             <p className="text-[11px] text-blue-700 truncate font-medium">{row.supplier_name}</p>
           ) : (
             <p className="text-[11px] text-muted-foreground">—</p>
           )}
+          <div className="flex items-center gap-2 flex-wrap">
+            {suggestedQty != null && (
+              <span className="text-[10px] font-bold text-orange-700 bg-orange-50 border border-orange-200 rounded-full px-2 py-0.5 tabular-nums">
+                {t("Qté", "الكمية")} : {suggestedQty.toLocaleString("fr-DZ")}
+              </span>
+            )}
+            {costPrice != null && (
+              <span className="text-[10px] font-semibold text-slate-600 bg-slate-100 rounded-full px-2 py-0.5 tabular-nums">
+                {costPrice.toLocaleString("fr-DZ", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} DA
+              </span>
+            )}
+          </div>
         </div>
         <div className="flex shrink-0 border-l divide-x">
           <button type="button" onClick={onHistory}
@@ -1513,6 +1539,8 @@ export default function SmartPurchase() {
             onExcludeRequest={() => setConfirmExclude(row.id)}
             onExcludeConfirm={() => excludeMut.mutate(row.id)}
             onExcludeCancel={() => setConfirmExclude(null)}
+            dateFrom={filterDateFrom}
+            dateTo={filterDateTo}
           />
         ))}
       </div>

@@ -831,7 +831,7 @@ function NeededListRow({
         </div>
         {/* Name + badges */}
         <div className="flex-1 min-w-0">
-          <p className="text-sm font-semibold text-slate-800 truncate leading-tight">{name}</p>
+          <p className="text-sm font-semibold text-slate-800 line-clamp-2 leading-tight">{name}</p>
           <div className="flex items-center gap-1 mt-0.5 flex-wrap">
             {row.reference && (
               <span className="text-[10px] font-mono text-muted-foreground">{row.reference}</span>

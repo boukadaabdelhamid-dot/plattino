@@ -4858,13 +4858,22 @@ router.post("/erp/purchases/auto-min-stock", authenticate, requireStaff, require
 
     const isSelective = Array.isArray(productIds);
 
+    // Runtime validation — reject any non-integer values to prevent injection
+    if (isSelective && !productIds!.every(id => Number.isFinite(id) && Number.isInteger(id))) {
+      res.status(400).json({ error: "productIds must be an array of integers" });
+      return;
+    }
+
     // If caller sent an explicit empty array, there is nothing to update.
     if (isSelective && productIds!.length === 0) {
       res.json({ updated: 0, skipped: 0 });
       return;
     }
 
-    const idFilter     = isSelective ? sql` AND p.id = ANY(${productIds}::int[])` : sql``;
+    // Use fully-bound ARRAY[...] syntax (same pattern as products.ts) — no raw interpolation
+    const idFilter = isSelective
+      ? sql` AND p.id = ANY(ARRAY[${sql.join(productIds!.map(id => sql`${id}`), sql`, `)}]::int[])`
+      : sql``;
     const manualFilter = protectManual ? sql` AND p.min_stock IS NULL` : sql``;
 
     // Compute per-product ceiling of average monthly qty over the last 3 months,

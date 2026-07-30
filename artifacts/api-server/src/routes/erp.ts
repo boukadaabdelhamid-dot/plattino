@@ -4811,10 +4811,61 @@ router.get("/erp/purchases/filter-options", authenticate, requireStaff, requireS
   } catch (err) { req.log.error(err); res.status(500).json({ error: "Internal server error" }); }
 });
 
+// GET /erp/purchases/auto-min-stock/preview — compute suggested thresholds without applying them
+router.get("/erp/purchases/auto-min-stock/preview", authenticate, requireStaff, requireStore, requirePermission("purchases", "edit"), async (req: AuthRequest, res) => {
+  try {
+    const storeId = req.currentStoreId!;
+
+    const rows = await db.execute(sql`
+      WITH sales_3mo AS (
+        SELECT
+          oi.product_id,
+          CEIL(SUM(oi.quantity::numeric) / 3.0)::int AS suggested
+        FROM   order_items  oi
+        JOIN   orders       o  ON o.id = oi.order_id
+        WHERE  o.store_id  = ${storeId}
+          AND  o.status   NOT IN ('cancelled', 'draft')
+          AND  o.created_at >= NOW() - INTERVAL '3 months'
+        GROUP  BY oi.product_id
+        HAVING SUM(oi.quantity::numeric) > 0
+      )
+      SELECT
+        p.id            AS product_id,
+        p.name_en       AS name,
+        p.name_ar       AS name_ar,
+        p.min_stock     AS current_min_stock,
+        s.suggested     AS suggested
+      FROM   products   p
+      JOIN   sales_3mo  s ON s.product_id = p.id
+      WHERE  p.store_id  = ${storeId}
+        AND  p.is_active = true
+      ORDER BY p.name_en ASC
+    `);
+
+    res.json({ rows: rows.rows });
+  } catch (err) { req.log.error(err); res.status(500).json({ error: "Internal server error" }); }
+});
+
 // POST /erp/purchases/auto-min-stock — bulk-set min_stock = CEIL(avg monthly qty sold over 3 months)
+// Body (optional): { productIds?: number[], protectManual?: boolean }
+//   productIds    — when provided, only update these specific product IDs.
+//                   An empty array [] is treated as "apply to none" (no-op, returns 0 updated).
+//   protectManual — when true, skip products that already have a non-null min_stock
 router.post("/erp/purchases/auto-min-stock", authenticate, requireStaff, requireStore, requirePermission("purchases", "edit"), async (req: AuthRequest, res) => {
   try {
     const storeId = req.currentStoreId!;
+    const { productIds, protectManual } = req.body as { productIds?: number[]; protectManual?: boolean };
+
+    const isSelective = Array.isArray(productIds);
+
+    // If caller sent an explicit empty array, there is nothing to update.
+    if (isSelective && productIds!.length === 0) {
+      res.json({ updated: 0, skipped: 0 });
+      return;
+    }
+
+    const idFilter     = isSelective ? sql` AND p.id = ANY(${productIds}::int[])` : sql``;
+    const manualFilter = protectManual ? sql` AND p.min_stock IS NULL` : sql``;
 
     // Compute per-product ceiling of average monthly qty over the last 3 months,
     // then bulk-update min_stock only for products that have qualifying sales.
@@ -4837,19 +4888,56 @@ router.post("/erp/purchases/auto-min-stock", authenticate, requireStaff, require
        WHERE p.id       = s.product_id
          AND p.store_id = ${storeId}
          AND p.is_active = true
+         ${idFilter}
+         ${manualFilter}
       RETURNING p.id
     `);
     const updatedCount = updated.rows.length;
 
-    // Count all active products in this store to derive the skipped count
-    const totalResult = await db.execute(sql`
-      SELECT COUNT(*)::int AS cnt FROM products
-      WHERE  store_id = ${storeId} AND is_active = true
+    // Compute `skipped` relative to the scoped candidate set, not all active products.
+    // Candidate = active products that qualified for update (had sales, passed id/manual filters).
+    // We count those same candidates minus the ones actually written.
+    const candidateResult = await db.execute(sql`
+      WITH sales_3mo AS (
+        SELECT oi.product_id
+        FROM   order_items  oi
+        JOIN   orders       o  ON o.id = oi.order_id
+        WHERE  o.store_id  = ${storeId}
+          AND  o.status   NOT IN ('cancelled', 'draft')
+          AND  o.created_at >= NOW() - INTERVAL '3 months'
+        GROUP  BY oi.product_id
+        HAVING SUM(oi.quantity::numeric) > 0
+      )
+      SELECT COUNT(*)::int AS cnt
+      FROM   products p
+      JOIN   sales_3mo s ON s.product_id = p.id
+      WHERE  p.store_id  = ${storeId}
+        AND  p.is_active = true
+        ${idFilter}
+        ${manualFilter}
     `);
-    const total   = Number((totalResult.rows[0] as { cnt: number } | undefined)?.cnt ?? 0);
-    const skipped = Math.max(0, total - updatedCount);
+    const candidateCount = Number((candidateResult.rows[0] as { cnt: number } | undefined)?.cnt ?? 0);
+    const skipped = Math.max(0, candidateCount - updatedCount);
 
     res.json({ updated: updatedCount, skipped });
+  } catch (err) { req.log.error(err); res.status(500).json({ error: "Internal server error" }); }
+});
+
+// POST /erp/purchases/reset-min-stock — set min_stock = NULL for all active products in store
+router.post("/erp/purchases/reset-min-stock", authenticate, requireStaff, requireStore, requirePermission("purchases", "edit"), async (req: AuthRequest, res) => {
+  try {
+    const storeId = req.currentStoreId!;
+
+    const result = await db.execute(sql`
+      UPDATE products
+         SET min_stock = NULL
+       WHERE store_id = ${storeId}
+         AND is_active = true
+         AND min_stock IS NOT NULL
+      RETURNING id
+    `);
+
+    res.json({ reset: result.rows.length });
   } catch (err) { req.log.error(err); res.status(500).json({ error: "Internal server error" }); }
 });
 

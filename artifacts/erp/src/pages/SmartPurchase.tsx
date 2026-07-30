@@ -100,13 +100,39 @@ async function postExclude(productId: number): Promise<void> {
   if (!res.ok) throw new Error("exclude failed");
 }
 
-async function fetchAutoMinStock(): Promise<{ updated: number; skipped: number }> {
+type AutoMinStockPreviewRow = {
+  product_id: number;
+  name: string;
+  name_ar: string;
+  current_min_stock: number | null;
+  suggested: number;
+};
+
+async function fetchAutoMinStockPreview(): Promise<{ rows: AutoMinStockPreviewRow[] }> {
+  const res = await fetch(`${API_BASE}/api/erp/purchases/auto-min-stock/preview`, {
+    headers: authHeaders(),
+  });
+  if (!res.ok) throw new Error("preview failed");
+  return res.json() as Promise<{ rows: AutoMinStockPreviewRow[] }>;
+}
+
+async function fetchAutoMinStock(body: { productIds?: number[]; protectManual?: boolean } = {}): Promise<{ updated: number; skipped: number }> {
   const res = await fetch(`${API_BASE}/api/erp/purchases/auto-min-stock`, {
     method: "POST",
     headers: { ...authHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify(body),
   });
   if (!res.ok) throw new Error("auto-min-stock failed");
   return res.json() as Promise<{ updated: number; skipped: number }>;
+}
+
+async function fetchResetMinStock(): Promise<{ reset: number }> {
+  const res = await fetch(`${API_BASE}/api/erp/purchases/reset-min-stock`, {
+    method: "POST",
+    headers: { ...authHeaders(), "Content-Type": "application/json" },
+  });
+  if (!res.ok) throw new Error("reset-min-stock failed");
+  return res.json() as Promise<{ reset: number }>;
 }
 
 async function patchProductMinStock(productId: number, minStock: number | null): Promise<void> {
@@ -1396,14 +1422,57 @@ export default function SmartPurchase() {
 
   // Auto min_stock calculation
   const [autoCalcOpen, setAutoCalcOpen] = useState(false);
+  const [autoCalcPhase, setAutoCalcPhase] = useState<"idle" | "preview" | "done">("idle");
+  const [autoCalcPreview, setAutoCalcPreview] = useState<AutoMinStockPreviewRow[]>([]);
+  const [autoCalcSelected, setAutoCalcSelected] = useState<Set<number>>(new Set());
+  const [autoCalcProtectManual, setAutoCalcProtectManual] = useState(false);
   const [autoCalcResult, setAutoCalcResult] = useState<{ updated: number; skipped: number } | null>(null);
+  const [resetConfirmStep, setResetConfirmStep] = useState(0);
+  const [resetResult, setResetResult] = useState<number | null>(null);
+
+  const autoCalcPreviewMut = useMutation({
+    mutationFn: fetchAutoMinStockPreview,
+    onSuccess: (data) => {
+      const rows = data.rows;
+      setAutoCalcPreview(rows);
+      // Default: all selected; if protectManual is on, pre-deselect rows with a manual value
+      const sel = new Set(rows.map((r) => r.product_id));
+      setAutoCalcSelected(sel);
+      setAutoCalcPhase("preview");
+    },
+  });
+
   const autoCalcMut = useMutation({
-    mutationFn: fetchAutoMinStock,
+    mutationFn: (body: { productIds: number[]; protectManual: boolean }) => fetchAutoMinStock(body),
     onSuccess: (data) => {
       setAutoCalcResult(data);
+      setAutoCalcPhase("done");
       void qc.invalidateQueries({ queryKey: ["smart-purchase-needed"] });
     },
   });
+
+  const resetMinStockMut = useMutation({
+    mutationFn: fetchResetMinStock,
+    onSuccess: (data) => {
+      setResetResult(data.reset);
+      setAutoCalcPhase("done");
+      void qc.invalidateQueries({ queryKey: ["smart-purchase-needed"] });
+    },
+  });
+
+  function openAutoCalcDrawer() {
+    setAutoCalcPhase("idle");
+    setAutoCalcPreview([]);
+    setAutoCalcSelected(new Set());
+    setAutoCalcProtectManual(false);
+    setAutoCalcResult(null);
+    setResetConfirmStep(0);
+    setResetResult(null);
+    autoCalcPreviewMut.reset();
+    autoCalcMut.reset();
+    resetMinStockMut.reset();
+    setAutoCalcOpen(true);
+  }
 
   const snoozeMut = useMutation({
     mutationFn: (productId: number) => postSnooze(productId),
@@ -1506,7 +1575,7 @@ export default function SmartPurchase() {
               <Button
                 size="icon" variant="ghost"
                 className="h-10 w-10 rounded-full text-amber-600 hover:text-amber-700 hover:bg-amber-50"
-                onClick={() => { setAutoCalcResult(null); setAutoCalcOpen(true); }}
+                onClick={openAutoCalcDrawer}
                 aria-label={t("Calculer seuils auto", "حساب الحدود تلقائياً")}
               >
                 <Zap className="h-4 w-4" />
@@ -2357,9 +2426,9 @@ export default function SmartPurchase() {
       />
 
       {/* ── Auto min_stock calculation drawer ── */}
-      <Drawer open={autoCalcOpen} onOpenChange={(v) => { setAutoCalcOpen(v); if (!v) autoCalcMut.reset(); }}>
-        <DrawerContent className="max-h-[60vh]">
-          <DrawerHeader className="border-b pb-3">
+      <Drawer open={autoCalcOpen} onOpenChange={(v) => { setAutoCalcOpen(v); }}>
+        <DrawerContent className="max-h-[90vh] flex flex-col">
+          <DrawerHeader className="border-b pb-3 shrink-0">
             <DrawerTitle className="flex items-center gap-2 text-base font-semibold">
               <Zap className="h-4 w-4 text-amber-500" />
               {t("Calcul automatique des seuils", "الحساب التلقائي للحدود الدنيا")}
@@ -2369,33 +2438,47 @@ export default function SmartPurchase() {
             </DrawerClose>
           </DrawerHeader>
 
-          <div className="px-4 py-5 space-y-4">
-            {autoCalcResult ? (
-              /* ── Success state ── */
+          <div className="flex-1 overflow-y-auto px-4 py-5 space-y-4">
+            {/* ── Phase: done ── */}
+            {autoCalcPhase === "done" && (
               <div className="flex flex-col items-center gap-3 py-4 text-center">
                 <div className="w-14 h-14 rounded-full bg-emerald-100 flex items-center justify-center">
                   <CheckCircle2 className="h-7 w-7 text-emerald-600" />
                 </div>
-                <p className="font-semibold text-gray-800">
-                  {t("Seuils mis à jour !", "تم تحديث الحدود!")}
-                </p>
-                <div className="flex gap-4 text-sm">
-                  <div className="text-center">
-                    <p className="text-2xl font-extrabold text-emerald-700">{autoCalcResult.updated}</p>
-                    <p className="text-xs text-muted-foreground">{t("mis à jour", "تم تحديثها")}</p>
-                  </div>
-                  <div className="text-center">
-                    <p className="text-2xl font-extrabold text-slate-400">{autoCalcResult.skipped}</p>
-                    <p className="text-xs text-muted-foreground">{t("ignorés (0 ventes)", "تُجوهلت (0 مبيعات)")}</p>
-                  </div>
-                </div>
+                {resetResult != null ? (
+                  <>
+                    <p className="font-semibold text-gray-800">
+                      {t("Seuils effacés !", "تم مسح الحدود!")}
+                    </p>
+                    <p className="text-2xl font-extrabold text-slate-700">{resetResult}</p>
+                    <p className="text-xs text-muted-foreground">{t("seuil(s) remis à zéro", "حد(ود) تم إعادة ضبطها")}</p>
+                  </>
+                ) : autoCalcResult != null ? (
+                  <>
+                    <p className="font-semibold text-gray-800">
+                      {t("Seuils mis à jour !", "تم تحديث الحدود!")}
+                    </p>
+                    <div className="flex gap-4 text-sm">
+                      <div className="text-center">
+                        <p className="text-2xl font-extrabold text-emerald-700">{autoCalcResult.updated}</p>
+                        <p className="text-xs text-muted-foreground">{t("mis à jour", "تم تحديثها")}</p>
+                      </div>
+                      <div className="text-center">
+                        <p className="text-2xl font-extrabold text-slate-400">{autoCalcResult.skipped}</p>
+                        <p className="text-xs text-muted-foreground">{t("ignorés", "تُجوهلت")}</p>
+                      </div>
+                    </div>
+                  </>
+                ) : null}
                 <Button variant="outline" size="sm" className="mt-1 rounded-xl"
                   onClick={() => setAutoCalcOpen(false)}>
                   {t("Fermer", "إغلاق")}
                 </Button>
               </div>
-            ) : (
-              /* ── Confirmation state ── */
+            )}
+
+            {/* ── Phase: idle ── */}
+            {autoCalcPhase === "idle" && (
               <>
                 <div className="rounded-xl bg-amber-50 border border-amber-200 p-3 space-y-1.5 text-sm">
                   <p className="font-semibold text-amber-800">
@@ -2415,22 +2498,211 @@ export default function SmartPurchase() {
                   </p>
                 </div>
 
+                {autoCalcPreviewMut.isError && (
+                  <p className="text-sm text-red-600 bg-red-50 rounded-xl px-3 py-2">
+                    {t("Erreur inattendue. Réessayez.", "خطأ غير متوقع. حاول مجدداً.")}
+                  </p>
+                )}
+                {resetMinStockMut.isError && (
+                  <p className="text-sm text-red-600 bg-red-50 rounded-xl px-3 py-2">
+                    {t("Erreur lors de la réinitialisation.", "خطأ أثناء إعادة الضبط.")}
+                  </p>
+                )}
+
+                <Button
+                  className="w-full h-12 rounded-xl text-base bg-amber-500 hover:bg-amber-600 text-white gap-2"
+                  disabled={autoCalcPreviewMut.isPending}
+                  onClick={() => autoCalcPreviewMut.mutate()}
+                >
+                  <Search className="h-4 w-4" />
+                  {autoCalcPreviewMut.isPending
+                    ? t("Calcul en cours…", "جارٍ الحساب…")
+                    : t("Prévisualiser les seuils", "معاينة الحدود")}
+                </Button>
+
+                {/* Effacer les seuils — two-tap confirm */}
+                {resetConfirmStep === 0 ? (
+                  <Button
+                    variant="outline"
+                    className="w-full h-10 rounded-xl text-sm text-red-600 border-red-200 hover:bg-red-50 gap-2"
+                    disabled={resetMinStockMut.isPending}
+                    onClick={() => setResetConfirmStep(1)}
+                  >
+                    <Trash2 className="h-4 w-4" />
+                    {t("Effacer les seuils", "مسح الحدود الدنيا")}
+                  </Button>
+                ) : (
+                  <div className="rounded-xl border border-red-200 bg-red-50 p-3 space-y-2">
+                    <p className="text-sm text-red-700 font-medium text-center">
+                      {t("Remettre TOUS les seuils à zéro ?", "هل تريد إعادة ضبط جميع الحدود؟")}
+                    </p>
+                    <div className="flex gap-2">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="flex-1 rounded-xl"
+                        onClick={() => setResetConfirmStep(0)}
+                        disabled={resetMinStockMut.isPending}
+                      >
+                        {t("Annuler", "إلغاء")}
+                      </Button>
+                      <Button
+                        size="sm"
+                        className="flex-1 rounded-xl bg-red-600 hover:bg-red-700 text-white gap-1"
+                        disabled={resetMinStockMut.isPending}
+                        onClick={() => { setResetConfirmStep(0); resetMinStockMut.mutate(); }}
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                        {resetMinStockMut.isPending
+                          ? t("Effacement…", "جارٍ المسح…")
+                          : t("Confirmer", "تأكيد")}
+                      </Button>
+                    </div>
+                  </div>
+                )}
+              </>
+            )}
+
+            {/* ── Phase: preview ── */}
+            {autoCalcPhase === "preview" && (
+              <>
+                {/* Protect manual toggle */}
+                <div className="flex items-center justify-between rounded-xl border bg-slate-50 px-3 py-2.5">
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium text-slate-700">
+                      {t("Protéger les valeurs manuelles", "حماية القيم اليدوية")}
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                      {t("Ignorer les produits déjà configurés", "تجاهل المنتجات المضبوطة مسبقاً")}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={autoCalcProtectManual}
+                    onClick={() => {
+                      const next = !autoCalcProtectManual;
+                      setAutoCalcProtectManual(next);
+                      if (next) {
+                        // Deselect rows that have a manual value already
+                        setAutoCalcSelected((prev) => {
+                          const newSet = new Set(prev);
+                          autoCalcPreview.forEach((r) => {
+                            if (r.current_min_stock != null) newSet.delete(r.product_id);
+                          });
+                          return newSet;
+                        });
+                      } else {
+                        // Re-select all
+                        setAutoCalcSelected(new Set(autoCalcPreview.map((r) => r.product_id)));
+                      }
+                    }}
+                    className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors shrink-0 ml-3 ${
+                      autoCalcProtectManual ? "bg-amber-500" : "bg-gray-300"
+                    }`}
+                  >
+                    <span className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${
+                      autoCalcProtectManual ? "translate-x-6" : "translate-x-1"
+                    }`} />
+                  </button>
+                </div>
+
+                {/* Select all / deselect all */}
+                <div className="flex items-center justify-between">
+                  <p className="text-xs text-muted-foreground">
+                    {autoCalcSelected.size} / {autoCalcPreview.length} {t("sélectionnés", "محدد")}
+                  </p>
+                  <div className="flex gap-2">
+                    <button type="button" className="text-xs text-blue-600 hover:underline"
+                      onClick={() => setAutoCalcSelected(new Set(autoCalcPreview.map((r) => r.product_id)))}>
+                      {t("Tout", "الكل")}
+                    </button>
+                    <span className="text-xs text-muted-foreground">·</span>
+                    <button type="button" className="text-xs text-blue-600 hover:underline"
+                      onClick={() => setAutoCalcSelected(new Set())}>
+                      {t("Aucun", "لا شيء")}
+                    </button>
+                  </div>
+                </div>
+
+                {/* Preview rows */}
+                {autoCalcPreview.length === 0 ? (
+                  <div className="text-center py-8 text-muted-foreground text-sm">
+                    {t("Aucun produit avec des ventes sur 3 mois.", "لا توجد منتجات بمبيعات خلال 3 أشهر.")}
+                  </div>
+                ) : (
+                  <div className="space-y-1 rounded-xl border overflow-hidden">
+                    {autoCalcPreview.map((row) => {
+                      const isSelected = autoCalcSelected.has(row.product_id);
+                      const hasManual = row.current_min_stock != null;
+                      const name = lang === "ar" && row.name_ar ? row.name_ar : row.name;
+                      return (
+                        <label
+                          key={row.product_id}
+                          className={`flex items-center gap-3 px-3 py-2.5 cursor-pointer transition-colors ${
+                            isSelected ? "bg-white" : "bg-slate-50 opacity-60"
+                          } border-b last:border-b-0`}
+                        >
+                          <input
+                            type="checkbox"
+                            className="h-4 w-4 rounded border-gray-300 text-amber-500 shrink-0"
+                            checked={isSelected}
+                            onChange={(e) => {
+                              setAutoCalcSelected((prev) => {
+                                const next = new Set(prev);
+                                if (e.target.checked) next.add(row.product_id);
+                                else next.delete(row.product_id);
+                                return next;
+                              });
+                            }}
+                          />
+                          <div className="flex-1 min-w-0">
+                            <p className="text-sm font-medium truncate">{name}</p>
+                          </div>
+                          <div className="flex items-center gap-2 shrink-0 text-xs tabular-nums">
+                            <span className={`${hasManual ? "text-slate-500" : "text-slate-400"} min-w-[2rem] text-right`}>
+                              {row.current_min_stock != null ? row.current_min_stock : "—"}
+                            </span>
+                            <span className="text-slate-300">→</span>
+                            <span className="font-bold text-amber-700 min-w-[2rem] text-left">{row.suggested}</span>
+                          </div>
+                        </label>
+                      );
+                    })}
+                  </div>
+                )}
+
                 {autoCalcMut.isError && (
                   <p className="text-sm text-red-600 bg-red-50 rounded-xl px-3 py-2">
                     {t("Erreur inattendue. Réessayez.", "خطأ غير متوقع. حاول مجدداً.")}
                   </p>
                 )}
 
-                <Button
-                  className="w-full h-12 rounded-xl text-base bg-amber-500 hover:bg-amber-600 text-white gap-2"
-                  disabled={autoCalcMut.isPending}
-                  onClick={() => autoCalcMut.mutate()}
-                >
-                  <Zap className="h-4 w-4" />
-                  {autoCalcMut.isPending
-                    ? t("Calcul en cours…", "جارٍ الحساب…")
-                    : t("Calculer et appliquer", "احسب وطبّق")}
-                </Button>
+                <div className="flex gap-2 pt-1 shrink-0">
+                  <Button
+                    variant="outline"
+                    className="flex-1 h-12 rounded-xl"
+                    onClick={() => setAutoCalcPhase("idle")}
+                    disabled={autoCalcMut.isPending}
+                  >
+                    {t("Retour", "رجوع")}
+                  </Button>
+                  <Button
+                    className="flex-1 h-12 rounded-xl text-base bg-amber-500 hover:bg-amber-600 text-white gap-2"
+                    disabled={autoCalcMut.isPending || autoCalcSelected.size === 0}
+                    onClick={() =>
+                      autoCalcMut.mutate({
+                        productIds: Array.from(autoCalcSelected),
+                        protectManual: autoCalcProtectManual,
+                      })
+                    }
+                  >
+                    <Zap className="h-4 w-4" />
+                    {autoCalcMut.isPending
+                      ? t("Application…", "جارٍ التطبيق…")
+                      : t(`Appliquer (${autoCalcSelected.size})`, `تطبيق (${autoCalcSelected.size})`)}
+                  </Button>
+                </div>
               </>
             )}
           </div>

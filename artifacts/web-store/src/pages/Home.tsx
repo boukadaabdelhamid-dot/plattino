@@ -40,7 +40,7 @@ export default function Home() {
       ]
     : allProducts;
 
-  const heroImage = bannerUrl ||
+  const heroImage = resolveImg(bannerUrl) ||
     "https://images.unsplash.com/photo-1556228578-0d85b1a4d571?q=80&w=2000&auto=format&fit=crop";
 
   return (

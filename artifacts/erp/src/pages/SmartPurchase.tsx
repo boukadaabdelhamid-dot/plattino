@@ -16,7 +16,7 @@ import {
   ShoppingBasket, SlidersHorizontal, X, History, CheckCircle2,
   Package, Search, RefreshCw, MapPin, Phone, TrendingUp, ShoppingCart,
   LayoutGrid, List, Ban, Printer, MessageSquarePlus, ThumbsUp, Trash2,
-  Lightbulb, Pencil,
+  Lightbulb, Pencil, Zap,
 } from "lucide-react";
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -98,6 +98,24 @@ async function postExclude(productId: number): Promise<void> {
     headers: { ...authHeaders(), "Content-Type": "application/json" },
   });
   if (!res.ok) throw new Error("exclude failed");
+}
+
+async function fetchAutoMinStock(): Promise<{ updated: number; skipped: number }> {
+  const res = await fetch(`${API_BASE}/api/erp/purchases/auto-min-stock`, {
+    method: "POST",
+    headers: { ...authHeaders(), "Content-Type": "application/json" },
+  });
+  if (!res.ok) throw new Error("auto-min-stock failed");
+  return res.json() as Promise<{ updated: number; skipped: number }>;
+}
+
+async function patchProductMinStock(productId: number, minStock: number | null): Promise<void> {
+  const res = await fetch(`${API_BASE}/api/products/${productId}`, {
+    method: "PUT",
+    headers: { ...authHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify({ minStock }),
+  });
+  if (!res.ok) throw new Error("patch min_stock failed");
 }
 
 type FilterOptions = {
@@ -275,6 +293,74 @@ function localDateStr(d: Date): string {
   const m = String(d.getMonth() + 1).padStart(2, "0");
   const day = String(d.getDate()).padStart(2, "0");
   return `${y}-${m}-${day}`;
+}
+
+// ── Inline min_stock editor ───────────────────────────────────────────────────
+function InlineMinStockEdit({
+  productId, minStock, t,
+}: {
+  productId: number;
+  minStock: number | null;
+  t: (fr: string, ar: string) => string;
+}) {
+  const qc = useQueryClient();
+  const [editing, setEditing] = useState(false);
+  const [value, setValue] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  const startEdit = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    setValue(minStock != null ? String(minStock) : "");
+    setEditing(true);
+  };
+
+  const save = async () => {
+    const trimmed = value.trim();
+    const parsed = trimmed === "" ? null : parseInt(trimmed, 10);
+    if (parsed !== null && (isNaN(parsed) || parsed < 0)) { setEditing(false); return; }
+    setSaving(true);
+    try {
+      await patchProductMinStock(productId, parsed);
+      void qc.invalidateQueries({ queryKey: ["smart-purchase-needed"] });
+    } finally {
+      setSaving(false);
+      setEditing(false);
+    }
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === "Enter") void save();
+    if (e.key === "Escape") setEditing(false);
+  };
+
+  if (editing) {
+    return (
+      <input
+        type="number"
+        min="0"
+        step="1"
+        autoFocus
+        className="w-14 h-5 text-[10px] border border-blue-400 rounded px-1 tabular-nums focus:outline-none"
+        value={value}
+        onChange={(e) => setValue(e.target.value)}
+        onBlur={() => void save()}
+        onKeyDown={handleKeyDown}
+        disabled={saving}
+      />
+    );
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={startEdit}
+      className="flex items-center gap-0.5 group text-[10px] text-muted-foreground hover:text-slate-700 transition-colors"
+      title={t("Modifier le seuil min", "تعديل الحد الأدنى")}
+    >
+      <span className="tabular-nums">{minStock != null ? minStock.toLocaleString("fr-DZ") : t("— Définir", "— تحديد")}</span>
+      <Pencil className="h-2.5 w-2.5 opacity-0 group-hover:opacity-60 transition-opacity shrink-0" />
+    </button>
+  );
 }
 
 // Stock bar: shows current vs min_stock visually
@@ -921,10 +1007,13 @@ function NeededListRow({
           </div>
         </div>
         {/* Stock */}
-        <div className="shrink-0 text-right min-w-[44px]">
+        <div className="shrink-0 text-right min-w-[52px]">
           <span className={`text-xs font-bold tabular-nums ${stockColor}`}>{stock.toLocaleString("fr-DZ")}</span>
-          {minStock != null && <span className="text-[10px] text-muted-foreground">/{minStock.toLocaleString("fr-DZ")}</span>}
           {stock === 0 && <div className="text-[9px] font-semibold text-red-600 leading-tight">RUPTURE</div>}
+          <div className="flex items-center justify-end gap-0.5">
+            <span className="text-[9px] text-muted-foreground">/</span>
+            <InlineMinStockEdit productId={row.id} minStock={minStock} t={t} />
+          </div>
         </div>
         {/* Benefice / qty */}
         <div className="shrink-0 text-right min-w-[56px]">
@@ -1305,6 +1394,17 @@ export default function SmartPurchase() {
     staleTime: 30_000,
   });
 
+  // Auto min_stock calculation
+  const [autoCalcOpen, setAutoCalcOpen] = useState(false);
+  const [autoCalcResult, setAutoCalcResult] = useState<{ updated: number; skipped: number } | null>(null);
+  const autoCalcMut = useMutation({
+    mutationFn: fetchAutoMinStock,
+    onSuccess: (data) => {
+      setAutoCalcResult(data);
+      void qc.invalidateQueries({ queryKey: ["smart-purchase-needed"] });
+    },
+  });
+
   const snoozeMut = useMutation({
     mutationFn: (productId: number) => postSnooze(productId),
     onMutate: (productId) => {
@@ -1400,6 +1500,16 @@ export default function SmartPurchase() {
                     {suggestionCount > 9 ? "9+" : suggestionCount}
                   </span>
                 )}
+              </Button>
+
+              {/* Auto-calculate min_stock thresholds */}
+              <Button
+                size="icon" variant="ghost"
+                className="h-10 w-10 rounded-full text-amber-600 hover:text-amber-700 hover:bg-amber-50"
+                onClick={() => { setAutoCalcResult(null); setAutoCalcOpen(true); }}
+                aria-label={t("Calculer seuils auto", "حساب الحدود تلقائياً")}
+              >
+                <Zap className="h-4 w-4" />
               </Button>
 
               {(ruptureCount + lowCount) > 0 && stockFilter !== "suggestions" && (
@@ -1834,6 +1944,10 @@ export default function SmartPurchase() {
                       {t("Stock", "المخزون")}
                     </p>
                     <StockBar stock={Number(row.stock)} minStock={row.min_stock != null ? Number(row.min_stock) : null} />
+                    <div className="flex items-center gap-1 mt-1">
+                      <span className="text-[9px] text-muted-foreground/70">{t("Min:", "الحد:")}</span>
+                      <InlineMinStockEdit productId={row.id} minStock={row.min_stock != null ? Number(row.min_stock) : null} t={t} />
+                    </div>
                   </div>
                   <div>
                     {sortBy === "qty_sold" ? (
@@ -2241,6 +2355,87 @@ export default function SmartPurchase() {
         dateFrom={filterDateFrom}
         dateTo={filterDateTo}
       />
+
+      {/* ── Auto min_stock calculation drawer ── */}
+      <Drawer open={autoCalcOpen} onOpenChange={(v) => { setAutoCalcOpen(v); if (!v) autoCalcMut.reset(); }}>
+        <DrawerContent className="max-h-[60vh]">
+          <DrawerHeader className="border-b pb-3">
+            <DrawerTitle className="flex items-center gap-2 text-base font-semibold">
+              <Zap className="h-4 w-4 text-amber-500" />
+              {t("Calcul automatique des seuils", "الحساب التلقائي للحدود الدنيا")}
+            </DrawerTitle>
+            <DrawerClose className="absolute right-4 top-4">
+              <X className="h-5 w-5 text-muted-foreground" />
+            </DrawerClose>
+          </DrawerHeader>
+
+          <div className="px-4 py-5 space-y-4">
+            {autoCalcResult ? (
+              /* ── Success state ── */
+              <div className="flex flex-col items-center gap-3 py-4 text-center">
+                <div className="w-14 h-14 rounded-full bg-emerald-100 flex items-center justify-center">
+                  <CheckCircle2 className="h-7 w-7 text-emerald-600" />
+                </div>
+                <p className="font-semibold text-gray-800">
+                  {t("Seuils mis à jour !", "تم تحديث الحدود!")}
+                </p>
+                <div className="flex gap-4 text-sm">
+                  <div className="text-center">
+                    <p className="text-2xl font-extrabold text-emerald-700">{autoCalcResult.updated}</p>
+                    <p className="text-xs text-muted-foreground">{t("mis à jour", "تم تحديثها")}</p>
+                  </div>
+                  <div className="text-center">
+                    <p className="text-2xl font-extrabold text-slate-400">{autoCalcResult.skipped}</p>
+                    <p className="text-xs text-muted-foreground">{t("ignorés (0 ventes)", "تُجوهلت (0 مبيعات)")}</p>
+                  </div>
+                </div>
+                <Button variant="outline" size="sm" className="mt-1 rounded-xl"
+                  onClick={() => setAutoCalcOpen(false)}>
+                  {t("Fermer", "إغلاق")}
+                </Button>
+              </div>
+            ) : (
+              /* ── Confirmation state ── */
+              <>
+                <div className="rounded-xl bg-amber-50 border border-amber-200 p-3 space-y-1.5 text-sm">
+                  <p className="font-semibold text-amber-800">
+                    {t("Formule utilisée", "الصيغة المستخدمة")}
+                  </p>
+                  <p className="text-amber-700 text-xs leading-relaxed">
+                    {t(
+                      "Seuil min = ⌈ ventes des 3 derniers mois / 3 ⌉  (arrondi au supérieur)",
+                      "الحد الأدنى = ⌈ مبيعات آخر 3 أشهر ÷ 3 ⌉  (تقريب للأعلى)"
+                    )}
+                  </p>
+                  <p className="text-amber-600 text-xs">
+                    {t(
+                      "Les produits sans ventes sur cette période sont ignorés.",
+                      "المنتجات التي لم تُباع خلال هذه الفترة يتم تجاهلها."
+                    )}
+                  </p>
+                </div>
+
+                {autoCalcMut.isError && (
+                  <p className="text-sm text-red-600 bg-red-50 rounded-xl px-3 py-2">
+                    {t("Erreur inattendue. Réessayez.", "خطأ غير متوقع. حاول مجدداً.")}
+                  </p>
+                )}
+
+                <Button
+                  className="w-full h-12 rounded-xl text-base bg-amber-500 hover:bg-amber-600 text-white gap-2"
+                  disabled={autoCalcMut.isPending}
+                  onClick={() => autoCalcMut.mutate()}
+                >
+                  <Zap className="h-4 w-4" />
+                  {autoCalcMut.isPending
+                    ? t("Calcul en cours…", "جارٍ الحساب…")
+                    : t("Calculer et appliquer", "احسب وطبّق")}
+                </Button>
+              </>
+            )}
+          </div>
+        </DrawerContent>
+      </Drawer>
 
       {/* ── Hidden print document (visibility revealed via @media print CSS) ── */}
       <PurchaseNeedsPrint

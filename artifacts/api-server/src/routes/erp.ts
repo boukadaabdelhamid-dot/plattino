@@ -4811,6 +4811,48 @@ router.get("/erp/purchases/filter-options", authenticate, requireStaff, requireS
   } catch (err) { req.log.error(err); res.status(500).json({ error: "Internal server error" }); }
 });
 
+// POST /erp/purchases/auto-min-stock — bulk-set min_stock = CEIL(avg monthly qty sold over 3 months)
+router.post("/erp/purchases/auto-min-stock", authenticate, requireStaff, requireStore, requirePermission("purchases", "edit"), async (req: AuthRequest, res) => {
+  try {
+    const storeId = req.currentStoreId!;
+
+    // Compute per-product ceiling of average monthly qty over the last 3 months,
+    // then bulk-update min_stock only for products that have qualifying sales.
+    const updated = await db.execute(sql`
+      WITH sales_3mo AS (
+        SELECT
+          oi.product_id,
+          CEIL(SUM(oi.quantity::numeric) / 3.0)::int AS monthly_avg
+        FROM   order_items  oi
+        JOIN   orders       o  ON o.id = oi.order_id
+        WHERE  o.store_id  = ${storeId}
+          AND  o.status   NOT IN ('cancelled', 'draft')
+          AND  o.created_at >= NOW() - INTERVAL '3 months'
+        GROUP  BY oi.product_id
+        HAVING SUM(oi.quantity::numeric) > 0
+      )
+      UPDATE products p
+         SET min_stock = s.monthly_avg
+        FROM sales_3mo s
+       WHERE p.id       = s.product_id
+         AND p.store_id = ${storeId}
+         AND p.is_active = true
+      RETURNING p.id
+    `);
+    const updatedCount = updated.rows.length;
+
+    // Count all active products in this store to derive the skipped count
+    const totalResult = await db.execute(sql`
+      SELECT COUNT(*)::int AS cnt FROM products
+      WHERE  store_id = ${storeId} AND is_active = true
+    `);
+    const total   = Number((totalResult.rows[0] as { cnt: number } | undefined)?.cnt ?? 0);
+    const skipped = Math.max(0, total - updatedCount);
+
+    res.json({ updated: updatedCount, skipped });
+  } catch (err) { req.log.error(err); res.status(500).json({ error: "Internal server error" }); }
+});
+
 // POST /erp/purchases/snooze/:productId — mark a product as "bought", hide for 24 h
 router.post("/erp/purchases/snooze/:productId", authenticate, requireStaff, requireStore, requirePermission("purchases", "edit"), async (req: AuthRequest, res) => {
   try {

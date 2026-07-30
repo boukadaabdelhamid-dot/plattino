@@ -1283,6 +1283,7 @@ export default function SmartPurchase() {
   const {
     data: neededPages,
     isLoading,
+    isPending,
     isFetchingNextPage,
     hasNextPage,
     fetchNextPage,
@@ -1738,7 +1739,7 @@ export default function SmartPurchase() {
         )}
 
         {/* Product list — hidden when in suggestions tab */}
-        {stockFilter !== "suggestions" && isLoading && (
+        {stockFilter !== "suggestions" && isPending && (
           [...Array(5)].map((_, i) => (
             <div key={i} className="rounded-2xl bg-white border p-4 shadow-sm space-y-3">
               <Skeleton className="h-5 w-3/4" />
@@ -1748,15 +1749,27 @@ export default function SmartPurchase() {
           ))
         )}
 
-        {stockFilter !== "suggestions" && !isLoading && displayRows.length === 0 && (
+        {stockFilter !== "suggestions" && !isPending && displayRows.length === 0 && (
           <div className="text-center py-20 space-y-3">
             <div className="w-16 h-16 rounded-full bg-emerald-100 flex items-center justify-center mx-auto">
               <CheckCircle2 className="h-8 w-8 text-emerald-600" />
             </div>
-            <p className="font-semibold text-gray-700">{t("Tout est en stock !", "المخزون مكتمل!")}</p>
-            <p className="text-sm text-muted-foreground">
-              {t("Aucun produit nécessite d'achat en ce moment.", "لا يوجد منتج يحتاج إلى شراء الآن.")}
-            </p>
+            {stockFilter === "rupture" ? (
+              <>
+                <p className="font-semibold text-gray-700">{t("Aucun produit en rupture de stock", "لا يوجد منتج نافد المخزون")}</p>
+                <p className="text-sm text-muted-foreground">{t("Tous les produits ont du stock en ce moment.", "كل المنتجات متوفرة حالياً.")}</p>
+              </>
+            ) : stockFilter === "low" ? (
+              <>
+                <p className="font-semibold text-gray-700">{t("Aucun produit à stock faible", "لا يوجد منتج بمخزون منخفض")}</p>
+                <p className="text-sm text-muted-foreground">{t("Aucun produit n'est sous son seuil minimum en ce moment.", "لا يوجد منتج تحت الحد الأدنى حالياً.")}</p>
+              </>
+            ) : (
+              <>
+                <p className="font-semibold text-gray-700">{t("Tout est en stock !", "المخزون مكتمل!")}</p>
+                <p className="text-sm text-muted-foreground">{t("Aucun produit nécessite d'achat en ce moment.", "لا يوجد منتج يحتاج إلى شراء الآن.")}</p>
+              </>
+            )}
           </div>
         )}
 

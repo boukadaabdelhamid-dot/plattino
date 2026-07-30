@@ -4627,31 +4627,39 @@ router.delete("/erp/staff/:id", authenticate, requireAdmin, async (req: AuthRequ
 });
 
 // ─── Smart Purchase ──────────────────────────────────────────────────────────
-// GET /erp/purchases/needed — low-stock products sorted by profit or qty sold
-// sortBy: "profit" (default) | "qty_sold"
+// GET /erp/purchases/needed — paginated low-stock products sorted by profit or qty sold
+// Query params: sortBy ("profit"|"qty_sold"), stockFilter ("all"|"rupture"|"low"),
+//               limit (default 10, max 500), offset (default 0),
+//               supplierId, familyId, brandId, supplierCity, search, dateFrom, dateTo
+// Response: { rows: NeededRow[], ruptureTotal: number, lowTotal: number }
 router.get("/erp/purchases/needed", authenticate, requireStaff, requireStore, requirePermission("purchases", "view"), async (req: AuthRequest, res) => {
   try {
     const storeId = req.currentStoreId!;
-    const { supplierId, familyId, brandId, supplierCity, search, sortBy, dateFrom, dateTo } = req.query as Record<string, string | undefined>;
+    const { supplierId, familyId, brandId, supplierCity, search, sortBy, dateFrom, dateTo,
+            stockFilter: sfParam, limit: limitStr, offset: offsetStr } = req.query as Record<string, string | undefined>;
     const orderByQty = sortBy === "qty_sold";
+    const PAGE_SIZE  = 10;
+    const limit  = Math.min(500, Math.max(1, parseInt(limitStr  ?? String(PAGE_SIZE), 10) || PAGE_SIZE));
+    const offset = Math.max(0,               parseInt(offsetStr ?? "0",                10) || 0);
+    const sf     = sfParam === "rupture" ? "rupture" : sfParam === "low" ? "low" : "all";
+    const stockSql = sf === "rupture" ? sql` AND br.stock = 0`
+                   : sf === "low"     ? sql` AND br.stock > 0`
+                   : sql``;
 
-    const supplierFilter  = supplierId   ? sql` AND last_sup.supplier_id = ${parseInt(supplierId, 10)}`                          : sql``;
-    const familyFilter    = familyId     ? sql` AND p.family_id = ${parseInt(familyId, 10)}`                                     : sql``;
-    const brandFilter     = brandId      ? sql` AND p.brand_id = ${parseInt(brandId, 10)}`                                       : sql``;
-    const cityFilter      = supplierCity ? sql` AND lower(s.address) LIKE ${`%${supplierCity.toLowerCase()}%`}`                  : sql``;
-    const searchFilter    = search       ? sql` AND (lower(p.name_en) LIKE ${`%${search.toLowerCase()}%`} OR lower(p.name_ar) LIKE ${`%${search.toLowerCase()}%`} OR lower(COALESCE(p.reference,'')) LIKE ${`%${search.toLowerCase()}%`})` : sql``;
-    // Date range filter applied to the sales aggregation (limits profit & qty to the chosen period)
-    const dateFilter      = (dateFrom && dateTo)
+    const supplierFilter = supplierId   ? sql` AND ls.supplier_id = ${parseInt(supplierId, 10)}`                                                                                                                                            : sql``;
+    const familyFilter   = familyId     ? sql` AND p.family_id = ${parseInt(familyId, 10)}`                                                                                                                                                 : sql``;
+    const brandFilter    = brandId      ? sql` AND p.brand_id = ${parseInt(brandId, 10)}`                                                                                                                                                   : sql``;
+    const cityFilter     = supplierCity ? sql` AND lower(sup.address) LIKE ${`%${supplierCity.toLowerCase()}%`}`                                                                                                                             : sql``;
+    const searchFilter   = search       ? sql` AND (lower(p.name_en) LIKE ${`%${search.toLowerCase()}%`} OR lower(p.name_ar) LIKE ${`%${search.toLowerCase()}%`} OR lower(COALESCE(p.reference,'')) LIKE ${`%${search.toLowerCase()}%`})` : sql``;
+    const dateFilter     = (dateFrom && dateTo)
       ? sql` AND o.created_at BETWEEN ${dateFrom}::timestamp AND (${dateTo}::timestamp + INTERVAL '1 day')`
-      : dateFrom
-        ? sql` AND o.created_at >= ${dateFrom}::timestamp`
-        : dateTo
-          ? sql` AND o.created_at < (${dateTo}::timestamp + INTERVAL '1 day')`
-          : sql``;
+      : dateFrom ? sql` AND o.created_at >= ${dateFrom}::timestamp`
+      : dateTo   ? sql` AND o.created_at < (${dateTo}::timestamp + INTERVAL '1 day')`
+      : sql``;
 
-    // ── Optimised query: pre-aggregated CTEs replace per-row LATERAL subqueries ──
-    // Before: two LATERAL joins + one NOT EXISTS ran once per low-stock product row.
-    // After:  each heavy table is scanned once, results hashed, then joined.
+    // ── Restructured query: base_rows CTE materialises the full filtered set (sans
+    //    tab/stockFilter), counts CTE derives tab totals in one pass, outer SELECT
+    //    applies the tab filter + pagination. All CTEs are scanned once each. ──
     const result = await db.execute(sql`
       WITH
       -- 1. Sales totals for every product in this store (one pass over order_items)
@@ -4699,56 +4707,81 @@ router.get("/erp/purchases/needed", authenticate, requireStaff, requireStore, re
             (reference IS NOT NULL AND reference != '')
             OR (barcode IS NOT NULL AND barcode != '')
           )
+      ),
+      -- 5. Full filtered result set WITHOUT tab/stockFilter — used for counts + pagination
+      base_rows AS (
+        SELECT
+          p.id,
+          p.name_en        AS designation,
+          p.name_ar        AS designation_ar,
+          p.image_url,
+          p.stock,
+          p.min_stock,
+          p.cost_price,
+          p.price,
+          p.reference,
+          pf.name_fr       AS famille,
+          pf.name_ar       AS famille_ar,
+          pb.name_fr       AS marque,
+          sup.id           AS supplier_id,
+          sup.name         AS supplier_name,
+          sup.address      AS supplier_city,
+          sup.phone        AS supplier_phone,
+          COALESCE(sa.benefice,       0) AS benefice,
+          COALESCE(sa.total_qty_sold, 0) AS total_qty_sold
+        FROM   products         p
+        LEFT JOIN product_families  pf  ON pf.id  = p.family_id
+        LEFT JOIN product_brands    pb  ON pb.id  = p.brand_id
+        LEFT JOIN last_sup          ls  ON ls.product_id  = p.id
+        LEFT JOIN suppliers         sup ON sup.id = ls.supplier_id
+        LEFT JOIN sales_agg         sa  ON sa.product_id  = p.id
+        LEFT JOIN snoozed           sn  ON sn.product_id  = p.id
+        WHERE  p.store_id              = ${storeId}
+          AND  p.is_active             = true
+          AND  (
+            p.stock = 0
+            OR (p.min_stock IS NOT NULL AND p.stock <= p.min_stock)
+          )
+          AND  p.excluded_from_purchase = false
+          AND  sn.product_id IS NULL
+          AND NOT (
+            (p.reference IS NOT NULL AND p.reference != ''
+              AND EXISTS (SELECT 1 FROM cross_avail ca WHERE ca.reference = p.reference))
+            OR
+            (COALESCE(p.reference, '') = '' AND p.barcode IS NOT NULL AND p.barcode != ''
+              AND EXISTS (SELECT 1 FROM cross_avail ca WHERE ca.barcode = p.barcode))
+          )
+          ${familyFilter}
+          ${brandFilter}
+          ${searchFilter}
+          ${supplierFilter}
+          ${cityFilter}
+      ),
+      -- 6. Tab totals derived in a single pass over base_rows
+      counts AS (
+        SELECT
+          COUNT(*) FILTER (WHERE stock = 0)::int  AS rupture_total,
+          COUNT(*) FILTER (WHERE stock > 0)::int  AS low_total
+        FROM base_rows
       )
-      SELECT
-        p.id,
-        p.name_en        AS designation,
-        p.name_ar        AS designation_ar,
-        p.image_url,
-        p.stock,
-        p.min_stock,
-        p.cost_price,
-        p.price,
-        p.reference,
-        pf.name_fr       AS famille,
-        pf.name_ar       AS famille_ar,
-        pb.name_fr       AS marque,
-        sup.id           AS supplier_id,
-        sup.name         AS supplier_name,
-        sup.address      AS supplier_city,
-        sup.phone        AS supplier_phone,
-        COALESCE(sa.benefice,       0) AS benefice,
-        COALESCE(sa.total_qty_sold, 0) AS total_qty_sold
-      FROM   products         p
-      LEFT JOIN product_families  pf  ON pf.id  = p.family_id
-      LEFT JOIN product_brands    pb  ON pb.id  = p.brand_id
-      LEFT JOIN last_sup          ls  ON ls.product_id  = p.id
-      LEFT JOIN suppliers         sup ON sup.id = ls.supplier_id
-      LEFT JOIN sales_agg         sa  ON sa.product_id  = p.id
-      LEFT JOIN snoozed            sn  ON sn.product_id  = p.id
-      WHERE  p.store_id              = ${storeId}
-        AND  p.is_active             = true
-        AND  (
-          p.stock = 0
-          OR (p.min_stock IS NOT NULL AND p.stock <= p.min_stock)
-        )
-        AND  p.excluded_from_purchase = false
-        AND  sn.product_id IS NULL
-        AND NOT (
-          (p.reference IS NOT NULL AND p.reference != ''
-            AND EXISTS (SELECT 1 FROM cross_avail ca WHERE ca.reference = p.reference))
-          OR
-          (COALESCE(p.reference, '') = '' AND p.barcode IS NOT NULL AND p.barcode != ''
-            AND EXISTS (SELECT 1 FROM cross_avail ca WHERE ca.barcode = p.barcode))
-        )
-        ${familyFilter}
-        ${brandFilter}
-        ${searchFilter}
-        ${supplierFilter}
-        ${cityFilter}
-      ORDER BY ${orderByQty ? sql`COALESCE(sa.total_qty_sold, 0) DESC NULLS LAST` : sql`COALESCE(sa.benefice, 0) DESC NULLS LAST`}
+      -- Final: apply tab filter + sort + pagination; join counts as constant columns
+      SELECT br.*, c.rupture_total, c.low_total
+      FROM   base_rows br, counts c
+      WHERE  TRUE ${stockSql}
+      ORDER  BY ${orderByQty ? sql`br.total_qty_sold DESC NULLS LAST` : sql`br.benefice DESC NULLS LAST`}
+      LIMIT  ${limit} OFFSET ${offset}
     `);
-    res.json(result.rows);
+
+    type RawRow = Record<string, unknown> & { rupture_total: number; low_total: number };
+    const raw         = result.rows as RawRow[];
+    const ruptureTotal = raw[0]?.rupture_total ?? 0;
+    const lowTotal     = raw[0]?.low_total     ?? 0;
+
+    res.json({
+      rows: raw.map(({ rupture_total, low_total, ...r }) => r),
+      ruptureTotal,
+      lowTotal,
+    });
   } catch (err) { req.log.error(err); res.status(500).json({ error: "Internal server error" }); }
 });
 

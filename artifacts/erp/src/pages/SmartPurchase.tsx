@@ -1,5 +1,5 @@
 import React, { useState, useCallback, useMemo, useEffect } from "react";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient, useInfiniteQuery } from "@tanstack/react-query";
 import { useLang } from "@/hooks/use-lang";
 import { useCurrentStore } from "@/hooks/use-current-store";
 import { useMe } from "@/hooks/use-me";
@@ -65,13 +65,15 @@ function authHeaders(): Record<string, string> {
   return token ? { Authorization: `Bearer ${token}` } : {};
 }
 
-async function fetchNeeded(params: Record<string, string>): Promise<NeededRow[]> {
+type NeededPage = { rows: NeededRow[]; ruptureTotal: number; lowTotal: number };
+
+async function fetchNeeded(params: Record<string, string>): Promise<NeededPage> {
   const qs = new URLSearchParams(params).toString();
   const res = await fetch(`${API_BASE}/api/erp/purchases/needed${qs ? `?${qs}` : ""}`, {
     headers: authHeaders(),
   });
   if (!res.ok) throw new Error("fetch needed failed");
-  return res.json() as Promise<NeededRow[]>;
+  return res.json() as Promise<NeededPage>;
 }
 
 async function fetchHistory(productId: number): Promise<HistoryRow[]> {
@@ -1263,7 +1265,7 @@ export default function SmartPurchase() {
   const brands   = useMemo(() => filterOpts?.brands   ?? [], [filterOpts]);
   const suppliers = useMemo(() => (suppliersData?.data ?? []) as Array<{ id: number; name: string }>, [suppliersData]);
 
-  // Build query params
+  // Build query params — stockFilter included so tab changes reset pagination
   const queryParams = useMemo(() => {
     const p: Record<string, string> = {};
     if (search) p.search = search;
@@ -1274,13 +1276,31 @@ export default function SmartPurchase() {
     if (filterDateFrom) p.dateFrom = filterDateFrom;
     if (filterDateTo) p.dateTo = filterDateTo;
     if (sortBy !== "profit") p.sortBy = sortBy;
+    if (stockFilter === "rupture" || stockFilter === "low") p.stockFilter = stockFilter;
     return p;
-  }, [search, filterSupplierId, filterFamilyId, filterBrandId, filterCity, filterDateFrom, filterDateTo, sortBy]);
+  }, [search, filterSupplierId, filterFamilyId, filterBrandId, filterCity, filterDateFrom, filterDateTo, sortBy, stockFilter]);
 
-  const { data: rows, isLoading, refetch } = useQuery<NeededRow[]>({
+  const {
+    data: neededPages,
+    isLoading,
+    isFetchingNextPage,
+    hasNextPage,
+    fetchNextPage,
+    refetch,
+  } = useInfiniteQuery({
     queryKey: ["smart-purchase-needed", store?.id, queryParams],
-    queryFn: () => fetchNeeded(queryParams),
-    enabled: !!store?.id,
+    queryFn: ({ pageParam }: { pageParam: number }) =>
+      fetchNeeded({ ...queryParams, limit: "10", offset: String(pageParam) }),
+    getNextPageParam: (lastPage, allPages) => {
+      const loaded = allPages.reduce((s, p) => s + p.rows.length, 0);
+      const sf = queryParams.stockFilter;
+      const total = sf === "rupture" ? lastPage.ruptureTotal
+                  : sf === "low"    ? lastPage.lowTotal
+                  : lastPage.ruptureTotal + lastPage.lowTotal;
+      return loaded < total ? loaded : undefined;
+    },
+    initialPageParam: 0,
+    enabled: !!store?.id && stockFilter !== "suggestions",
     staleTime: 30_000,
   });
 
@@ -1335,14 +1355,15 @@ export default function SmartPurchase() {
     activeFilters.push({ label, onRemove: () => { setFilterDateFrom(""); setFilterDateTo(""); } });
   }
 
-  const allRows = rows ?? [];
-  const ruptureCount = allRows.filter((r) => Number(r.stock) === 0).length;
-  const lowCount = allRows.filter((r) => Number(r.stock) > 0).length;
-  const displayRows = stockFilter === "rupture"
-    ? allRows.filter((r) => Number(r.stock) === 0)
-    : stockFilter === "low"
-      ? allRows.filter((r) => Number(r.stock) > 0)
-      : allRows;
+  // Flatten infinite pages; tab filtering is now server-side
+  const allRows = useMemo(
+    () => neededPages?.pages.flatMap((p) => p.rows) ?? [],
+    [neededPages],
+  );
+  const firstMeta    = neededPages?.pages[0];
+  const ruptureCount = firstMeta?.ruptureTotal ?? 0;
+  const lowCount     = firstMeta?.lowTotal     ?? 0;
+  const displayRows  = allRows;
 
   return (
     <div className="flex flex-col min-h-screen bg-gray-50">
@@ -1358,7 +1379,9 @@ export default function SmartPurchase() {
               </h1>
               {!isLoading && (
                 <p className="text-xs text-muted-foreground">
-                  {displayRows.length} {t("produit(s) à acheter", "منتج(ات) للشراء")}
+                  {queryParams.stockFilter === "rupture" ? ruptureCount
+                    : queryParams.stockFilter === "low"  ? lowCount
+                    : ruptureCount + lowCount} {t("produit(s) à acheter", "منتج(ات) للشراء")}
                 </p>
               )}
             </div>
@@ -1378,7 +1401,7 @@ export default function SmartPurchase() {
                 )}
               </Button>
 
-              {displayRows.length > 0 && stockFilter !== "suggestions" && (
+              {(ruptureCount + lowCount) > 0 && stockFilter !== "suggestions" && (
                 <Button
                   size="icon" variant="ghost"
                   className="h-10 w-10 rounded-full"
@@ -1462,13 +1485,13 @@ export default function SmartPurchase() {
           </div>
 
           {/* Stock filter: Tout / En rupture / Stock faible / Suggestions */}
-          {!isLoading && (allRows.length > 0 || suggestionCount > 0) && (
+          {!isLoading && (ruptureCount + lowCount > 0 || suggestionCount > 0) && (
             <div className="flex rounded-xl border bg-gray-100 p-1 gap-1">
               {([
-                { key: "all",         labelFr: "Tout",         labelAr: "الكل",          count: allRows.length,  activeColor: "bg-white text-slate-800" },
-                { key: "rupture",     labelFr: "En rupture",   labelAr: "نفد المخزون",   count: ruptureCount,   activeColor: "bg-red-600 text-white" },
-                { key: "low",         labelFr: "Stock faible", labelAr: "مخزون منخفض",  count: lowCount,       activeColor: "bg-orange-500 text-white" },
-                { key: "suggestions", labelFr: "Idées",        labelAr: "اقتراحات",      count: suggestionCount, activeColor: "bg-amber-500 text-white" },
+                { key: "all",         labelFr: "Tout",         labelAr: "الكل",          count: ruptureCount + lowCount, activeColor: "bg-white text-slate-800" },
+                { key: "rupture",     labelFr: "En rupture",   labelAr: "نفد المخزون",   count: ruptureCount,            activeColor: "bg-red-600 text-white" },
+                { key: "low",         labelFr: "Stock faible", labelAr: "مخزون منخفض",  count: lowCount,                activeColor: "bg-orange-500 text-white" },
+                { key: "suggestions", labelFr: "Idées",        labelAr: "اقتراحات",      count: suggestionCount,         activeColor: "bg-amber-500 text-white" },
               ] as { key: StockFilter; labelFr: string; labelAr: string; count: number; activeColor: string }[]).map(({ key, labelFr, labelAr, count, activeColor }) => (
                 <button
                   key={key}
@@ -1956,6 +1979,28 @@ export default function SmartPurchase() {
             dateTo={filterDateTo}
           />
         ))}
+
+        {/* ── Fetching-next-page skeletons ── */}
+        {stockFilter !== "suggestions" && isFetchingNextPage && (
+          [...Array(3)].map((_, i) => (
+            <div key={i} className="rounded-2xl bg-white border p-4 shadow-sm space-y-3">
+              <Skeleton className="h-5 w-3/4" />
+              <Skeleton className="h-4 w-1/2" />
+              <Skeleton className="h-12 w-full rounded-xl" />
+            </div>
+          ))
+        )}
+
+        {/* ── Load-more button ── */}
+        {stockFilter !== "suggestions" && hasNextPage && !isFetchingNextPage && (
+          <button
+            type="button"
+            onClick={() => void fetchNextPage()}
+            className="w-full py-4 text-sm font-semibold text-blue-600 border border-blue-200 rounded-2xl bg-white hover:bg-blue-50 active:bg-blue-100 transition-colors flex items-center justify-center gap-2"
+          >
+            {t("Charger 10 de plus", "تحميل 10 أخرى")}
+          </button>
+        )}
       </div>
 
       {/* ── Suggest / Edit drawer ── */}

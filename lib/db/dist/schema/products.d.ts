@@ -632,6 +632,23 @@ export declare const productsTable: import("drizzle-orm/pg-core").PgTableWithCol
             identity: undefined;
             generated: undefined;
         }, {}, {}>;
+        excludedFromPurchase: import("drizzle-orm/pg-core").PgColumn<{
+            name: "excluded_from_purchase";
+            tableName: "products";
+            dataType: "boolean";
+            columnType: "PgBoolean";
+            data: boolean;
+            driverParam: boolean;
+            notNull: true;
+            hasDefault: true;
+            isPrimaryKey: false;
+            isAutoincrement: false;
+            hasRuntimeDefault: false;
+            enumValues: undefined;
+            baseColumn: never;
+            identity: undefined;
+            generated: undefined;
+        }, {}, {}>;
     };
     dialect: "pg";
 }>;
@@ -669,6 +686,7 @@ export declare const insertProductSchema: z.ZodObject<{
     catalogue6: z.ZodOptional<z.ZodNullable<z.ZodString>>;
     isExposed: z.ZodOptional<z.ZodNullable<z.ZodBoolean>>;
     minStock: z.ZodOptional<z.ZodNullable<z.ZodNumber>>;
+    excludedFromPurchase: z.ZodOptional<z.ZodBoolean>;
 }, {
     out: {};
     in: {};

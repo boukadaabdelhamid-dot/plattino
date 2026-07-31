@@ -1066,6 +1066,7 @@ router.get("/erp/payroll/adjustments", authenticate, requireStaff, requireStore,
 router.post("/erp/payroll/adjustments", authenticate, requireStaff, requireStore, requirePermission("payroll", "create"), async (req: AuthRequest, res) => {
   try {
     const storeId = req.currentStoreId!;
+    const actorUserId = req.user!.id;
     const employeeId = Number(req.body?.employeeId);
     const type = req.body?.type as "advance" | "deduction" | "bonus";
     const amount = Number(req.body?.amount);
@@ -1076,15 +1077,43 @@ router.post("/erp/payroll/adjustments", authenticate, requireStaff, requireStore
       res.status(400).json({ error: "employeeId, type (advance|deduction|bonus), amount > 0, date are required" });
       return;
     }
-    const [emp] = await db.select({ id: schema.employeesTable.id })
+    const [emp] = await db.select({ id: schema.employeesTable.id, name: schema.employeesTable.name })
       .from(schema.employeesTable)
       .where(and(eq(schema.employeesTable.id, employeeId), eq(schema.employeesTable.storeId, storeId)))
       .limit(1);
     if (!emp) { res.status(403).json({ error: "Employee does not belong to current store" }); return; }
-    const [row] = await db.insert(schema.payrollAdjustmentsTable).values({
-      storeId, employeeId, type, amount: amount.toFixed(2), reason, date,
-      createdByUserId: req.user!.id,
-    }).returning();
+
+    // Advance and bonus are immediate cash disbursements from the main caisse.
+    // Deductions are purely accounting entries that reduce the monthly net salary.
+    const isCashed = type === "advance" || type === "bonus";
+    const typeLabel = type === "advance" ? "Avance" : type === "bonus" ? "Prime" : "Retenue";
+
+    const row = await db.transaction(async (tx) => {
+      const [adj] = await tx.insert(schema.payrollAdjustmentsTable).values({
+        storeId, employeeId, type, amount: amount.toFixed(2), reason, date,
+        createdByUserId: actorUserId, isCashed,
+      }).returning();
+
+      if (isCashed) {
+        const mainCaisse = await ensureCaisse(null, null, tx);
+        const { oldBalance, newBalance } = await applyCaisseDelta(tx, mainCaisse.id, -amount);
+        await tx.insert(schema.caisseMovementsTable).values({
+          caisseId: mainCaisse.id, type: "debit", amount: amount.toFixed(2),
+          reason: "salary_payment", actorUserId,
+          notes: `${typeLabel} — ${emp.name}${reason ? ` (${reason})` : ""}`,
+          balanceBefore: oldBalance.toFixed(2), balanceAfter: newBalance.toFixed(2),
+        });
+        await tx.insert(schema.transactionsTable).values({
+          storeId, type: "expense", category: "salary",
+          amount: amount.toFixed(2),
+          description: `${typeLabel} — ${emp.name}${reason ? ` (${reason})` : ""}`,
+          date, reference: `ADJ-${adj.id}`,
+        });
+      }
+
+      return adj;
+    });
+
     res.status(201).json(row);
   } catch (err) { req.log.error(err); res.status(500).json({ error: "Internal server error" }); }
 });
@@ -1098,6 +1127,7 @@ router.delete("/erp/payroll/adjustments/:id", authenticate, requireStaff, requir
       .limit(1);
     if (!row) { res.status(404).json({ error: "Not found" }); return; }
     if (row.payslipId) { res.status(409).json({ error: "Cette période est déjà clôturée par une paie générée" }); return; }
+    if (row.isCashed) { res.status(409).json({ error: "Ce paiement a déjà été versé depuis la caisse et ne peut pas être supprimé" }); return; }
     await db.delete(schema.payrollAdjustmentsTable).where(eq(schema.payrollAdjustmentsTable.id, id));
     res.json({ success: true });
   } catch (err) { req.log.error(err); res.status(500).json({ error: "Internal server error" }); }
@@ -1200,9 +1230,16 @@ router.post("/erp/payroll/generate", authenticate, requireStaff, requireStore, r
             sql`${schema.payrollAdjustmentsTable.date} >= ${periodStart}`,
             sql`${schema.payrollAdjustmentsTable.date} <= ${periodEnd}`,
           ));
-        const sumOf = (type: "advance" | "deduction" | "bonus") =>
-          adjustments.filter(a => a.type === type).reduce((s, a) => s + parseFloat(a.amount), 0);
-        const bonus = sumOf("bonus");
+        const sumOf = (type: "advance" | "deduction" | "bonus", cashedFilter?: boolean) =>
+          adjustments
+            .filter(a => a.type === type && (cashedFilter === undefined || a.isCashed === cashedFilter))
+            .reduce((s, a) => s + parseFloat(a.amount), 0);
+        // Only count bonuses NOT yet cashed (cashed bonuses were already debited
+        // from caisse at creation time; including them again would double-count).
+        const bonus = sumOf("bonus", false);
+        // Advances are always deducted from net regardless of is_cashed: the advance
+        // was a prepayment, so the remaining salary is salary − advance. Total caisse
+        // = advance + (salary − advance) = salary ✓ — no double-count.
         const advances = sumOf("advance");
         const deductions = sumOf("deduction");
         const baseSalary = parseFloat(emp.salary);

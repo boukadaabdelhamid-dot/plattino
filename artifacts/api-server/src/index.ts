@@ -759,6 +759,43 @@ CREATE TABLE IF NOT EXISTS "purchase_suggestions" (
 );--> statement-breakpoint
 ALTER TABLE "purchase_suggestions" ADD CONSTRAINT "purchase_suggestions_store_id_fk" FOREIGN KEY ("store_id") REFERENCES "public"."stores"("id") ON DELETE CASCADE;--> statement-breakpoint
 ALTER TABLE "purchase_suggestions" ADD CONSTRAINT "purchase_suggestions_staff_id_fk" FOREIGN KEY ("staff_id") REFERENCES "public"."users"("id") ON DELETE CASCADE;--> statement-breakpoint
+DO $$ BEGIN CREATE TYPE "public"."payroll_adjustment_type" AS ENUM('advance', 'deduction', 'bonus'); EXCEPTION WHEN duplicate_object THEN NULL; END $$;--> statement-breakpoint
+CREATE TABLE IF NOT EXISTS "payroll_runs" (
+        "id" serial PRIMARY KEY NOT NULL,
+        "store_id" integer NOT NULL REFERENCES "public"."stores"("id"),
+        "period_start" date NOT NULL,
+        "period_end" date NOT NULL,
+        "generated_by_user_id" integer NOT NULL REFERENCES "public"."users"("id"),
+        "created_at" timestamp DEFAULT now() NOT NULL
+);--> statement-breakpoint
+CREATE UNIQUE INDEX IF NOT EXISTS "payroll_runs_store_period_unique" ON "payroll_runs" ("store_id", "period_start", "period_end");--> statement-breakpoint
+CREATE TABLE IF NOT EXISTS "payslips" (
+        "id" serial PRIMARY KEY NOT NULL,
+        "payroll_run_id" integer NOT NULL REFERENCES "public"."payroll_runs"("id"),
+        "store_id" integer NOT NULL REFERENCES "public"."stores"("id"),
+        "employee_id" integer NOT NULL REFERENCES "public"."employees"("id"),
+        "base_salary" numeric(10, 2) NOT NULL,
+        "bonus_amount" numeric(10, 2) NOT NULL DEFAULT '0',
+        "advances_amount" numeric(10, 2) NOT NULL DEFAULT '0',
+        "deductions_amount" numeric(10, 2) NOT NULL DEFAULT '0',
+        "net_amount" numeric(10, 2) NOT NULL,
+        "created_at" timestamp DEFAULT now() NOT NULL
+);--> statement-breakpoint
+CREATE UNIQUE INDEX IF NOT EXISTS "payslips_run_employee_unique" ON "payslips" ("payroll_run_id", "employee_id");--> statement-breakpoint
+CREATE TABLE IF NOT EXISTS "payroll_adjustments" (
+        "id" serial PRIMARY KEY NOT NULL,
+        "store_id" integer NOT NULL REFERENCES "public"."stores"("id"),
+        "employee_id" integer NOT NULL REFERENCES "public"."employees"("id"),
+        "type" "payroll_adjustment_type" NOT NULL,
+        "amount" numeric(10, 2) NOT NULL,
+        "reason" text,
+        "date" date NOT NULL,
+        "payslip_id" integer REFERENCES "public"."payslips"("id"),
+        "created_by_user_id" integer REFERENCES "public"."users"("id"),
+        "created_at" timestamp DEFAULT now() NOT NULL,
+        "is_cashed" boolean NOT NULL DEFAULT false
+);--> statement-breakpoint
+ALTER TABLE "payroll_adjustments" ADD COLUMN IF NOT EXISTS "is_cashed" boolean NOT NULL DEFAULT false;--> statement-breakpoint
 `;
 
 

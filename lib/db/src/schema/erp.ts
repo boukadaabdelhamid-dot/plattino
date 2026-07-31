@@ -601,6 +601,10 @@ export const payrollAdjustmentsTable = pgTable("payroll_adjustments", {
   payslipId: integer("payslip_id").references(() => payslipsTable.id),
   createdByUserId: integer("created_by_user_id").references(() => usersTable.id),
   createdAt: timestamp("created_at").defaultNow().notNull(),
+  // true when the cash was immediately disbursed from the main caisse at creation
+  // (advance & bonus types). Generate must exclude cashed bonuses from net to
+  // avoid double-counting; advances are always deducted from net regardless.
+  isCashed: boolean("is_cashed").notNull().default(false),
 });
 
 export type PayrollRun = typeof payrollRunsTable.$inferSelect;

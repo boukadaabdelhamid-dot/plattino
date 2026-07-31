@@ -424,14 +424,14 @@ function StockBar({ stock, minStock }: { stock: number; minStock: number | null 
 
 // ── History drawer content ───────────────────────────────────────────────────
 function HistoryDrawerContent({
-  productId, productName, t,
-}: { productId: number | null; productName: string; t: (fr: string, ar: string) => string }) {
+  productId, productName, imageUrl, t,
+}: { productId: number | null; productName: string; imageUrl: string | null; t: (fr: string, ar: string) => string }) {
   const { data, isLoading } = useQuery<HistoryRow[]>({
     queryKey: ["purchase-history", productId],
     queryFn: () => fetchHistory(productId!),
     enabled: productId != null,
   });
-  const img = data?.[0]?.image_url;
+  const img = imageUrl ?? data?.[0]?.image_url;
   return (
     <div className="flex flex-col h-full">
       <DrawerHeader className="border-b pb-3 shrink-0">
@@ -1341,7 +1341,7 @@ export default function SmartPurchase() {
 
   // Drawer state
   const [filtersOpen, setFiltersOpen] = useState(false);
-  const [historyProduct, setHistoryProduct] = useState<{ id: number; name: string } | null>(null);
+  const [historyProduct, setHistoryProduct] = useState<{ id: number; name: string; imageUrl: string | null } | null>(null);
   const [suggestOpen, setSuggestOpen] = useState(false);
   const [editSuggestion, setEditSuggestion] = useState<PurchaseSuggestion | null>(null);
 
@@ -2086,7 +2086,7 @@ export default function SmartPurchase() {
                   type="button"
                   className="flex-none flex items-center justify-center gap-1.5 px-4 py-4 text-sm text-slate-600 hover:bg-slate-50 active:bg-slate-100 transition-colors border-r"
                   style={{ minHeight: 52 }}
-                  onClick={() => setHistoryProduct({ id: row.id, name: lang === "ar" && row.designation_ar ? row.designation_ar : row.designation })}
+                  onClick={() => setHistoryProduct({ id: row.id, name: lang === "ar" && row.designation_ar ? row.designation_ar : row.designation, imageUrl: row.image_url ?? null })}
                   aria-label={t("Historique des prix", "تاريخ الأسعار")}
                 >
                   <History className="h-4 w-4" />
@@ -2408,6 +2408,7 @@ export default function SmartPurchase() {
           <HistoryDrawerContent
             productId={historyProduct?.id ?? null}
             productName={historyProduct?.name ?? ""}
+            imageUrl={historyProduct?.imageUrl ?? null}
             t={t}
           />
         </DrawerContent>

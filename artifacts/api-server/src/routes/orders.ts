@@ -794,14 +794,15 @@ router.get("/admin/analytics", authenticate, requireAdmin, requireStore, async (
     `);
 
     // Channel split (online vs POS) for the same 30-day window as dailySales.
-    // Channel is inferred from seller_user_id: NULL = online (storefront),
-    // NOT NULL = POS (in-store cashier).
+    // Uses order_source column (same logic as GET /admin/orders channel filter):
+    //   online = order_source = 'online'  OR  (order_source IS NULL AND seller_user_id IS NULL)
+    //   pos    = order_source IN ('pos', 'bon')
     const channelTotals = await db.execute(sql`
       SELECT
-        COALESCE(SUM(CASE WHEN seller_user_id IS NULL THEN total_amount ELSE 0 END), 0) AS online_revenue,
-        COUNT(*) FILTER (WHERE seller_user_id IS NULL) AS online_orders,
-        COALESCE(SUM(CASE WHEN seller_user_id IS NOT NULL THEN total_amount ELSE 0 END), 0) AS pos_revenue,
-        COUNT(*) FILTER (WHERE seller_user_id IS NOT NULL) AS pos_orders
+        COALESCE(SUM(CASE WHEN order_source = 'online' OR (order_source IS NULL AND seller_user_id IS NULL) THEN total_amount ELSE 0 END), 0) AS online_revenue,
+        COUNT(*) FILTER (WHERE order_source = 'online' OR (order_source IS NULL AND seller_user_id IS NULL)) AS online_orders,
+        COALESCE(SUM(CASE WHEN order_source IN ('pos', 'bon') THEN total_amount ELSE 0 END), 0) AS pos_revenue,
+        COUNT(*) FILTER (WHERE order_source IN ('pos', 'bon')) AS pos_orders
       FROM orders
       WHERE created_at >= NOW() - INTERVAL '30 days'
         AND store_id = ${storeId}
@@ -812,8 +813,8 @@ router.get("/admin/analytics", authenticate, requireAdmin, requireStore, async (
     const dailyChannelSales = await db.execute(sql`
       SELECT
         DATE(created_at) AS date,
-        COALESCE(SUM(CASE WHEN seller_user_id IS NULL THEN total_amount ELSE 0 END), 0) AS online_revenue,
-        COALESCE(SUM(CASE WHEN seller_user_id IS NOT NULL THEN total_amount ELSE 0 END), 0) AS pos_revenue
+        COALESCE(SUM(CASE WHEN order_source = 'online' OR (order_source IS NULL AND seller_user_id IS NULL) THEN total_amount ELSE 0 END), 0) AS online_revenue,
+        COALESCE(SUM(CASE WHEN order_source IN ('pos', 'bon') THEN total_amount ELSE 0 END), 0) AS pos_revenue
       FROM orders
       WHERE created_at >= NOW() - INTERVAL '30 days'
         AND store_id = ${storeId}

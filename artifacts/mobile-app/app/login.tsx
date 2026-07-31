@@ -6,8 +6,12 @@ import { useAuth } from "@/contexts/auth-context";
 import { useStoreContext } from "@/contexts/store-context";
 import { useLang } from "@/contexts/lang-context";
 import { useLanguageSwitch } from "@/hooks/use-language-switch";
+import { useServer } from "@/contexts/server-context";
 import { colors } from "@/lib/colors";
 import { Button, FormField } from "@/components/ui";
+
+// True when the server URL is fixed by env (e.g. development builds) — hide the change-server link.
+const ENV_LOCKED = !!process.env.EXPO_PUBLIC_API_URL;
 
 export default function Login() {
   const router = useRouter();
@@ -15,6 +19,7 @@ export default function Login() {
   const { setStores, clear } = useStoreContext();
   const { t, lang } = useLang();
   const { toggleLanguage } = useLanguageSwitch();
+  const { clearServerUrl } = useServer();
   const loginMutation = useLogin();
   const selectStore = useSelectStore();
 
@@ -121,6 +126,19 @@ export default function Login() {
           variant="ghost"
           style={{ marginTop: 16 }}
         />
+
+        {!ENV_LOCKED ? (
+          <Button
+            label={t("Changer de serveur", "تغيير عنوان السيرفر")}
+            onPress={async () => {
+              await clearServerUrl();
+              router.replace("/server-setup");
+            }}
+            variant="ghost"
+            style={{ marginTop: 4 }}
+            testID="button-change-server"
+          />
+        ) : null}
       </View>
     </KeyboardAvoidingView>
   );

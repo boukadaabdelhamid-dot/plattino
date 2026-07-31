@@ -1,6 +1,6 @@
 import { useCallback } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { API_BASE_URL } from "@/lib/api";
+import { getActiveBaseUrl } from "@/lib/api";
 import { getToken } from "@/lib/auth-storage";
 import { getGetMeQueryKey } from "@workspace/api-client-react";
 
@@ -14,7 +14,7 @@ import { getGetMeQueryKey } from "@workspace/api-client-react";
  */
 async function authedFetch(path: string, init?: RequestInit) {
   const token = getToken();
-  const res = await fetch(`${API_BASE_URL}${path}`, {
+  const res = await fetch(`${getActiveBaseUrl()}${path}`, {
     ...init,
     headers: {
       "Content-Type": "application/json",

@@ -1,39 +1,68 @@
 import Constants from "expo-constants";
 import { setBaseUrl, setAuthTokenGetter } from "@workspace/api-client-react";
 import { getToken } from "./auth-storage";
+import { getServerUrl } from "./server-storage";
 
 /**
  * The mobile app talks to the same api-server used by the ERP web app.
  *
- * EXPO_PUBLIC_API_URL is inlined at bundle time by Metro (same mechanism the
- * ERP/web-store vite configs use for VITE_API_URL) — see the "web" script in
- * package.json / the mobile-app workflow, which sets it from
- * REPLIT_DEV_DOMAIN in development. In production, set EXPO_PUBLIC_API_URL
- * to the deployed api-server URL.
+ * URL resolution priority (highest → lowest):
+ *  1. EXPO_PUBLIC_API_URL  — bundle-time env var (dev / CI override)
+ *  2. _runtimeUrl          — set at runtime by reconfigureApiClient()
+ *  3. Metro host fallback  — for LAN Expo Go sessions without env var
+ *  4. localhost:8080
+ *
+ * Use getActiveBaseUrl() everywhere a URL is needed at call-time.
+ * Never import the static API_BASE_URL constant in raw fetch() calls.
  */
-function resolveApiBaseUrl(): string {
-  const fromEnv = process.env.EXPO_PUBLIC_API_URL;
-  if (fromEnv) return fromEnv.replace(/\/+$/, "");
 
-  // Fallback for native Expo Go sessions without the env var set (e.g. LAN
-  // debugging) — reuse the Metro dev server's host with the api-server port.
+const ENV_URL: string | null = process.env.EXPO_PUBLIC_API_URL
+  ? process.env.EXPO_PUBLIC_API_URL.replace(/\/+$/, "")
+  : null;
+
+/** Mutable runtime URL — updated by reconfigureApiClient(). */
+let _runtimeUrl: string = (() => {
+  if (ENV_URL) return ENV_URL;
+  const stored = getServerUrl();
+  if (stored) return stored;
   const hostUri = (Constants.expoConfig as { hostUri?: string } | null)?.hostUri;
-  if (hostUri) {
-    const host = hostUri.split(":")[0];
-    return `http://${host}:8080`;
-  }
-
+  if (hostUri) return `http://${hostUri.split(":")[0]}:8080`;
   return "http://localhost:8080";
+})();
+
+/**
+ * Returns the active server URL at call-time.
+ * Use this in every raw fetch() call instead of API_BASE_URL.
+ */
+export function getActiveBaseUrl(): string {
+  return _runtimeUrl;
 }
 
-export const API_BASE_URL = resolveApiBaseUrl();
+/**
+ * @deprecated Use getActiveBaseUrl() for call-time resolution.
+ * Kept as a bundle-time snapshot for backward compat.
+ */
+export const API_BASE_URL = _runtimeUrl;
 
 export function configureApiClient() {
-  setBaseUrl(API_BASE_URL);
+  setBaseUrl(_runtimeUrl);
   setAuthTokenGetter(() => getToken());
 }
 
+/**
+ * Reconfigures ALL request paths to a new server URL.
+ * - env override (EXPO_PUBLIC_API_URL) always wins — call is a no-op when set.
+ * - Updates the shared orval API client AND the module-level runtime URL used
+ *   by raw fetch() calls (permissions, admin-api, sale-orders, WebSocket).
+ */
+export function reconfigureApiClient(url: string) {
+  if (ENV_URL) return; // env override is immutable
+  const clean = url.replace(/\/+$/, "");
+  _runtimeUrl = clean;
+  setBaseUrl(clean);
+}
+
 export function buildWsUrl(token: string): string {
-  const base = API_BASE_URL.replace(/^http/, "ws");
+  const base = _runtimeUrl.replace(/^http/, "ws");
   return `${base}/ws?token=${encodeURIComponent(token)}`;
 }

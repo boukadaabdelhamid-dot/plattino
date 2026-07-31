@@ -8,6 +8,7 @@ import { StatusBar } from "expo-status-bar";
 import { configureApiClient } from "@/lib/api";
 import { queryClient } from "@/lib/query-client";
 import { LangProvider } from "@/contexts/lang-context";
+import { ServerProvider } from "@/contexts/server-context";
 import { AuthProvider, registerForceLogout } from "@/contexts/auth-context";
 import { StoreProvider } from "@/contexts/store-context";
 import { PermissionsProvider } from "@/contexts/permissions-context";
@@ -16,6 +17,8 @@ import { ConfirmProvider } from "@/contexts/confirm-context";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { RealtimeGate } from "@/components/RealtimeGate";
 
+// Initial client setup — uses env var or in-memory cached URL.
+// ServerProvider will call reconfigureApiClient() once the stored URL is loaded.
 configureApiClient();
 
 function ForceLogoutWiring() {
@@ -33,25 +36,28 @@ export default function RootLayout() {
         <SafeAreaProvider>
           <LangProvider>
             <QueryClientProvider client={queryClient}>
-              <AuthProvider>
-                <StoreProvider>
-                  <PermissionsProvider>
-                    <ToastProvider>
-                      <ConfirmProvider>
-                        <ForceLogoutWiring />
-                        <RealtimeGate />
-                        <StatusBar style="dark" />
-                        <Stack screenOptions={{ headerShown: false }}>
-                          <Stack.Screen name="index" />
-                          <Stack.Screen name="login" />
-                          <Stack.Screen name="select-store" />
-                          <Stack.Screen name="(app)" />
-                        </Stack>
-                      </ConfirmProvider>
-                    </ToastProvider>
-                  </PermissionsProvider>
-                </StoreProvider>
-              </AuthProvider>
+              <ServerProvider>
+                <AuthProvider>
+                  <StoreProvider>
+                    <PermissionsProvider>
+                      <ToastProvider>
+                        <ConfirmProvider>
+                          <ForceLogoutWiring />
+                          <RealtimeGate />
+                          <StatusBar style="dark" />
+                          <Stack screenOptions={{ headerShown: false }}>
+                            <Stack.Screen name="index" />
+                            <Stack.Screen name="server-setup" />
+                            <Stack.Screen name="login" />
+                            <Stack.Screen name="select-store" />
+                            <Stack.Screen name="(app)" />
+                          </Stack>
+                        </ConfirmProvider>
+                      </ToastProvider>
+                    </PermissionsProvider>
+                  </StoreProvider>
+                </AuthProvider>
+              </ServerProvider>
             </QueryClientProvider>
           </LangProvider>
         </SafeAreaProvider>

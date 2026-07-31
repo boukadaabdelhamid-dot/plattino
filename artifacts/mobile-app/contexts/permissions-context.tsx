@@ -2,7 +2,7 @@ import React, { createContext, useContext, useEffect, useState, useCallback } fr
 import { useAuth } from "@/contexts/auth-context";
 import { useMe } from "@/hooks/use-me";
 import { useStoreContext } from "@/contexts/store-context";
-import { API_BASE_URL } from "@/lib/api";
+import { getActiveBaseUrl } from "@/lib/api";
 import { getToken } from "@/lib/auth-storage";
 
 export type PermSection =
@@ -55,7 +55,7 @@ export function PermissionsProvider({ children }: { children: React.ReactNode })
     if (!currentStoreId) return;
     try {
       const authToken = getToken();
-      const res = await fetch(`${API_BASE_URL}/api/erp/permissions/me`, {
+      const res = await fetch(`${getActiveBaseUrl()}/api/erp/permissions/me`, {
         headers: { Authorization: `Bearer ${authToken}` },
       });
       if (!res.ok) { setIsLoaded(true); return; }

@@ -10,7 +10,7 @@ import { ListScreen, SearchBar } from "@/components/ListScreen";
 import { EntityRow } from "@/components/EntityRow";
 import { Badge, Button, Card } from "@/components/ui";
 import { Fab } from "@/components/Fab";
-import { API_BASE_URL } from "@/lib/api";
+import { getActiveBaseUrl } from "@/lib/api";
 import { getToken } from "@/lib/auth-storage";
 
 const STATUS_TONE: Record<string, "success" | "warning" | "danger" | "muted" | "info"> = {
@@ -35,7 +35,7 @@ async function fetchSaleOrders(search?: string): Promise<SaleOrderRow[]> {
   const token = getToken();
   const params = new URLSearchParams({ limit: "200" });
   if (search) params.set("search", search);
-  const res = await fetch(`${API_BASE_URL}/api/erp/sale-orders?${params}`, {
+  const res = await fetch(`${getActiveBaseUrl()}/api/erp/sale-orders?${params}`, {
     headers: {
       "Content-Type": "application/json",
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
@@ -48,7 +48,7 @@ async function fetchSaleOrders(search?: string): Promise<SaleOrderRow[]> {
 
 async function clotureOrder(id: number): Promise<void> {
   const token = getToken();
-  const res = await fetch(`${API_BASE_URL}/api/erp/sale-orders/${id}/cloture`, {
+  const res = await fetch(`${getActiveBaseUrl()}/api/erp/sale-orders/${id}/cloture`, {
     method: "PUT",
     headers: {
       "Content-Type": "application/json",

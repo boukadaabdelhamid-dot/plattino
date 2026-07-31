@@ -2,16 +2,25 @@ import { useEffect } from "react";
 import { useRouter } from "expo-router";
 import { View } from "react-native";
 import { useAuth } from "@/contexts/auth-context";
+import { useServer } from "@/contexts/server-context";
 import { LoadingView } from "@/components/ui";
 
 export default function Index() {
   const router = useRouter();
-  const { token, isReady } = useAuth();
+  const { token, isReady: authReady } = useAuth();
+  const { serverUrl, isServerReady } = useServer();
 
   useEffect(() => {
-    if (!isReady) return;
+    if (!isServerReady || !authReady) return;
+
+    // If no server is configured (and no env override), ask the user to set one.
+    if (!serverUrl) {
+      router.replace("/server-setup");
+      return;
+    }
+
     router.replace(token ? "/home" : "/login");
-  }, [isReady, token, router]);
+  }, [isServerReady, authReady, serverUrl, token, router]);
 
   return (
     <View style={{ flex: 1 }}>

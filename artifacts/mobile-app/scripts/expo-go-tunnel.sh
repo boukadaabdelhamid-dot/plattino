@@ -38,8 +38,9 @@ echo ""
 echo "===================================================================="
 
 export EXPO_PACKAGER_PROXY_URL="$URL"
-export EXPO_PUBLIC_API_URL="https://${REPLIT_DEV_DOMAIN}:8080"
 export EXPO_NO_TELEMETRY=1
+# EXPO_PUBLIC_API_URL intentionally not set here — the app shows the
+# server-setup screen so the user can enter their own deployed API URL.
 
 # Pipe a simulated "down arrow + Enter" after 3 seconds to auto-select
 # "Proceed anonymously" if Expo shows the login prompt, then keep stdin

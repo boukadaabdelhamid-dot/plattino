@@ -45,4 +45,6 @@ export EXPO_NO_TELEMETRY=1
 # Pipe a simulated "down arrow + Enter" after 3 seconds to auto-select
 # "Proceed anonymously" if Expo shows the login prompt, then keep stdin
 # open indefinitely so Metro can keep running.
-{ sleep 3; printf '\x1b[B\r'; sleep 86400; } | npx expo start
+# --clear forces a fresh bundle so EXPO_PUBLIC_API_URL from the web
+# workflow's Metro cache is not reused here.
+{ sleep 3; printf '\x1b[B\r'; sleep 86400; } | npx expo start --clear

@@ -41,4 +41,4 @@ export EXPO_PACKAGER_PROXY_URL="$URL"
 export EXPO_PUBLIC_API_URL="https://${REPLIT_DEV_DOMAIN}:8080"
 export EXPO_NO_TELEMETRY=1
 
-exec npx expo start
+exec CI=1 npx expo start

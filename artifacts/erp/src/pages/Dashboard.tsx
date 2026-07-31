@@ -478,6 +478,7 @@ function VentesTab({ t, currency, storeId, canViewProfit }: { t: TFn; currency: 
   const [groupBy, setGroupBy] = React.useState<"jour" | "mois" | "annee">("jour");
   const [dateFrom, setDateFrom] = React.useState(defaultFrom);
   const [dateTo, setDateTo] = React.useState(today);
+  const [ventesSource, setVentesSource] = React.useState<"all" | "pos" | "online" | "bon">("all");
   const [rows, setRows] = React.useState<VenteRow[]>([]);
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
@@ -490,6 +491,7 @@ function VentesTab({ t, currency, storeId, canViewProfit }: { t: TFn; currency: 
     const token = localStorage.getItem("midanic_token");
     const params = new URLSearchParams({ groupBy, dateFrom, dateTo });
     if (storeId) params.set("storeId", storeId);
+    if (ventesSource !== "all") params.set("source", ventesSource);
     fetch(`${apiBase}/api/erp/dashboard/ventes?${params}`, {
       headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}) },
     })
@@ -497,7 +499,7 @@ function VentesTab({ t, currency, storeId, canViewProfit }: { t: TFn; currency: 
       .then((data) => { setRows(data); setPage(1); })
       .catch((e: unknown) => setError(e instanceof Error ? e.message : "Erreur"))
       .finally(() => setLoading(false));
-  }, [groupBy, dateFrom, dateTo, storeId]);
+  }, [groupBy, dateFrom, dateTo, storeId, ventesSource]);
 
   const totalPages = Math.max(1, Math.ceil(rows.length / VENTES_PAGE_SIZE));
   const pageRows = rows.slice((page - 1) * VENTES_PAGE_SIZE, page * VENTES_PAGE_SIZE);
@@ -542,6 +544,19 @@ function VentesTab({ t, currency, storeId, canViewProfit }: { t: TFn; currency: 
               onChange={(e) => setDateTo(e.target.value)}
               className="w-full h-10 border rounded-md px-3 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-primary/60"
             />
+          </div>
+        </div>
+        {/* Source filter segmented control */}
+        <div>
+          <label className="text-xs text-muted-foreground mb-1 block">{t("Canal", "القناة")}</label>
+          <div className="flex rounded-md border overflow-hidden text-sm">
+            {([ ["all", t("Tout", "الكل")], ["pos", t("Vente Rapide", "بيع سريع")], ["online", t("Commandes en ligne", "طلبات إلكترونية")], ["bon", t("Bon de vente", "وصل بيع")] ] as [string, string][]).map(([val, label]) => (
+              <button
+                key={val}
+                onClick={() => setVentesSource(val as "all" | "pos" | "online" | "bon")}
+                className={`flex-1 py-2 px-1 text-xs transition-colors ${ventesSource === val ? "bg-primary text-primary-foreground font-semibold" : "bg-background hover:bg-muted/50"}`}
+              >{label}</button>
+            ))}
           </div>
         </div>
       </div>
@@ -644,6 +659,7 @@ function BeneficeTab({ t, currency, storeId }: { t: TFn; currency: string; store
   const [groupBy, setGroupBy] = React.useState<"jour" | "mois" | "annee">("jour");
   const [dateFrom, setDateFrom] = React.useState(defaultFrom);
   const [dateTo, setDateTo] = React.useState(today);
+  const [ventesSource, setVentesSource] = React.useState<"all" | "pos" | "online" | "bon">("all");
   const [rows, setRows] = React.useState<VenteRow[]>([]);
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
@@ -656,6 +672,7 @@ function BeneficeTab({ t, currency, storeId }: { t: TFn; currency: string; store
     const token = localStorage.getItem("midanic_token");
     const params = new URLSearchParams({ groupBy, dateFrom, dateTo });
     if (storeId) params.set("storeId", storeId);
+    if (ventesSource !== "all") params.set("source", ventesSource);
     fetch(`${apiBase}/api/erp/dashboard/ventes?${params}`, {
       headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}) },
     })
@@ -663,7 +680,7 @@ function BeneficeTab({ t, currency, storeId }: { t: TFn; currency: string; store
       .then((data) => { setRows(data); setPage(1); })
       .catch((e: unknown) => setError(e instanceof Error ? e.message : "Erreur"))
       .finally(() => setLoading(false));
-  }, [groupBy, dateFrom, dateTo, storeId]);
+  }, [groupBy, dateFrom, dateTo, storeId, ventesSource]);
 
   const totalPages = Math.max(1, Math.ceil(rows.length / BENEFICE_PAGE_SIZE));
   const pageRows = rows.slice((page - 1) * BENEFICE_PAGE_SIZE, page * BENEFICE_PAGE_SIZE);
@@ -700,6 +717,19 @@ function BeneficeTab({ t, currency, storeId }: { t: TFn; currency: string; store
             <label className="text-xs text-muted-foreground mb-1 block">{t("Fin", "النهاية")}</label>
             <input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)}
               className="w-full h-10 border rounded-md px-3 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-primary/60" />
+          </div>
+        </div>
+        {/* Source filter segmented control */}
+        <div>
+          <label className="text-xs text-muted-foreground mb-1 block">{t("Canal", "القناة")}</label>
+          <div className="flex rounded-md border overflow-hidden text-sm">
+            {([ ["all", t("Tout", "الكل")], ["pos", t("Vente Rapide", "بيع سريع")], ["online", t("Commandes en ligne", "طلبات إلكترونية")], ["bon", t("Bon de vente", "وصل بيع")] ] as [string, string][]).map(([val, label]) => (
+              <button
+                key={val}
+                onClick={() => setVentesSource(val as "all" | "pos" | "online" | "bon")}
+                className={`flex-1 py-2 px-1 text-xs transition-colors ${ventesSource === val ? "bg-primary text-primary-foreground font-semibold" : "bg-background hover:bg-muted/50"}`}
+              >{label}</button>
+            ))}
           </div>
         </div>
       </div>

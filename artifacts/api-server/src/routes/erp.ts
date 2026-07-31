@@ -461,13 +461,22 @@ router.get("/erp/dashboard/caisses", authenticate, requireStaff, requireStore, r
 router.get("/erp/dashboard/ventes", authenticate, requireStaff, requireStore, requirePermission("dashboard", "view"), async (req: AuthRequest, res) => {
   try {
     const sid = dashboardStoreId(req);
-    const { groupBy = "jour", dateFrom, dateTo } = req.query as Record<string, string | undefined>;
+    const { groupBy = "jour", dateFrom, dateTo, source } = req.query as Record<string, string | undefined>;
     const fromDate = dateFrom ?? new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
     const toDate = dateTo ?? new Date().toISOString().slice(0, 10);
     const periodFmt = groupBy === "annee" ? "YYYY" : groupBy === "mois" ? "YYYY-MM" : "YYYY-MM-DD";
     const ordersStoreFilter = sid !== null ? sql` AND o.store_id = ${sid}` : sql``;
     const retoursStoreFilter = sid !== null ? sql` AND br.store_id = ${sid}` : sql``;
     const chargesStoreFilter = sid !== null ? sql` AND t.store_id = ${sid}` : sql``;
+    const allowedSources = ["pos", "bon", "online"] as const;
+    const sourceFilter = allowedSources.includes(source as (typeof allowedSources)[number])
+      ? source === "online"
+        // Mirror the safe orders-endpoint predicate: explicitly-tagged 'online' rows OR
+        // legacy NULL rows that have no seller (seller-present NULLs are POS and are
+        // caught by the boot backfill, but we guard here too for safety).
+        ? sql` AND (o.order_source = 'online' OR (o.order_source IS NULL AND o.seller_user_id IS NULL))`
+        : sql` AND o.order_source = ${source}`
+      : sql``;
     // Date window mirrors Rapport mensuel exactly: BETWEEN from::timestamp AND (to::timestamp + 1 day).
     const ordersDateFilter = sql` AND o.created_at BETWEEN ${fromDate}::timestamp AND (${toDate}::timestamp + INTERVAL '1 day')`;
     const retoursDateFilter = sql` AND br.created_at BETWEEN ${fromDate}::timestamp AND (${toDate}::timestamp + INTERVAL '1 day')`;
@@ -503,6 +512,7 @@ router.get("/erp/dashboard/ventes", authenticate, requireStaff, requireStore, re
         WHERE o.status NOT IN ('cancelled', 'draft')
           ${ordersDateFilter}
           ${ordersStoreFilter}
+          ${sourceFilter}
         GROUP BY 1
       ),
       order_cogs AS (
@@ -513,6 +523,7 @@ router.get("/erp/dashboard/ventes", authenticate, requireStaff, requireStore, re
         WHERE o.status NOT IN ('cancelled', 'draft')
           ${ordersDateFilter}
           ${ordersStoreFilter}
+          ${sourceFilter}
         GROUP BY 1
       ),
       retours AS (
@@ -570,13 +581,19 @@ router.get("/erp/dashboard/ventes", authenticate, requireStaff, requireStore, re
 router.get("/erp/dashboard/ventes-produits", authenticate, requireStaff, requireStore, requirePermission("dashboard", "view"), async (req: AuthRequest, res) => {
   try {
     const sid = dashboardStoreId(req);
-    const { dateFrom, dateTo } = req.query as Record<string, string | undefined>;
+    const { dateFrom, dateTo, source } = req.query as Record<string, string | undefined>;
     const fromDate = dateFrom ?? new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
     const toDate = dateTo ?? new Date().toISOString().slice(0, 10);
     const fromTs = `${fromDate}T00:00:00`;
     const toTs = `${toDate}T23:59:59`;
     const storeFilter = sid !== null ? sql` AND o.store_id = ${sid}` : sql``;
     const retoursStoreFilter = sid !== null ? sql` AND br.store_id = ${sid}` : sql``;
+    const allowedSourcesVP = ["pos", "bon", "online"] as const;
+    const vpSourceFilter = allowedSourcesVP.includes(source as (typeof allowedSourcesVP)[number])
+      ? source === "online"
+        ? sql` AND (o.order_source = 'online' OR (o.order_source IS NULL AND o.seller_user_id IS NULL))`
+        : sql` AND o.order_source = ${source}`
+      : sql``;
     const rows = await db.execute(sql`
       WITH combined AS (
         -- Sales rows (positive)
@@ -607,6 +624,7 @@ router.get("/erp/dashboard/ventes-produits", authenticate, requireStaff, require
           AND o.created_at >= ${fromTs}
           AND o.created_at <= ${toTs}
           ${storeFilter}
+          ${vpSourceFilter}
         GROUP BY p.id, p.name_en, p.name_ar, pb.name_fr, p.brand, pf.name_fr,
                  p.reference, p.barcode, p.stock, p.price, p.cost_price
 

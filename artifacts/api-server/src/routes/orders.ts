@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { eq, desc, sql, lt, and, inArray, isNull, isNotNull, ne } from "drizzle-orm";
+import { eq, desc, sql, lt, and, inArray, isNull, isNotNull, ne, or } from "drizzle-orm";
 import { db, schema } from "../lib/db";
 import { authenticate, requireAdmin, requireStaff, requireStore, optionalAuth, requirePermission, type AuthRequest } from "../lib/auth";
 import { resolvePublicStore } from "../lib/store-context";
@@ -509,8 +509,17 @@ router.get("/admin/orders", authenticate, requireStaff, requireStore, requirePer
       return;
     }
     const channelFilter =
-      channel === "online" ? isNull(schema.ordersTable.sellerUserId)
-      : channel === "pos" ? isNotNull(schema.ordersTable.sellerUserId)
+      channel === "online"
+        // Include explicitly-tagged 'online' orders, plus legacy NULL rows that have
+        // no seller (seller_user_id IS NULL = storefront origin, not counter POS).
+        // After the boot backfill, all seller-present rows get order_source='pos',
+        // so the NULL arm catches only truly historical storefront orders.
+        ? or(
+            eq(schema.ordersTable.orderSource, "online"),
+            and(isNull(schema.ordersTable.orderSource), isNull(schema.ordersTable.sellerUserId))
+          )
+      : channel === "pos"
+        ? or(eq(schema.ordersTable.orderSource, "pos"), eq(schema.ordersTable.orderSource, "bon"))
       : undefined;
     const noDraft = ne(schema.ordersTable.status, "draft");
     const whereClause = channelFilter
@@ -943,6 +952,7 @@ router.post("/erp/pos/drafts", authenticate, requireStaff, requireStore, require
       totalAmount: totalAmount.toFixed(2),
       discountAmount: "0.00",
       status: "draft",
+      orderSource: "pos",
     }).returning();
     for (const line of lines) {
       await db.insert(schema.orderItemsTable).values({
@@ -1123,6 +1133,7 @@ router.post("/erp/pos/drafts/:id/confirm", authenticate, requireStaff, requireSt
         customerAddress,
         sellerUserId,
         totalAmount: totalAmount.toFixed(2),
+        orderSource: "pos",
         updatedAt: new Date(),
       }).where(eq(schema.ordersTable.id, draftId)).returning();
 

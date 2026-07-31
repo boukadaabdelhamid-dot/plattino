@@ -66,6 +66,7 @@ export default function AppLayout() {
       <Drawer.Screen name="purchase-orders/[id]" options={{ title: "Bon d'achat" }} />
       <Drawer.Screen name="purchase-orders/[id]/edit" options={{ title: "Modifier le bon d'achat", drawerItemStyle: { display: "none" } }} />
       <Drawer.Screen name="smart-purchase/index" options={{ title: "Achat intelligent" }} />
+      <Drawer.Screen name="smart-purchase/suggestion-form" options={{ title: "Nouvelle idée", drawerItemStyle: { display: "none" } }} />
       <Drawer.Screen name="employees/index" options={{ title: "Employés" }} />
       <Drawer.Screen name="employees/new" options={{ title: "Nouvel employé", drawerItemStyle: { display: "none" } }} />
       <Drawer.Screen name="employees/[id]/edit" options={{ title: "Modifier l'employé", drawerItemStyle: { display: "none" } }} />

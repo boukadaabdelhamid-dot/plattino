@@ -3,7 +3,7 @@ import bcrypt from "bcryptjs";
 import { eq, and, sql } from "drizzle-orm";
 import { randomBytes, createHash } from "crypto";
 import { db, schema } from "../lib/db";
-import { signToken, authenticate, type AuthRequest } from "../lib/auth";
+import { signToken, authenticate, normalizeEmail, isEmailUniqueViolation, type AuthRequest } from "../lib/auth";
 import { listUserStores } from "../lib/store-context";
 import { sendPasswordResetEmail } from "../lib/email";
 
@@ -11,12 +11,14 @@ const router = Router();
 
 router.post("/auth/register", async (req, res) => {
   try {
-    const { name, email, password, preferredLang } = req.body;
-    if (!name || !email || !password) {
+    const { name, email: rawEmail, password, preferredLang } = req.body;
+    if (!name || !rawEmail || !password) {
       res.status(400).json({ error: "name, email, password required" });
       return;
     }
-    const existing = await db.select().from(schema.usersTable).where(eq(schema.usersTable.email, email)).limit(1);
+    const email = normalizeEmail(rawEmail);
+    const existing = await db.select().from(schema.usersTable)
+      .where(sql`lower(trim(${schema.usersTable.email})) = ${email}`).limit(1);
     if (existing.length > 0) {
       res.status(409).json({ error: "Email already registered" });
       return;
@@ -29,6 +31,7 @@ router.post("/auth/register", async (req, res) => {
     const token = signToken({ id: user.id, email: user.email, role: user.role });
     res.status(201).json({ token, user: { id: user.id, name: user.name, email: user.email, role: user.role }, stores: [] });
   } catch (err) {
+    if (isEmailUniqueViolation(err)) { res.status(409).json({ error: "Email already registered" }); return; }
     req.log.error(err);
     res.status(500).json({ error: "Internal server error" });
   }
@@ -109,14 +112,14 @@ router.put("/auth/me", authenticate, async (req: AuthRequest, res) => {
     if (address !== undefined) update["address"] = String(address).trim() || null;
     if (city !== undefined) update["city"] = String(city).trim() || null;
     if (email !== undefined) {
-      const trimmed = String(email).trim().toLowerCase();
+      const trimmed = normalizeEmail(email);
       if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmed)) {
         res.status(400).json({ error: "Invalid email format" });
         return;
       }
       const [existing] = await db.select({ id: schema.usersTable.id })
         .from(schema.usersTable)
-        .where(eq(schema.usersTable.email, trimmed))
+        .where(sql`lower(trim(${schema.usersTable.email})) = ${trimmed}`)
         .limit(1);
       if (existing && existing.id !== req.user!.id) {
         res.status(409).json({ error: "Email already in use" });
@@ -143,6 +146,7 @@ router.put("/auth/me", authenticate, async (req: AuthRequest, res) => {
       city: user.city ?? null,
     });
   } catch (err) {
+    if (isEmailUniqueViolation(err)) { res.status(409).json({ error: "Email already in use" }); return; }
     req.log.error(err);
     res.status(500).json({ error: "Internal server error" });
   }
@@ -182,12 +186,12 @@ router.post("/auth/forgot-password", async (req, res) => {
       return;
     }
 
-    const normalizedEmail = String(email).toLowerCase().trim();
+    const normalizedEmail = normalizeEmail(email);
     console.log(`[forgot-password] 2. looking up email="${normalizedEmail}"`);
 
     const [user] = await db.select({ id: schema.usersTable.id, email: schema.usersTable.email })
       .from(schema.usersTable)
-      .where(eq(schema.usersTable.email, normalizedEmail))
+      .where(sql`lower(trim(${schema.usersTable.email})) = ${normalizedEmail}`)
       .limit(1);
 
     console.log(`[forgot-password] 3. user lookup result: ${user ? `found id=${user.id} email=${user.email}` : "NOT FOUND — skipping email"}`);

@@ -139,6 +139,23 @@ export function requirePermission(section: string, action: string) {
   };
 }
 
+// Canonical form for user-account emails: trimmed + lowercased. Every write
+// and lookup against users.email must go through this so login's
+// case-insensitive match can never find two candidate accounts.
+export function normalizeEmail(email: unknown): string {
+  return String(email ?? "").trim().toLowerCase();
+}
+
+// True when a DB error is a unique violation on a users.email constraint —
+// callers should map it to 409 "Email already in use" (covers races the
+// pre-checks can't).
+export function isEmailUniqueViolation(err: unknown): boolean {
+  const e = err as { code?: string; constraint?: string; message?: string };
+  return e?.code === "23505" &&
+    (e.constraint === "users_email_canonical_uq" || e.constraint === "users_email_unique" ||
+     /users.*email/i.test(e.constraint ?? e.message ?? ""));
+}
+
 export function optionalAuth(req: AuthRequest, _res: Response, next: NextFunction) {
   const authHeader = req.headers.authorization;
   if (authHeader?.startsWith("Bearer ")) {

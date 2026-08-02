@@ -1,4 +1,5 @@
-import { pgTable, serial, text, timestamp, pgEnum, boolean } from "drizzle-orm/pg-core";
+import { pgTable, serial, text, timestamp, pgEnum, boolean, uniqueIndex } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";
 
@@ -18,7 +19,11 @@ export const usersTable = pgTable("users", {
   notes: text("notes"),
   isActive: boolean("is_active").notNull().default(true),
   createdAt: timestamp("created_at").defaultNow().notNull(),
-});
+}, (t) => [
+  // Canonical-email uniqueness: login matches case-insensitively, so two
+  // accounts must never differ only by case/whitespace.
+  uniqueIndex("users_email_canonical_uq").on(sql`lower(trim(${t.email}))`),
+]);
 
 export const insertUserSchema = createInsertSchema(usersTable).omit({ id: true, createdAt: true, passwordHash: true, role: true });
 export type InsertUser = z.infer<typeof insertUserSchema>;

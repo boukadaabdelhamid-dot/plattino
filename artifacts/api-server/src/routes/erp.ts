@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { eq, desc, asc, sql, and, gt, ne, or, inArray, isNull, notLike, ilike } from "drizzle-orm";
 import bcrypt from "bcryptjs";
 import { db, schema } from "../lib/db";
-import { authenticate, requireAdmin, requireStaff, requireStore, isAdmin, requirePermission, type AuthRequest } from "../lib/auth";
+import { authenticate, requireAdmin, requireStaff, requireStore, isAdmin, requirePermission, normalizeEmail, isEmailUniqueViolation, type AuthRequest } from "../lib/auth";
 import { broadcastToAdmins, broadcastCaisseChanged } from "../lib/ws";
 import { ensureCaisse } from "./caisses";
 import {
@@ -85,12 +85,12 @@ async function ensureCustomerRole(tx: Tx, storeId: number, contactId: number, s:
       eq(schema.customerProfilesTable.storeId, storeId),
     )).limit(1);
   if (existing) return existing.userId;
-  const email = (s.email ?? "").trim();
+  const email = normalizeEmail(s.email);
   if (!email) throw new HttpError(400, "email is required to create the customer side of a customer/supplier contact");
   // If a user with this email already exists, reuse them and just create a
   // profile for this store rather than throwing a 409.
   const [dup] = await tx.select({ id: schema.usersTable.id })
-    .from(schema.usersTable).where(eq(schema.usersTable.email, email)).limit(1);
+    .from(schema.usersTable).where(sql`lower(trim(${schema.usersTable.email})) = ${email}`).limit(1);
   let uid: number;
   if (dup) {
     uid = dup.id;
@@ -809,7 +809,8 @@ router.get("/erp/employees", authenticate, requireStaff, requireStore, requirePe
 router.post("/erp/employees", authenticate, requireStaff, requireStore, requirePermission("employees", "create"), async (req: AuthRequest, res) => {
   try {
     const storeId = req.currentStoreId!;
-    const { name, email, phone, position, salary, hireDate, password, matricule, cnasNumber, bankAccount } = req.body;
+    const { name, email: rawEmail, phone, position, salary, hireDate, password, matricule, cnasNumber, bankAccount } = req.body;
+    const email = rawEmail ? normalizeEmail(rawEmail) : rawEmail;
     if (!name || !position || !salary || !hireDate) {
       res.status(400).json({ error: "name, position, salary, hireDate are required" });
       return;
@@ -825,7 +826,7 @@ router.post("/erp/employees", authenticate, requireStaff, requireStore, requireP
       let userId: number | null = null;
       if (email) {
         const existing = await tx.select({ id: schema.usersTable.id })
-          .from(schema.usersTable).where(eq(schema.usersTable.email, email)).limit(1);
+          .from(schema.usersTable).where(sql`lower(trim(${schema.usersTable.email})) = ${email}`).limit(1);
         if (existing.length > 0) {
           // Reuse existing user — just update role if needed
           userId = existing[0].id;
@@ -873,7 +874,10 @@ router.post("/erp/employees", authenticate, requireStaff, requireStore, requireP
       WHERE e.id = ${result.id}
     `).then(r => r.rows);
     res.status(201).json(enriched);
-  } catch (err) { req.log.error(err); res.status(500).json({ error: "Internal server error" }); }
+  } catch (err) {
+    if (isEmailUniqueViolation(err)) { res.status(409).json({ error: "Email already in use" }); return; }
+    req.log.error(err); res.status(500).json({ error: "Internal server error" });
+  }
 });
 
 // PUT — update employee + sync user account
@@ -881,7 +885,8 @@ router.put("/erp/employees/:id", authenticate, requireStaff, requireStore, requi
   try {
     const storeId = req.currentStoreId!;
     const empId = pid(req, "id");
-    const { name, email, phone, position, salary, hireDate, status, matricule, cnasNumber, bankAccount } = req.body;
+    const { name, email: rawEmpEmail, phone, position, salary, hireDate, status, matricule, cnasNumber, bankAccount } = req.body;
+    const email = rawEmpEmail === undefined ? undefined : (rawEmpEmail ? normalizeEmail(rawEmpEmail) : rawEmpEmail);
 
     const [existing] = await db.select().from(schema.employeesTable)
       .where(and(eq(schema.employeesTable.id, empId), eq(schema.employeesTable.storeId, storeId)))
@@ -894,6 +899,15 @@ router.put("/erp/employees/:id", authenticate, requireStaff, requireStore, requi
         .where(and(eq(schema.employeesTable.matricule, matricule), ne(schema.employeesTable.id, empId)))
         .limit(1);
       if (dupe) { res.status(409).json({ error: "Matricule already in use" }); return; }
+    }
+
+    // Email change syncs to the linked user account — enforce canonical uniqueness.
+    if (email && existing.userId) {
+      const [dupUser] = await db.select({ id: schema.usersTable.id })
+        .from(schema.usersTable)
+        .where(and(sql`lower(trim(${schema.usersTable.email})) = ${email}`, ne(schema.usersTable.id, existing.userId)))
+        .limit(1);
+      if (dupUser) { res.status(409).json({ error: "Email already in use" }); return; }
     }
 
     await db.transaction(async (tx) => {
@@ -941,7 +955,10 @@ router.put("/erp/employees/:id", authenticate, requireStaff, requireStore, requi
       WHERE e.id = ${empId}
     `).then(r => r.rows);
     res.json(enriched);
-  } catch (err) { req.log.error(err); res.status(500).json({ error: "Internal server error" }); }
+  } catch (err) {
+    if (isEmailUniqueViolation(err)) { res.status(409).json({ error: "Email already in use" }); return; }
+    req.log.error(err); res.status(500).json({ error: "Internal server error" });
+  }
 });
 
 // DELETE — set inactive + block login
@@ -3181,9 +3198,9 @@ router.post("/erp/customers", authenticate, requireStaff, requireStore, requireP
     // Email is optional. If provided, reuse an existing customer account with that
     // email (cross-store support). If omitted, a synthetic placeholder is generated
     // so the users table NOT NULL constraint is satisfied; it can be replaced later.
-    const trimmedEmail = (typeof email === "string" ? email : "").trim();
+    const trimmedEmail = normalizeEmail(typeof email === "string" ? email : "");
     const [existingUser] = trimmedEmail
-      ? await db.select().from(schema.usersTable).where(eq(schema.usersTable.email, trimmedEmail)).limit(1)
+      ? await db.select().from(schema.usersTable).where(sql`lower(trim(${schema.usersTable.email})) = ${trimmedEmail}`).limit(1)
       : [undefined];
     if (existingUser && existingUser.role !== "customer") {
       res.status(409).json({ error: "Email belongs to a non-customer account" });
@@ -3393,11 +3410,11 @@ router.put("/erp/customers/:id", authenticate, requireStaff, requireStore, requi
     if (city !== undefined) userUpdate.city = city;
     // email update: check uniqueness before writing
     if (email !== undefined) {
-      const newEmail = String(email).trim();
+      const newEmail = normalizeEmail(email);
       if (newEmail) {
         const [dup] = await db.select({ id: schema.usersTable.id })
           .from(schema.usersTable)
-          .where(and(eq(schema.usersTable.email, newEmail), ne(schema.usersTable.id, userId)))
+          .where(and(sql`lower(trim(${schema.usersTable.email})) = ${newEmail}`, ne(schema.usersTable.id, userId)))
           .limit(1);
         if (dup) { res.status(409).json({ error: "Email already in use" }); return; }
         userUpdate.email = newEmail;
@@ -4510,18 +4527,19 @@ router.get("/erp/staff", authenticate, requireAdmin, async (req, res) => {
 
 router.post("/erp/staff", authenticate, requireAdmin, async (req, res) => {
   try {
-    const { name, email, password, role, phone, storeIds } = req.body || {};
-    if (!name || !email || !password) {
+    const { name, email: rawStaffEmail, password, role, phone, storeIds } = req.body || {};
+    if (!name || !rawStaffEmail || !password) {
       res.status(400).json({ error: "name, email and password are required" });
       return;
     }
+    const email = normalizeEmail(rawStaffEmail);
     if (String(password).length < 6) {
       res.status(400).json({ error: "Password must be at least 6 characters" });
       return;
     }
     const wantedRole = role === "admin" ? "admin" : "employee";
     const existing = await db.select({ id: schema.usersTable.id })
-      .from(schema.usersTable).where(eq(schema.usersTable.email, email)).limit(1);
+      .from(schema.usersTable).where(sql`lower(trim(${schema.usersTable.email})) = ${email}`).limit(1);
     if (existing.length > 0) {
       res.status(409).json({ error: "A user with this email already exists" });
       return;
@@ -4572,7 +4590,10 @@ router.post("/erp/staff", authenticate, requireAdmin, async (req, res) => {
       role: user.role, phone: user.phone, created_at: user.createdAt,
       storeIds: targetStoreIds,
     });
-  } catch (err) { req.log.error(err); res.status(500).json({ error: "Internal server error" }); }
+  } catch (err) {
+    if (isEmailUniqueViolation(err)) { res.status(409).json({ error: "A user with this email already exists" }); return; }
+    req.log.error(err); res.status(500).json({ error: "Internal server error" });
+  }
 });
 
 router.put("/erp/staff/:id/stores", authenticate, requireAdmin, async (req: AuthRequest, res) => {

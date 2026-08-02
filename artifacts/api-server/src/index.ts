@@ -827,6 +827,40 @@ async function runMigrations() {
   logger.info({ applied, skipped }, "DB migrations done.");
 }
 
+// Canonical-email uniqueness: login matches emails case-insensitively, so two
+// accounts must never differ only by case/whitespace. Unlike runMigrations
+// (which swallows errors), this step is STARTUP-FATAL: running with
+// case-insensitive login but without the unique invariant would make
+// authentication nondeterministic, so the server refuses to boot until the
+// data is fixed and the index verifiably exists.
+async function ensureCanonicalEmailIndex() {
+  try {
+    const collisions = await pool.query(
+      `SELECT lower(trim(email)) AS canonical, array_agg(id ORDER BY id) AS user_ids, array_agg(email ORDER BY id) AS emails
+       FROM users GROUP BY 1 HAVING count(*) > 1`,
+    );
+    if (collisions.rows.length > 0) {
+      logger.error(
+        { collisions: collisions.rows },
+        "FATAL: duplicate user accounts differing only by email case/whitespace. " +
+        "Login is case-insensitive and cannot be deterministic for these accounts. " +
+        "Merge or re-email the duplicates listed above (UPDATE users SET email=... WHERE id=...), then restart.",
+      );
+      process.exit(1);
+    }
+    await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS users_email_canonical_uq ON users (lower(trim(email)))`);
+    const check = await pool.query(`SELECT 1 FROM pg_indexes WHERE indexname = 'users_email_canonical_uq'`);
+    if (check.rows.length === 0) {
+      logger.error("FATAL: users_email_canonical_uq index missing after creation attempt — canonical email uniqueness is NOT enforced.");
+      process.exit(1);
+    }
+    logger.info("Canonical email unique index verified.");
+  } catch (err) {
+    logger.error({ err }, "FATAL: failed to enforce canonical email uniqueness — refusing to run without the invariant.");
+    process.exit(1);
+  }
+}
+
 async function runBootstrap() {
   try {
     await bootstrap();
@@ -1049,6 +1083,7 @@ server.listen(port, async () => {
   logger.info({ port }, "Server listening");
   await initStorage();
   await runMigrations();
+  await ensureCanonicalEmailIndex();
   await runCaisseGlobalMigration(pool);
   await runContactGlobalLinkMigration(pool);
   await runProductAttributeDedupMigration(pool);

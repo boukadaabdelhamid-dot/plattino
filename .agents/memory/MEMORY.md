@@ -37,4 +37,5 @@
 - [Mobile raw-fetch admin endpoints](mobile-raw-fetch-admin-endpoints.md) — /erp/permissions/:userId and /auth/me(+/password) have no generated hook; mirror the web ERP's raw-fetch pattern instead of assuming a gap.
 - [drizzle-kit push unsafe here](drizzle-kit-push-unsafe.md) — hangs on interactive prompt / offers unrelated drops; apply schema.ts changes by hand via psql + verify with \d instead.
 - [openapi.yaml codegen drift risk](openapi-codegen-drift-risk.md) — some real routes were never added to openapi.yaml; regenerating orval can silently delete their hooks. Diff removed exports after every codegen run.
+- [Order source pos/online + expired-token trap](order-source-classification.md) — POST /orders must 401 on an invalid Bearer (never treat as guest); emails canonical lower(trim); no order_source backfills on valued rows.
 - [Railway startCommand must fail loudly](railway-startcommand-fail-loud.md) — chaining boot steps with `;` lets a failed `drizzle-kit push` be silently skipped while the server still boots on a stale schema; always use `set -e` + `&&`.

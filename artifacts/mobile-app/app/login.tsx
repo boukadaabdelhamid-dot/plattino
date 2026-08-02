@@ -34,7 +34,7 @@ export default function Login() {
       return;
     }
     loginMutation.mutate(
-      { data: { email, password } },
+      { data: { email: email.trim().toLowerCase(), password } },
       {
         onSuccess: async (res) => {
           if (res.user?.role === "customer") {
@@ -103,6 +103,8 @@ export default function Login() {
             placeholder="nom@midanic.com"
             keyboardType="email-address"
             autoCapitalize="none"
+            autoCorrect={false}
+            autoComplete="email"
           />
           <FormField
             label={t("Mot de passe", "كلمة المرور")}
@@ -110,6 +112,8 @@ export default function Login() {
             onChangeText={setPassword}
             secureTextEntry
             autoCapitalize="none"
+            autoCorrect={false}
+            autoComplete="password"
           />
           {error ? <Text style={styles.error}>{error}</Text> : null}
           <Button

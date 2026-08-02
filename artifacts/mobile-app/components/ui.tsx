@@ -89,6 +89,8 @@ export function FormField({
   editable = true,
   error,
   autoCapitalize = "sentences",
+  autoCorrect = true,
+  autoComplete,
 }: {
   label: string;
   value: string;
@@ -100,6 +102,8 @@ export function FormField({
   editable?: boolean;
   error?: string;
   autoCapitalize?: "none" | "sentences" | "words" | "characters";
+  autoCorrect?: boolean;
+  autoComplete?: "email" | "password" | "username" | "off";
 }) {
   return (
     <View style={{ marginBottom: 14 }}>
@@ -114,6 +118,8 @@ export function FormField({
         multiline={multiline}
         editable={editable}
         autoCapitalize={autoCapitalize}
+        autoCorrect={autoCorrect}
+        autoComplete={autoComplete}
         style={[
           styles.input,
           multiline && { height: 90, textAlignVertical: "top" },

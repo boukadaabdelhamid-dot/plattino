@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useEffect, useState, useCallback } from "react";
-import { useAuth } from "./use-auth";
+import { useAuth, forceLogout } from "./use-auth";
 import { useMe } from "./use-me";
 import { useStoreContext } from "./use-store";
 
@@ -79,6 +79,12 @@ export function PermissionsProvider({ children }: { children: React.ReactNode })
       const res = await fetch(`${apiBase}/api/erp/permissions/me`, {
         headers: { Authorization: `Bearer ${token}` },
       });
+      if (res.status === 401 || res.status === 403) {
+        // Expired/invalid token — a silent empty-permission state looks like
+        // "my permissions disappeared". Force a clean re-login instead.
+        forceLogout("expired");
+        return;
+      }
       if (!res.ok) { setIsLoaded(true); return; }
       const rows: PermRow[] = await res.json();
       const map = new Map<string, boolean>();

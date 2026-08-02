@@ -153,3 +153,24 @@ export function optionalAuth(req: AuthRequest, _res: Response, next: NextFunctio
   }
   next();
 }
+
+// Like optionalAuth, but if the client DID send a Bearer token that is
+// invalid or expired, reject with 401 instead of silently treating the
+// request as anonymous. Critical for order creation: a POS sale made with
+// an expired staff token must NOT fall through as an anonymous "online"
+// order (wrong channel, no seller, no caisse credit).
+export function optionalAuthStrict(req: AuthRequest, res: Response, next: NextFunction) {
+  const authHeader = req.headers.authorization;
+  if (authHeader?.startsWith("Bearer ")) {
+    try {
+      req.user = verifyToken(authHeader.slice(7));
+      if (typeof req.user.currentStoreId === "number") {
+        req.currentStoreId = req.user.currentStoreId;
+      }
+    } catch {
+      res.status(401).json({ error: "Session expirée — veuillez vous reconnecter." });
+      return;
+    }
+  }
+  next();
+}

@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { eq, desc, sql, lt, and, inArray, isNull, isNotNull, ne, or } from "drizzle-orm";
 import { db, schema } from "../lib/db";
-import { authenticate, requireAdmin, requireStaff, requireStore, optionalAuth, requirePermission, type AuthRequest } from "../lib/auth";
+import { authenticate, requireAdmin, requireStaff, requireStore, optionalAuth, optionalAuthStrict, requirePermission, type AuthRequest } from "../lib/auth";
 import { resolvePublicStore } from "../lib/store-context";
 import { broadcastToAdmins, broadcastToStoreUsers, broadcastToStaffByStores, broadcastCaisseChanged } from "../lib/ws";
 import { ensureCaisse } from "./caisses";
@@ -19,7 +19,7 @@ const pid = (req: { params: Record<string, string | string[]> }, key: string): n
 // POST /orders — atomic checkout. Resolves the store from the public storefront
 // (?store=<slug> / X-Store-Slug header), or — if the customer happens to be
 // logged in via JWT with a currentStoreId — uses that.
-router.post("/orders", optionalAuth, async (req: AuthRequest, res, next) => {
+router.post("/orders", optionalAuthStrict, async (req: AuthRequest, res, next) => {
   if (typeof req.currentStoreId === "number") return handleCreateOrder(req, res);
   return resolvePublicStore(req, res, () => handleCreateOrder(req, res));
 });

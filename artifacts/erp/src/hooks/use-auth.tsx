@@ -7,7 +7,8 @@ setAuthTokenGetter(() => localStorage.getItem("midanic_token"));
 const STORE_KEY = "midanic.erp.currentStoreId";
 
 /** Call this from outside React components (e.g. QueryClient error handler) */
-export function forceLogout() {
+export function forceLogout(reason?: "expired") {
+  if (reason === "expired") sessionStorage.setItem("midanic.sessionExpired", "1");
   localStorage.removeItem("midanic_token");
   localStorage.removeItem(STORE_KEY);
   window.location.href = `${import.meta.env.BASE_URL}login`.replace(/\/+/g, "/");

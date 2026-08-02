@@ -1053,10 +1053,12 @@ server.listen(port, async () => {
   await runContactGlobalLinkMigration(pool);
   await runProductAttributeDedupMigration(pool);
   await runOrderSourceMigration(pool);
-  // Backfill: web-store orders have seller_user_id IS NULL; tag them 'online'
-  // Legacy POS orders with a seller but no order_source get tagged 'pos'
+  // Backfill ONLY rows that never got an order_source (legacy, pre-column).
+  // NOTE: never touch rows that already have a source — the old
+  // "pos + no seller => online" flip misclassified real POS sales (made with
+  // an expired staff token) as online orders on every boot, and would undo
+  // manual data corrections.
   try {
-    await pool.query(`UPDATE orders SET order_source = 'online' WHERE order_source = 'pos' AND seller_user_id IS NULL`);
     await pool.query(`UPDATE orders SET order_source = 'online' WHERE order_source IS NULL AND seller_user_id IS NULL`);
     await pool.query(`UPDATE orders SET order_source = 'pos' WHERE order_source IS NULL AND seller_user_id IS NOT NULL`);
     logger.info("Online order_source backfill applied.");

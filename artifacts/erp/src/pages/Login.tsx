@@ -30,6 +30,11 @@ export default function Login() {
   const loginMutation = useLogin();
   const selectStore = useSelectStore();
   const [showPassword, setShowPassword] = useState(false);
+  const [sessionExpired] = useState(() => {
+    const flag = sessionStorage.getItem("midanic.sessionExpired") === "1";
+    sessionStorage.removeItem("midanic.sessionExpired");
+    return flag;
+  });
 
   const {
     register,
@@ -39,8 +44,10 @@ export default function Login() {
   } = useForm<FormData>({ resolver: zodResolver(schema) });
 
   const onSubmit = (data: FormData) => {
+    // Normalize: mobile keyboards auto-capitalize / add stray spaces.
+    const payload = { email: data.email.trim().toLowerCase(), password: data.password };
     loginMutation.mutate(
-      { data },
+      { data: payload },
       {
         onSuccess: (res) => {
           if (res.user?.role === "customer") {
@@ -95,6 +102,11 @@ export default function Login() {
           <CardTitle className="text-2xl font-bold text-primary">Midanic</CardTitle>
         </CardHeader>
         <CardContent>
+          {sessionExpired && (
+            <p className="mb-4 rounded-md bg-amber-50 border border-amber-200 px-3 py-2 text-sm text-amber-800" data-testid="text-session-expired">
+              {t("Votre session a expiré. Veuillez vous reconnecter.", "انتهت جلستك. الرجاء تسجيل الدخول من جديد.")}
+            </p>
+          )}
           <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
             <div className="space-y-1.5">
               <Label htmlFor="email">{t("Email", "البريد الإلكتروني")}</Label>
@@ -102,6 +114,11 @@ export default function Login() {
                 id="email"
                 type="email"
                 data-testid="input-email"
+                autoCapitalize="none"
+                autoCorrect="off"
+                spellCheck={false}
+                autoComplete="username"
+                inputMode="email"
                 {...register("email")}
               />
               {errors.email && (
@@ -116,6 +133,10 @@ export default function Login() {
                   type={showPassword ? "text" : "password"}
                   data-testid="input-password"
                   className="pr-10"
+                  autoCapitalize="none"
+                  autoCorrect="off"
+                  spellCheck={false}
+                  autoComplete="current-password"
                   {...register("password")}
                 />
                 <button

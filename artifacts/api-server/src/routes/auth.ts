@@ -1,6 +1,6 @@
 import { Router } from "express";
 import bcrypt from "bcryptjs";
-import { eq, and } from "drizzle-orm";
+import { eq, and, sql } from "drizzle-orm";
 import { randomBytes, createHash } from "crypto";
 import { db, schema } from "../lib/db";
 import { signToken, authenticate, type AuthRequest } from "../lib/auth";
@@ -36,12 +36,15 @@ router.post("/auth/register", async (req, res) => {
 
 router.post("/auth/login", async (req, res) => {
   try {
-    const { email, password } = req.body;
-    if (!email || !password) {
+    const { email: rawEmail, password } = req.body;
+    if (!rawEmail || !password) {
       res.status(400).json({ error: "email and password required" });
       return;
     }
-    const [user] = await db.select().from(schema.usersTable).where(eq(schema.usersTable.email, email)).limit(1);
+    // Mobile keyboards auto-capitalize and add stray spaces — match case-insensitively.
+    const email = String(rawEmail).trim().toLowerCase();
+    const [user] = await db.select().from(schema.usersTable)
+      .where(sql`lower(trim(${schema.usersTable.email})) = ${email}`).limit(1);
     if (!user) { res.status(401).json({ error: "Invalid credentials" }); return; }
     const valid = await bcrypt.compare(password, user.passwordHash);
     if (!valid) { res.status(401).json({ error: "Invalid credentials" }); return; }

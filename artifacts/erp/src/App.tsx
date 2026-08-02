@@ -60,10 +60,10 @@ function is401(error: unknown): boolean {
 
 const queryClient = new QueryClient({
   queryCache: new QueryCache({
-    onError: (error) => { if (is401(error)) forceLogout(); },
+    onError: (error) => { if (is401(error)) forceLogout("expired"); },
   }),
   mutationCache: new MutationCache({
-    onError: (error) => { if (is401(error)) forceLogout(); },
+    onError: (error) => { if (is401(error)) forceLogout("expired"); },
   }),
   defaultOptions: {
     queries: {

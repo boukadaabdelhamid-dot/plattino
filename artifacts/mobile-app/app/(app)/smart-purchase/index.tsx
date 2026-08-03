@@ -8,7 +8,7 @@
 import React, { useState, useMemo, useEffect, useRef } from "react";
 import {
   View, Text, StyleSheet, Pressable, Modal, ScrollView,
-  FlatList, Image, TextInput, ActivityIndicator,
+  FlatList, Image, TextInput, ActivityIndicator, InteractionManager,
 } from "react-native";
 import { useRouter } from "expo-router";
 import { Feather } from "@expo/vector-icons";
@@ -572,8 +572,20 @@ function FilterModal({
 }) {
   const { t, lang } = useLang();
   const [local, setLocal] = useState<ActiveFilters>(filters);
+  const [contentReady, setContentReady] = useState(false);
   const { data: opts } = useFilterOptions(enabled);
   const { data: suppliers = [] } = useSuppliersAll(visible);
+
+  // Defer heavy content rendering until after the slide-in animation finishes
+  useEffect(() => {
+    if (visible) {
+      setContentReady(false);
+      const task = InteractionManager.runAfterInteractions(() => setContentReady(true));
+      return () => task.cancel();
+    } else {
+      setContentReady(false);
+    }
+  }, [visible]);
 
   useEffect(() => { if (visible) setLocal(filters); }, [visible]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -585,6 +597,13 @@ function FilterModal({
   function reset() { setLocal(DEFAULT_FILTERS); }
   function apply() { onApply(local); onClose(); }
 
+  // Supplier list items: "Tout" pill + one pill per supplier
+  type SupplierPill = { id: number | null; name: string };
+  const supplierPills: SupplierPill[] = useMemo(
+    () => [{ id: null, name: t("Tout", "الكل") }, ...suppliers.map((s) => ({ id: s.id, name: s.name }))],
+    [suppliers], // eslint-disable-line react-hooks/exhaustive-deps
+  );
+
   return (
     <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
       <View style={fm.overlay}>
@@ -594,24 +613,42 @@ function FilterModal({
             <Pressable onPress={onClose} hitSlop={12}><Feather name="x" size={22} color={colors.text} /></Pressable>
           </View>
 
+          {!contentReady ? (
+            <View style={{ flex: 1, alignItems: "center", justifyContent: "center", paddingVertical: 40 }}>
+              <ActivityIndicator color={colors.primary} />
+            </View>
+          ) : (
           <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: 16, gap: 14, paddingBottom: 24 }}>
 
-            {/* Supplier */}
+            {/* Supplier — virtualized FlatList to avoid rendering 500 pills at once */}
             {suppliers.length > 0 ? (
               <>
                 <Text style={fm.sectionLabel}>{t("Fournisseur", "المورد")}</Text>
-                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 6 }}>
-                  <Pressable onPress={() => setLocal((p) => ({ ...p, supplierId: null, supplierName: null }))}
-                    style={[fm.pill, !local.supplierId && fm.pillOn]}>
-                    <Text style={[fm.pillTxt, !local.supplierId && fm.pillTxtOn]}>{t("Tout", "الكل")}</Text>
-                  </Pressable>
-                  {suppliers.map((s) => (
-                    <Pressable key={s.id} onPress={() => setLocal((p) => ({ ...p, supplierId: s.id, supplierName: s.name }))}
-                      style={[fm.pill, local.supplierId === s.id && fm.pillOn]}>
-                      <Text style={[fm.pillTxt, local.supplierId === s.id && fm.pillTxtOn]} numberOfLines={1}>{s.name}</Text>
+                <FlatList
+                  horizontal
+                  data={supplierPills}
+                  keyExtractor={(item) => String(item.id ?? "all")}
+                  showsHorizontalScrollIndicator={false}
+                  initialNumToRender={12}
+                  maxToRenderPerBatch={15}
+                  windowSize={5}
+                  contentContainerStyle={{ gap: 6 }}
+                  renderItem={({ item: s }) => (
+                    <Pressable
+                      onPress={() => setLocal((p) => ({
+                        ...p,
+                        supplierId: s.id,
+                        supplierName: s.id === null ? null : s.name,
+                      }))}
+                      style={[fm.pill, (s.id === null ? !local.supplierId : local.supplierId === s.id) && fm.pillOn]}>
+                      <Text
+                        style={[fm.pillTxt, (s.id === null ? !local.supplierId : local.supplierId === s.id) && fm.pillTxtOn]}
+                        numberOfLines={1}>
+                        {s.name}
+                      </Text>
                     </Pressable>
-                  ))}
-                </ScrollView>
+                  )}
+                />
               </>
             ) : null}
 
@@ -697,6 +734,7 @@ function FilterModal({
               <Text style={fm.dateHint}>{local.dateFrom} → {local.dateTo}</Text>
             ) : null}
           </ScrollView>
+          )}
 
           <View style={fm.footer}>
             <Button label={t("Réinitialiser", "إعادة تعيين")} variant="ghost" onPress={reset} style={{ flex: 1 }} />

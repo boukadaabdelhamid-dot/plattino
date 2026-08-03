@@ -273,6 +273,27 @@ export function useAddToPO() {
   });
 }
 
+// ─── All suppliers (for quick-order sheet) ───────────────────────────────────
+
+export type SupplierRow = {
+  id: number;
+  name: string;
+  city: string | null;
+  phone: string | null;
+};
+
+export function useSuppliersAll(enabled: boolean) {
+  return useQuery<SupplierRow[]>({
+    queryKey: ["suppliers-all"],
+    queryFn: async () => {
+      const json = await erpFetch("/api/erp/suppliers?limit=500") as { data: SupplierRow[] };
+      return json.data ?? [];
+    },
+    enabled,
+    staleTime: 5 * 60_000,
+  });
+}
+
 // ─── Purchase suggestions ──────────────────────────────────────────────────────
 
 export function usePurchaseSuggestions(enabled: boolean) {

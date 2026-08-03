@@ -12,11 +12,6 @@ import {
 } from "react-native";
 import { useRouter } from "expo-router";
 import { Feather } from "@expo/vector-icons";
-import {
-  useGetSuppliers,
-  getGetSuppliersQueryKey,
-  type Supplier,
-} from "@workspace/api-client-react";
 import { useProtectedRoute } from "@/hooks/use-protected-route";
 import { useLang } from "@/contexts/lang-context";
 import { useApiFeedback } from "@/hooks/use-api-feedback";
@@ -29,7 +24,7 @@ import { colors } from "@/lib/colors";
 import {
   useNeededProducts, useFilterOptions, usePurchaseHistory,
   useSnoozeProduct, useExcludeProduct, usePatchProductMinStock,
-  useDraftPOs, useQuickOrder, useAddToPO,
+  useDraftPOs, useQuickOrder, useAddToPO, useSuppliersAll,
   usePurchaseSuggestions, useDeleteSuggestion, useTapSuggestion,
   type NeededRow, type NeededFilters, type DraftPO, type PurchaseSuggestion,
 } from "@/hooks/use-smart-purchase";
@@ -267,9 +262,7 @@ function QuickOrderSheet({
 
   const open = product != null;
 
-  const { data: suppliers = [] } = useGetSuppliers({
-    query: { queryKey: getGetSuppliersQueryKey(), enabled: open },
-  });
+  const { data: suppliers = [] } = useSuppliersAll(open);
 
   const { data: draftPOs = [] } = useDraftPOs(open);
   const { data: history } = usePurchaseHistory(product?.id ?? null, open);
@@ -580,9 +573,7 @@ function FilterModal({
   const { t, lang } = useLang();
   const [local, setLocal] = useState<ActiveFilters>(filters);
   const { data: opts } = useFilterOptions(enabled);
-  const { data: suppliers = [] } = useGetSuppliers({
-    query: { queryKey: getGetSuppliersQueryKey(), enabled: visible },
-  });
+  const { data: suppliers = [] } = useSuppliersAll(visible);
 
   useEffect(() => { if (visible) setLocal(filters); }, [visible]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -968,10 +959,14 @@ export default function SmartPurchase() {
   }), [search, activeTab, sortBy, activeFilters]);
 
   const neededQuery = useNeededProducts(neededFilters, ready && !isIdees);
-  const allRows = useMemo(
-    () => (neededQuery.data?.pages.flatMap((p) => p.rows) ?? []).filter((r) => !hiddenIds.has(r.id)),
-    [neededQuery.data, hiddenIds],
-  );
+  const allRows = useMemo(() => {
+    const seen = new Set<number>();
+    return (neededQuery.data?.pages.flatMap((p) => p.rows) ?? []).filter((r) => {
+      if (hiddenIds.has(r.id) || seen.has(r.id)) return false;
+      seen.add(r.id);
+      return true;
+    });
+  }, [neededQuery.data, hiddenIds]);
   const firstPage = neededQuery.data?.pages[0];
   const ruptureTotal = firstPage?.ruptureTotal ?? 0;
   const lowTotal     = firstPage?.lowTotal     ?? 0;

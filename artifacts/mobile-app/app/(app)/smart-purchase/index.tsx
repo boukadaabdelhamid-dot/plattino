@@ -8,7 +8,7 @@
 import React, { useState, useMemo, useEffect, useRef } from "react";
 import {
   View, Text, StyleSheet, Pressable, Modal, ScrollView,
-  FlatList, Image, TextInput, ActivityIndicator,
+  FlatList, Image, TextInput, ActivityIndicator, Animated, NativeScrollEvent, NativeSyntheticEvent,
 } from "react-native";
 import { useRouter } from "expo-router";
 import { Feather } from "@expo/vector-icons";
@@ -937,6 +937,25 @@ export default function SmartPurchase() {
   const [filterOpen, setFilterOpen]   = useState(false);
   const [hiddenIds, setHiddenIds]     = useState<Set<number>>(new Set());
 
+  // ── Collapsible header animation ──
+  const HEADER_HEIGHT = 96;
+  const headerTranslateY = useRef(new Animated.Value(0)).current;
+  const lastScrollY      = useRef(0);
+  const headerVisible    = useRef(true);
+
+  function onListScroll(e: NativeSyntheticEvent<NativeScrollEvent>) {
+    const y    = e.nativeEvent.contentOffset.y;
+    const diff = y - lastScrollY.current;
+    lastScrollY.current = y;
+    if (diff > 4 && y > HEADER_HEIGHT && headerVisible.current) {
+      headerVisible.current = false;
+      Animated.timing(headerTranslateY, { toValue: -HEADER_HEIGHT, duration: 200, useNativeDriver: true }).start();
+    } else if (diff < -4 && !headerVisible.current) {
+      headerVisible.current = true;
+      Animated.timing(headerTranslateY, { toValue: 0, duration: 200, useNativeDriver: true }).start();
+    }
+  }
+
   // ── Sheets ──
   const [historyProduct, setHistoryProduct] = useState<NeededRow | null>(null);
   const [orderProduct, setOrderProduct]     = useState<NeededRow | null>(null);
@@ -1036,37 +1055,41 @@ export default function SmartPurchase() {
       {/* ── BESOINS tabs ── */}
       {!isIdees ? (
         <View style={{ flex: 1 }}>
-          {/* Search row */}
-          <View style={main.searchRow}>
-            <View style={{ flex: 1 }}>
-              <SearchBar value={search} onChangeText={setSearch}
-                placeholder={t("Rechercher un produit…", "بحث عن منتج…")} />
-            </View>
-            <Pressable onPress={() => setFilterOpen(true)}
-              style={[main.filterBtn, filterCount > 0 && main.filterBtnOn]}>
-              <Feather name="filter" size={18} color={filterCount > 0 ? "#fff" : colors.primary} />
-              {filterCount > 0 ? (
-                <View style={main.filterBadge}><Text style={main.filterBadgeTxt}>{filterCount}</Text></View>
-              ) : null}
-            </Pressable>
-          </View>
-
-          {/* Sort toggle */}
-          <View style={main.sortRow}>
-            <Text style={main.sortLabel}>{t("Trier par:", "ترتيب:")}</Text>
-            {(["profit", "qty_sold"] as const).map((s) => (
-              <Pressable key={s} onPress={() => setSortBy(s)}
-                style={[main.sortBtn, sortBy === s && main.sortBtnOn]}>
-                <Text style={[main.sortTxt, sortBy === s && main.sortTxtOn]}>
-                  {s === "profit" ? t("Profit", "الربح") : t("Qté vendue", "المباعة")}
-                </Text>
+          {/* Animated collapsible header — overlays the list */}
+          <Animated.View style={[main.collapseHeader, { transform: [{ translateY: headerTranslateY }] }]}>
+            {/* Search row */}
+            <View style={main.searchRow}>
+              <View style={{ flex: 1 }}>
+                <SearchBar value={search} onChangeText={setSearch}
+                  placeholder={t("Rechercher un produit…", "بحث عن منتج…")} />
+              </View>
+              <Pressable onPress={() => setFilterOpen(true)}
+                style={[main.filterBtn, filterCount > 0 && main.filterBtnOn]}>
+                <Feather name="filter" size={18} color={filterCount > 0 ? "#fff" : colors.primary} />
+                {filterCount > 0 ? (
+                  <View style={main.filterBadge}><Text style={main.filterBadgeTxt}>{filterCount}</Text></View>
+                ) : null}
               </Pressable>
-            ))}
-          </View>
+            </View>
+            {/* Sort toggle */}
+            <View style={main.sortRow}>
+              <Text style={main.sortLabel}>{t("Trier par:", "ترتيب:")}</Text>
+              {(["profit", "qty_sold"] as const).map((s) => (
+                <Pressable key={s} onPress={() => setSortBy(s)}
+                  style={[main.sortBtn, sortBy === s && main.sortBtnOn]}>
+                  <Text style={[main.sortTxt, sortBy === s && main.sortTxtOn]}>
+                    {s === "profit" ? t("Profit", "الربح") : t("Qté vendue", "المباعة")}
+                  </Text>
+                </Pressable>
+              ))}
+            </View>
+          </Animated.View>
 
-          {/* Product list */}
+          {/* Product list — paddingTop reserves space for the header */}
           {neededQuery.isLoading && !neededQuery.data ? (
-            <LoadingView />
+            <View style={{ flex: 1, paddingTop: HEADER_HEIGHT }}>
+              <LoadingView />
+            </View>
           ) : (
             <FlatList
               data={allRows}
@@ -1091,9 +1114,17 @@ export default function SmartPurchase() {
                 if (neededQuery.hasNextPage && !neededQuery.isFetchingNextPage) neededQuery.fetchNextPage();
               }}
               onEndReachedThreshold={0.4}
-              contentContainerStyle={{ paddingBottom: 40, paddingTop: 4 }}
+              contentContainerStyle={{ paddingBottom: 40, paddingTop: HEADER_HEIGHT }}
               refreshing={neededQuery.isRefetching}
-              onRefresh={() => { setHiddenIds(new Set()); neededQuery.refetch(); }}
+              onRefresh={() => {
+                setHiddenIds(new Set());
+                // reset header on pull-to-refresh
+                headerVisible.current = true;
+                Animated.timing(headerTranslateY, { toValue: 0, duration: 150, useNativeDriver: true }).start();
+                neededQuery.refetch();
+              }}
+              onScroll={onListScroll}
+              scrollEventThrottle={16}
               ListFooterComponent={neededQuery.isFetchingNextPage
                 ? <ActivityIndicator color={colors.primary} style={{ marginVertical: 16 }} />
                 : null}
@@ -1197,6 +1228,11 @@ const main = StyleSheet.create({
   tabActive: { borderBottomWidth: 2, borderBottomColor: colors.primary },
   tabTxt: { fontSize: 13, fontWeight: "500", color: colors.textMuted },
   tabTxtActive: { color: colors.primary, fontWeight: "700" },
+  collapseHeader: {
+    position: "absolute", top: 0, left: 0, right: 0, zIndex: 10,
+    backgroundColor: colors.background,
+    borderBottomWidth: 1, borderBottomColor: colors.border,
+  },
   searchRow: { flexDirection: "row", alignItems: "center", paddingRight: 16, gap: 8 },
   filterBtn: { width: 42, height: 42, borderRadius: 10, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface, alignItems: "center", justifyContent: "center" },
   filterBtnOn: { backgroundColor: colors.primary, borderColor: colors.primary },

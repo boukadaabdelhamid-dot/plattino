@@ -1,8 +1,7 @@
 FROM node:20-alpine AS build
 ARG RAILWAY_GIT_COMMIT_SHA
-RUN apk add --no-cache git
-RUN git clone --depth 1 https://github.com/boukadaabdelhamid-dot/plattino.git /repo
 WORKDIR /repo
+COPY . .
 RUN corepack enable && corepack prepare pnpm@10.26.1 --activate
 RUN pnpm install --frozen-lockfile=false --filter @workspace/api-server... --filter @workspace/db
 ENV NODE_ENV=production

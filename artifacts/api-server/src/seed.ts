@@ -82,8 +82,6 @@ export async function bootstrap() {
   await db.insert(schema.productTypesTable).values([
     { nameFr: "ARTICLE",    nameAr: "مقال" },
     { nameFr: "PRODUITS",   nameAr: "منتجات" },
-    { nameFr: "APPAREIL",   nameAr: "جهاز" },
-    { nameFr: "ACCESSOIRE", nameAr: "إكسسوار" },
     { nameFr: "SERVICE",    nameAr: "خدمة" },
     { nameFr: "Vrac",       nameAr: "مجزأ" },
   ]).onConflictDoNothing();

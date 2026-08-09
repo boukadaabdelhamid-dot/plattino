@@ -79,12 +79,6 @@ export async function bootstrap() {
   // ── 4. Lookup tables (system-wide, always safe to insert) ─────────────────
 
   // Product types
-  await db.insert(schema.productTypesTable).values([
-    { nameFr: "ARTICLE",    nameAr: "مقال" },
-    { nameFr: "PRODUITS",   nameAr: "منتجات" },
-    { nameFr: "SERVICE",    nameAr: "خدمة" },
-    { nameFr: "Vrac",       nameAr: "مجزأ" },
-  ]).onConflictDoNothing();
 
   // Price tiers
   await db.insert(schema.priceTiersTable).values([

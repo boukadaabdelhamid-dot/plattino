@@ -1,4 +1,4 @@
-modules = ["nodejs-20", "web", "bash"]
+modules = ["nodejs-20", "web", "bash", "postgresql-16"]
 
 [deployment]
 router = "application"
@@ -17,6 +17,18 @@ runButton = "Project"
 name = "Project"
 mode = "parallel"
 author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "workflow.run"
+args = "artifacts/api-server: API Server"
+
+[[workflows.workflow.tasks]]
+task = "workflow.run"
+args = "artifacts/erp: web"
+
+[[workflows.workflow.tasks]]
+task = "workflow.run"
+args = "artifacts/web-store: web"
 
 [[workflows.workflow.tasks]]
 task = "workflow.run"
@@ -45,6 +57,42 @@ author = "agent"
 [[workflows.workflow.tasks]]
 task = "shell.exec"
 args = "bash artifacts/mobile-app/scripts/expo-go-tunnel.sh"
+
+[workflows.workflow.metadata]
+outputType = "console"
+
+[[workflows.workflow]]
+name = "artifacts/api-server: API Server"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "pnpm --filter @workspace/api-server run dev"
+waitForPort = 8080
+
+[workflows.workflow.metadata]
+outputType = "console"
+
+[[workflows.workflow]]
+name = "artifacts/erp: web"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "pnpm --filter @workspace/erp run dev"
+waitForPort = 18996
+
+[workflows.workflow.metadata]
+outputType = "console"
+
+[[workflows.workflow]]
+name = "artifacts/web-store: web"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "pnpm --filter @workspace/web-store run dev"
+waitForPort = 23733
 
 [workflows.workflow.metadata]
 outputType = "console"
@@ -109,7 +157,6 @@ externalPort = 3000
 [userenv]
 
 [userenv.shared]
-JWT_SECRET = "d952bc6cf967c4aba73081a26abb0a43017fe47f38c602f107b5ca43c6933bd8dbf926340bdef9efedf59b1404b4cb40"
 PORT = "8080"
 
 [userenv.development]

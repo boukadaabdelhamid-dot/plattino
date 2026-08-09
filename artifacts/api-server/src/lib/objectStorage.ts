@@ -1,5 +1,6 @@
 import { Storage } from "@google-cloud/storage";
-import { Readable } from "stream";
+import { S3Client, PutObjectCommand, GetObjectCommand, HeadObjectCommand } from "@aws-sdk/client-s3";
+import { Readable, PassThrough } from "stream";
 import { randomUUID } from "crypto";
 import fs from "fs";
 import fsPromises from "fs/promises";
@@ -92,7 +93,63 @@ class LocalFile implements StorageFile {
   }
 }
 
-type StorageMode = "gcs" | "replit" | "local";
+/**
+ * R2File: wraps a single Cloudflare R2 object as a StorageFile.
+ * R2 is S3-compatible; we use @aws-sdk/client-s3 with a custom endpoint.
+ */
+class R2File implements StorageFile {
+  constructor(
+    private readonly client: S3Client,
+    private readonly bucket: string,
+    private readonly key: string,
+  ) {}
+
+  async exists(): Promise<[boolean]> {
+    try {
+      await this.client.send(new HeadObjectCommand({ Bucket: this.bucket, Key: this.key }));
+      return [true];
+    } catch {
+      return [false];
+    }
+  }
+
+  createReadStream(): NodeJS.ReadableStream {
+    const pass = new PassThrough();
+    this.client
+      .send(new GetObjectCommand({ Bucket: this.bucket, Key: this.key }))
+      .then((response) => {
+        const body = response.Body;
+        if (!body) {
+          pass.destroy(new ObjectNotFoundError());
+          return;
+        }
+        // In Node.js, AWS SDK v3 Body is a Readable stream
+        (body as unknown as NodeJS.ReadableStream).pipe(pass);
+      })
+      .catch((err: Error) => pass.destroy(err));
+    return pass;
+  }
+
+  async getMetadata(): Promise<[{ contentType?: string; size?: number | string }]> {
+    const response = await this.client.send(
+      new HeadObjectCommand({ Bucket: this.bucket, Key: this.key })
+    );
+    return [{ contentType: response.ContentType, size: response.ContentLength }];
+  }
+
+  async save(buffer: Buffer, options: { contentType: string }): Promise<void> {
+    await this.client.send(
+      new PutObjectCommand({
+        Bucket: this.bucket,
+        Key: this.key,
+        Body: buffer,
+        ContentType: options.contentType,
+      })
+    );
+  }
+}
+
+type StorageMode = "gcs" | "replit" | "r2" | "local";
 
 function detectStorageMode(): StorageMode {
   // Explicit GCS service account — Railway production with a GCS bucket.
@@ -109,6 +166,15 @@ function detectStorageMode(): StorageMode {
   ) {
     return "replit";
   }
+  // Cloudflare R2 — S3-compatible object storage.
+  if (
+    process.env.R2_ACCOUNT_ID &&
+    process.env.R2_ACCESS_KEY_ID &&
+    process.env.R2_SECRET_ACCESS_KEY &&
+    process.env.R2_BUCKET_NAME
+  ) {
+    return "r2";
+  }
   // Everything else uses local disk storage. An explicit STORAGE_LOCAL_PATH
   // (e.g. a Railway Volume) is honoured by getLocalBase(); otherwise a
   // persistent default path is used so uploads always work.
@@ -117,6 +183,7 @@ function detectStorageMode(): StorageMode {
 
 let _mode: StorageMode | undefined;
 let _gcsClient: Storage | undefined;
+let _r2Client: S3Client | undefined;
 
 function getMode(): StorageMode {
   if (!_mode) _mode = detectStorageMode();
@@ -148,10 +215,31 @@ function getGcsClient(): Storage {
         projectId: "",
       });
     } else {
-      throw new Error("GCS client not available in local storage mode");
+      throw new Error("GCS client not available in this storage mode");
     }
   }
   return _gcsClient;
+}
+
+function getR2Client(): S3Client {
+  if (!_r2Client) {
+    const accountId = process.env.R2_ACCOUNT_ID!;
+    _r2Client = new S3Client({
+      region: "auto",
+      endpoint: `https://${accountId}.r2.cloudflarestorage.com`,
+      credentials: {
+        accessKeyId: process.env.R2_ACCESS_KEY_ID!,
+        secretAccessKey: process.env.R2_SECRET_ACCESS_KEY!,
+      },
+    });
+  }
+  return _r2Client;
+}
+
+function getR2Bucket(): string {
+  const bucket = process.env.R2_BUCKET_NAME;
+  if (!bucket) throw new Error("R2_BUCKET_NAME is not set");
+  return bucket;
 }
 
 function getLocalBase(): string {
@@ -164,7 +252,7 @@ export function getStorageMode(): StorageMode {
   return getMode();
 }
 
-/** Absolute base directory used in local storage mode. */
+/** Absolute base directory used in local storage mode (throws in other modes). */
 export function getLocalStorageBase(): string {
   return getLocalBase();
 }
@@ -182,13 +270,21 @@ export async function ensureLocalStorageReady(): Promise<void> {
 
 /**
  * Public base URL prepended to served image URLs.
- * We always store relative paths (/api/uploads/…) so URLs never go stale
- * when the Replit dev domain changes between sessions.
- * Frontends resolve via resolveImg() + VITE_API_URL, and both Vite configs
- * proxy /api/* → localhost:8080 in dev as a safety net.
- * Set PUBLIC_ASSET_BASE_URL to override with a CDN/custom domain.
+ *
+ * In R2 mode: if R2_PUBLIC_URL is set, images are served directly from the R2
+ * public bucket domain (e.g. https://pub-xxx.r2.dev or a custom domain). Otherwise
+ * images fall back to the API proxy route (/api/uploads/:id) which downloads from R2.
+ *
+ * In other modes: PUBLIC_ASSET_BASE_URL overrides with a CDN/custom domain; otherwise
+ * we use a relative URL so stored paths never go stale when the dev domain changes.
  */
 function getPublicBaseUrl(): string {
+  const mode = getMode();
+  if (mode === "r2") {
+    const r2PublicUrl = process.env.R2_PUBLIC_URL;
+    if (r2PublicUrl) return r2PublicUrl.replace(/\/+$/, "");
+    // No public URL configured — fall back to the API proxy path
+  }
   if (process.env.PUBLIC_ASSET_BASE_URL) {
     return process.env.PUBLIC_ASSET_BASE_URL.replace(/\/+$/, "");
   }
@@ -197,6 +293,12 @@ function getPublicBaseUrl(): string {
 }
 
 function buildPublicUrl(objectId: string): string {
+  const mode = getMode();
+  if (mode === "r2" && process.env.R2_PUBLIC_URL) {
+    // Direct R2 public URL: <R2_PUBLIC_URL>/uploads/<uuid>
+    return `${getPublicBaseUrl()}/uploads/${objectId}`;
+  }
+  // API proxy path (works for all modes including R2 without public URL)
   return `${getPublicBaseUrl()}/api/uploads/${objectId}`;
 }
 
@@ -245,7 +347,7 @@ async function signObjectURL({
     return json.signed_url;
   }
   throw new Error(
-    "Signed URLs are not supported in local storage mode. Use POST /api/uploads directly."
+    "Signed URLs are not supported in this storage mode. Use POST /api/uploads directly."
   );
 }
 
@@ -253,6 +355,7 @@ export class ObjectStorageService {
   getPublicObjectSearchPaths(): string[] {
     const mode = getMode();
     if (mode === "local") return [path.join(getLocalBase(), "public")];
+    if (mode === "r2") return []; // R2 public objects served directly via R2_PUBLIC_URL
     const pathsStr = process.env.PUBLIC_OBJECT_SEARCH_PATHS || "";
     const paths = Array.from(
       new Set(pathsStr.split(",").map(p => p.trim()).filter(p => p.length > 0))
@@ -264,6 +367,7 @@ export class ObjectStorageService {
   getPrivateObjectDir(): string {
     const mode = getMode();
     if (mode === "local") return path.join(getLocalBase(), "private");
+    if (mode === "r2") return `/r2-uploads`; // Logical prefix, not used in GCS path parsing
     const dir = process.env.PRIVATE_OBJECT_DIR || "";
     if (!dir) throw new Error("PRIVATE_OBJECT_DIR not set.");
     return dir;
@@ -278,6 +382,13 @@ export class ObjectStorageService {
       const f = new LocalFile(resolved);
       const [exists] = await f.exists();
       return exists ? f : null;
+    }
+    if (mode === "r2") {
+      // Public objects in R2 are served directly via R2_PUBLIC_URL — no search needed
+      const key = `public/${filePath.replace(/^\/+/, "")}`;
+      const file = new R2File(getR2Client(), getR2Bucket(), key);
+      const [exists] = await file.exists();
+      return exists ? file : null;
     }
     for (const searchPath of this.getPublicObjectSearchPaths()) {
       const fullPath = `${searchPath}/${filePath}`;
@@ -307,6 +418,7 @@ export class ObjectStorageService {
   ): Promise<{ objectPath: string; publicUrl: string }> {
     const objectId = randomUUID();
     const mode = getMode();
+
     if (mode === "local") {
       const root = path.join(getLocalBase(), "private", "uploads");
       // objectId is a UUID — no traversal risk, but still validate with safeJoin
@@ -315,6 +427,15 @@ export class ObjectStorageService {
       await f.save(buffer, { contentType });
       return { objectPath: `/objects/uploads/${objectId}`, publicUrl: buildPublicUrl(objectId) };
     }
+
+    if (mode === "r2") {
+      const key = `uploads/${objectId}`;
+      const file = new R2File(getR2Client(), getR2Bucket(), key);
+      await file.save(buffer, { contentType });
+      return { objectPath: `/objects/uploads/${objectId}`, publicUrl: buildPublicUrl(objectId) };
+    }
+
+    // GCS / Replit
     const privateObjectDir = this.getPrivateObjectDir();
     const fullPath = `${privateObjectDir}/uploads/${objectId}`;
     const { bucketName, objectName } = parseObjectPath(fullPath);
@@ -325,9 +446,9 @@ export class ObjectStorageService {
 
   async getObjectEntityUploadURL(): Promise<string> {
     const mode = getMode();
-    if (mode === "local") {
+    if (mode === "local" || mode === "r2") {
       throw new Error(
-        "Signed upload URLs are not supported in local storage mode. Use POST /api/uploads instead."
+        "Signed upload URLs are not supported in this storage mode. Use POST /api/uploads instead."
       );
     }
     const objectId = randomUUID();
@@ -354,6 +475,7 @@ export class ObjectStorageService {
     if (parts.length < 2) throw new ObjectNotFoundError();
     const entityId = parts.slice(1).join("/");
     const mode = getMode();
+
     if (mode === "local") {
       const root = path.join(getLocalBase(), "private");
       let filePath: string;
@@ -363,6 +485,16 @@ export class ObjectStorageService {
       if (!exists) throw new ObjectNotFoundError();
       return f;
     }
+
+    if (mode === "r2") {
+      // entityId = "uploads/<uuid>" — maps directly to the R2 key
+      const file = new R2File(getR2Client(), getR2Bucket(), entityId);
+      const [exists] = await file.exists();
+      if (!exists) throw new ObjectNotFoundError();
+      return file;
+    }
+
+    // GCS / Replit
     let entityDir = this.getPrivateObjectDir();
     if (!entityDir.endsWith("/")) entityDir = `${entityDir}/`;
     const objectEntityPath = `${entityDir}${entityId}`;

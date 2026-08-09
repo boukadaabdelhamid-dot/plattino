@@ -156,3 +156,23 @@ Employees have `name` (not `nameEn`/`nameAr`). Products have `nameEn`/`nameAr`.
 - On first boot the API server auto-bootstraps: Magasin Principal store, admin account (`admin@midanic.com` / `admin1234`), Caisse Principale, and lookup tables. No demo products/employees/orders are seeded — add those manually via the ERP.
 - `JWT_SECRET` and `DATABASE_URL` are already configured in this environment.
 - This import does not include the `mobile-store` (Expo) artifact referenced elsewhere in this doc — only api-server, erp, and web-store are present.
+
+## Object Storage — Cloudflare R2
+
+Storage backend priority: GCS → Replit sidecar → **R2** → local disk.
+
+To enable R2, configure these secrets (all required):
+
+| Secret | Description |
+|---|---|
+| `R2_ACCOUNT_ID` | Cloudflare account ID (found in R2 dashboard) |
+| `R2_ACCESS_KEY_ID` | R2 API token access key ID |
+| `R2_SECRET_ACCESS_KEY` | R2 API token secret access key |
+| `R2_BUCKET_NAME` | Name of the R2 bucket |
+| `R2_PUBLIC_URL` | Public domain of the bucket (e.g. `https://pub-xxx.r2.dev`) — optional but recommended for direct CDN delivery |
+
+When all four required secrets are set, the API server logs `Object storage initialised (r2)` on boot. Uploaded image URLs will be:
+- **With `R2_PUBLIC_URL`**: `<R2_PUBLIC_URL>/uploads/<uuid>` — served directly from R2/CDN
+- **Without `R2_PUBLIC_URL`**: `/api/uploads/<uuid>` — proxied through the API server (downloads from R2 on each request)
+
+Implementation: `artifacts/api-server/src/lib/objectStorage.ts` (R2File class, `r2` mode branch).

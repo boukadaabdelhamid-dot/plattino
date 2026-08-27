@@ -213,8 +213,8 @@ function SimpleTable({ headers, rows }: { headers: React.ReactNode[]; rows: Reac
 
 // ─── Types ────────────────────────────────────────────────────────
 type StockRow = { id: number; nameEn: string; nameAr: string; reference: string | null; stock: number; costPrice: string; valeur: string };
-type ClientRow = { id: number; name: string; balance: string };
-type SupplierRow = { id: number; name: string; balance: string };
+type BalancePartyType = "customer" | "supplier" | "customer_supplier";
+type BalanceRow = { id: string; name: string; balance: string; party_type: BalancePartyType };
 type CaisseRow = { id: number; kind: string; balance: string; owner_name: string | null };
 type CaissesData = { total: string; caisses: CaisseRow[] };
 type VenteRow = { date: string; montant: string; reduction: string; marge: string; retours: string; charges: string; benefice: string };
@@ -227,9 +227,15 @@ type VentePlusRow = {
 type AccountingData = { totalIncome: number; totalExpense: number; netBalance: number; monthly: { month: string; income: string; expenses: string }[] };
 type Employee = { id: number; name: string; position: string; salary: string; status: string };
 
+function partyTypeLabel(type: BalancePartyType, t: TFn) {
+  if (type === "customer") return t("Client", "زبون");
+  if (type === "supplier") return t("Fournisseur", "مورد");
+  return t("Client / fournisseur", "زبون / مورد");
+}
+
 // ─── Modals ───────────────────────────────────────────────────────
 function ClientReceivablesModal({ open, onClose, rows, loading, error, currency, t }: {
-  open: boolean; onClose: () => void; rows: ClientRow[]; loading: boolean; error: string | null; currency: string; t: TFn;
+  open: boolean; onClose: () => void; rows: BalanceRow[]; loading: boolean; error: string | null; currency: string; t: TFn;
 }) {
   const total = rows.reduce((s, r) => s + Number(r.balance ?? 0), 0);
   return (
@@ -238,30 +244,32 @@ function ClientReceivablesModal({ open, onClose, rows, loading, error, currency,
         <DialogHeader className="px-6 pt-6 pb-4 shrink-0 border-b">
           <DialogTitle className="flex items-center gap-2 text-base">
             <Users className="h-5 w-5 text-primary" />
-            {t("Détail des Créances clients", "تفاصيل ذمم العملاء")}
+            {t("Détail des créances", "تفاصيل الأموال المستحقة للمحل")}
           </DialogTitle>
         </DialogHeader>
         {loading && <div className="flex items-center justify-center py-16"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>}
         {!loading && error && <div className="flex items-center gap-2 text-destructive py-12 justify-center"><AlertCircle className="h-5 w-5" /><span className="text-sm">{error}</span></div>}
-        {!loading && !error && rows.length === 0 && <p className="text-center text-muted-foreground text-sm py-16 px-6">{t("Aucun client avec un solde impayé.", "لا يوجد عميل لديه رصيد مستحق.")}</p>}
+        {!loading && !error && rows.length === 0 && <p className="text-center text-muted-foreground text-sm py-16 px-6">{t("Aucune créance.", "لا توجد أموال مستحقة للمحل.")}</p>}
         {!loading && !error && rows.length > 0 && (
           <>
             <div className="overflow-auto flex-1 min-h-0">
               <table className="w-full text-sm">
                 <thead className="sticky top-0 bg-background z-10"><tr className="border-b">
-                  <th className="text-left py-2.5 px-4 font-semibold text-muted-foreground text-xs uppercase tracking-wide">{t("Client", "العميل")}</th>
-                  <th className="text-right py-2.5 px-4 font-semibold text-muted-foreground text-xs uppercase tracking-wide">{t("Solde dû", "المبلغ المستحق")}</th>
+                  <th className="text-left py-2.5 px-4 font-semibold text-muted-foreground text-xs uppercase tracking-wide">{t("Contact", "الجهة")}</th>
+                  <th className="text-left py-2.5 px-4 font-semibold text-muted-foreground text-xs uppercase tracking-wide">{t("Type", "النوع")}</th>
+                  <th className="text-right py-2.5 px-4 font-semibold text-muted-foreground text-xs uppercase tracking-wide">{t("Créance", "المبلغ المستحق")}</th>
                 </tr></thead>
                 <tbody>{rows.map((row) => (
                   <tr key={row.id} className="border-b last:border-0 hover:bg-muted/40 transition-colors">
                     <td className="py-2.5 px-4 font-medium">{row.name}</td>
+                    <td className="py-2.5 px-4 text-muted-foreground">{partyTypeLabel(row.party_type, t)}</td>
                     <td className="py-2.5 px-4 text-right tabular-nums font-semibold">{fmtNum(row.balance)} {currency}</td>
                   </tr>
                 ))}</tbody>
               </table>
             </div>
             <div className="border-t px-6 py-4 flex items-center justify-between shrink-0 bg-muted/20">
-              <span className="text-sm font-semibold text-muted-foreground">{t("Total", "الإجمالي")} ({rows.length} {t("client(s)", "عميل")})</span>
+              <span className="text-sm font-semibold text-muted-foreground">{t("Total", "الإجمالي")} ({rows.length} {t("contact(s)", "جهة")})</span>
               <span className="text-xl font-bold tabular-nums">{fmtNum(total)} {currency}</span>
             </div>
           </>
@@ -322,7 +330,7 @@ function StockDetailModal({ open, onClose, currency, t, lang, storeId }: {
 }
 
 function SupplierDebtsModal({ open, onClose, rows, loading, error, currency, t }: {
-  open: boolean; onClose: () => void; rows: SupplierRow[]; loading: boolean; error: string | null; currency: string; t: TFn;
+  open: boolean; onClose: () => void; rows: BalanceRow[]; loading: boolean; error: string | null; currency: string; t: TFn;
 }) {
   const total = rows.reduce((s, r) => s + Number(r.balance ?? 0), 0);
   return (
@@ -331,31 +339,33 @@ function SupplierDebtsModal({ open, onClose, rows, loading, error, currency, t }
         <DialogHeader className="px-6 pt-6 pb-4 shrink-0 border-b">
           <DialogTitle className="flex items-center gap-2 text-base">
             <Truck className="h-5 w-5 text-primary" />
-            {t("Détail des Dettes fournisseurs", "تفاصيل ديون الموردين")}
+            {t("Détail des dettes", "تفاصيل الديون المستحقة على المحل")}
           </DialogTitle>
         </DialogHeader>
         {loading && <div className="flex items-center justify-center py-16"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>}
         {!loading && error && <div className="flex items-center gap-2 text-destructive py-12 justify-center"><AlertCircle className="h-5 w-5" /><span className="text-sm">{error}</span></div>}
-        {!loading && !error && rows.length === 0 && <p className="text-center text-muted-foreground text-sm py-16 px-6">{t("Aucun fournisseur avec un solde impayé.", "لا يوجد مورد لديه رصيد مستحق.")}</p>}
+        {!loading && !error && rows.length === 0 && <p className="text-center text-muted-foreground text-sm py-16 px-6">{t("Aucune dette.", "لا توجد ديون مستحقة على المحل.")}</p>}
         {!loading && !error && rows.length > 0 && (
           <>
             <div className="overflow-auto flex-1 min-h-0">
               <table className="w-full text-sm">
                 <thead className="sticky top-0 bg-background z-10"><tr className="border-b">
-                  <th className="text-left py-2.5 px-4 font-semibold text-muted-foreground text-xs uppercase">{t("Fournisseur", "المورد")}</th>
-                  <th className="text-right py-2.5 px-4 font-semibold text-muted-foreground text-xs uppercase">{t("Solde dû", "المبلغ المستحق")}</th>
+                  <th className="text-left py-2.5 px-4 font-semibold text-muted-foreground text-xs uppercase">{t("Contact", "الجهة")}</th>
+                  <th className="text-left py-2.5 px-4 font-semibold text-muted-foreground text-xs uppercase">{t("Type", "النوع")}</th>
+                  <th className="text-right py-2.5 px-4 font-semibold text-muted-foreground text-xs uppercase">{t("Dette", "الدين")}</th>
                 </tr></thead>
                 <tbody>{rows.map((row) => (
                   <tr key={row.id} className="border-b last:border-0 hover:bg-muted/40 transition-colors">
                     <td className="py-2.5 px-4 font-medium">{row.name}</td>
-                    <td className="py-2.5 px-4 text-right tabular-nums font-semibold">{fmtNum(row.balance)} {currency}</td>
+                    <td className="py-2.5 px-4 text-muted-foreground">{partyTypeLabel(row.party_type, t)}</td>
+                    <td className="py-2.5 px-4 text-right tabular-nums font-semibold">{fmtNum(Math.abs(Number(row.balance)))} {currency}</td>
                   </tr>
                 ))}</tbody>
               </table>
             </div>
             <div className="border-t px-6 py-4 flex items-center justify-between shrink-0 bg-muted/20">
-              <span className="text-sm font-semibold text-muted-foreground">{t("Total", "الإجمالي")} ({rows.length} {t("fournisseur(s)", "مورد")})</span>
-              <span className="text-xl font-bold tabular-nums">{fmtNum(total)} {currency}</span>
+              <span className="text-sm font-semibold text-muted-foreground">{t("Total", "الإجمالي")} ({rows.length} {t("contact(s)", "جهة")})</span>
+              <span className="text-xl font-bold tabular-nums">{fmtNum(Math.abs(total))} {currency}</span>
             </div>
           </>
         )}
@@ -381,23 +391,23 @@ function GeneralTab({ t, currency, lang, storeId }: { t: TFn; currency: string; 
   const [clientReceivablesOpen, setClientReceivablesOpen] = useState(false);
   const [supplierDebtsOpen, setSupplierDebtsOpen] = useState(false);
 
-  const { rows: clientRows, loading: clientLoading, error: clientError } = useFetchList<ClientRow>(buildPath("/api/erp/dashboard/client-receivables", storeId), refreshKey);
-  const { rows: supplierRows, loading: supplierLoading, error: supplierError } = useFetchList<SupplierRow>(buildPath("/api/erp/dashboard/supplier-debts", storeId), refreshKey);
+  const { rows: receivableRows, loading: receivableLoading, error: receivableError } = useFetchList<BalanceRow>(buildPath("/api/erp/dashboard/client-receivables", storeId), refreshKey);
+  const { rows: debtRows, loading: debtLoading, error: debtError } = useFetchList<BalanceRow>(buildPath("/api/erp/dashboard/supplier-debts", storeId), refreshKey);
   const { data: caissesData, loading: caissesLoading } = useFetch<CaissesData>(buildPath("/api/erp/dashboard/caisses", storeId), refreshKey);
 
-  const clientTotal = clientRows.reduce((s, r) => s + Number(r.balance ?? 0), 0);
-  const supplierTotal = supplierRows.reduce((s, r) => s + Number(r.balance ?? 0), 0);
+  const receivablesTotal = receivableRows.reduce((s, r) => s + Number(r.balance ?? 0), 0);
+  const debtBalanceTotal = debtRows.reduce((s, r) => s + Number(r.balance ?? 0), 0);
 
   if (isLoading) return <LoadingGrid count={4} />;
   if (genError || !data) return <ErrorState t={t} />;
 
   const stockValue     = Number(data.stockValue ?? 0);
   const caissesTotal   = Number(caissesData?.total ?? 0);
-  const supplierDebtsAbs = Math.abs(supplierTotal);
-  const totalActifs    = stockValue + caissesTotal + clientTotal - supplierDebtsAbs;
-  const actifLoading   = caissesLoading || clientLoading || supplierLoading;
+  const debtsTotal     = Math.abs(debtBalanceTotal);
+  const totalActifs    = stockValue + caissesTotal + receivablesTotal - debtsTotal;
+  const actifLoading   = caissesLoading || receivableLoading || debtLoading;
 
-  const anyLoading = isLoading || caissesLoading || clientLoading || supplierLoading;
+  const anyLoading = isLoading || caissesLoading || receivableLoading || debtLoading;
 
   return (
     <>
@@ -416,8 +426,8 @@ function GeneralTab({ t, currency, lang, storeId }: { t: TFn; currency: string; 
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
           <KpiCard icon={Package} labelFr="Stock courant" labelAr="قيمة المخزون" value={fmtNum(data.stockValue, currency)} t={t} onClick={() => setStockDetailOpen(true)} warning={data.productsWithoutCost} warningTipFr={`${data.productsWithoutCost} produit(s) sans prix de revient — la valeur du stock peut être sous-estimée`} warningTipAr={`${data.productsWithoutCost} منتج بدون سعر تكلفة — قد تكون قيمة المخزون أقل من الواقع`} />
           <KpiCard icon={Wallet} labelFr="Trésorerie totale" labelAr="إجمالي الصناديق" value={caissesLoading ? "…" : fmtNum(caissesData?.total, currency)} t={t} />
-          <KpiCard icon={Users} labelFr="Créances clients" labelAr="ذمم العملاء" value={clientLoading ? "…" : clientError ? "—" : fmtNum(clientTotal, currency)} t={t} onClick={() => setClientReceivablesOpen(true)} />
-          <KpiCard icon={Truck} labelFr="Dettes fournisseurs" labelAr="ديون الموردين" value={supplierLoading ? "…" : supplierError ? "—" : fmtNum(supplierTotal, currency)} t={t} onClick={() => setSupplierDebtsOpen(true)} />
+          <KpiCard icon={Users} labelFr="Créances" labelAr="الأموال المستحقة للمحل" value={receivableLoading ? "…" : receivableError ? "—" : fmtNum(receivablesTotal, currency)} t={t} onClick={() => setClientReceivablesOpen(true)} variant="positive" />
+          <KpiCard icon={Truck} labelFr="Dettes" labelAr="الديون المستحقة على المحل" value={debtLoading ? "…" : debtError ? "—" : fmtNum(debtsTotal, currency)} t={t} onClick={() => setSupplierDebtsOpen(true)} variant="negative" />
         </div>
 
         {/* ─── Total des actifs ──────────────────────────────────── */}
@@ -429,8 +439,8 @@ function GeneralTab({ t, currency, lang, storeId }: { t: TFn; currency: string; 
               </p>
               <p className="text-xs text-muted-foreground">
                 {t(
-                  "Stock + Trésorerie + Créances clients − Dettes fournisseurs",
-                  "المخزون + الصناديق + ذمم العملاء − ديون الموردين"
+                  "Stock + Trésorerie + Créances − Dettes",
+                  "المخزون + الصناديق + الأموال المستحقة للمحل − الديون المستحقة على المحل"
                 )}
               </p>
             </div>
@@ -448,8 +458,8 @@ function GeneralTab({ t, currency, lang, storeId }: { t: TFn; currency: string; 
               {([
                 [t("Stock", "المخزون"),            `${fmtNum(stockValue)} ${currency}`,     "text-foreground"],
                 [t("Trésorerie", "الصناديق"),       `${fmtNum(caissesTotal)} ${currency}`,  "text-foreground"],
-                [t("Créances clients", "ذمم العملاء"),    `+${fmtNum(clientTotal)} ${currency}`, "text-emerald-700 dark:text-emerald-400"],
-                [t("Dettes fournisseurs", "ديون الموردين"), `−${fmtNum(supplierDebtsAbs)} ${currency}`, "text-destructive"],
+                [t("Créances", "الأموال المستحقة للمحل"), `+${fmtNum(receivablesTotal)} ${currency}`, "text-emerald-700 dark:text-emerald-400"],
+                [t("Dettes", "الديون المستحقة على المحل"), `−${fmtNum(debtsTotal)} ${currency}`, "text-destructive"],
               ] as [string, string, string][]).map(([label, value, cls]) => (
                 <div key={label}>
                   <p className="text-muted-foreground mb-0.5">{label}</p>
@@ -462,8 +472,8 @@ function GeneralTab({ t, currency, lang, storeId }: { t: TFn; currency: string; 
       </div>
 
       <StockDetailModal open={stockDetailOpen} onClose={() => setStockDetailOpen(false)} currency={currency} t={t} lang={lang} storeId={storeId} />
-      <ClientReceivablesModal open={clientReceivablesOpen} onClose={() => setClientReceivablesOpen(false)} rows={clientRows} loading={clientLoading} error={clientError} currency={currency} t={t} />
-      <SupplierDebtsModal open={supplierDebtsOpen} onClose={() => setSupplierDebtsOpen(false)} rows={supplierRows} loading={supplierLoading} error={supplierError} currency={currency} t={t} />
+      <ClientReceivablesModal open={clientReceivablesOpen} onClose={() => setClientReceivablesOpen(false)} rows={receivableRows} loading={receivableLoading} error={receivableError} currency={currency} t={t} />
+      <SupplierDebtsModal open={supplierDebtsOpen} onClose={() => setSupplierDebtsOpen(false)} rows={debtRows} loading={debtLoading} error={debtError} currency={currency} t={t} />
     </>
   );
 }
@@ -810,7 +820,7 @@ function BeneficeTab({ t, currency, storeId }: { t: TFn; currency: string; store
 
 // ─── Clients tab ──────────────────────────────────────────────────
 function ClientsTab({ t, currency, storeId }: { t: TFn; currency: string; storeId?: string }) {
-  const { rows, loading, error } = useFetchList<ClientRow>(buildPath("/api/erp/dashboard/client-receivables", storeId));
+  const { rows, loading, error } = useFetchList<BalanceRow>(buildPath("/api/erp/dashboard/client-receivables", storeId));
   const total = rows.reduce((s, r) => s + Number(r.balance ?? 0), 0);
 
   if (loading) return <LoadingGrid count={2} />;
@@ -819,17 +829,18 @@ function ClientsTab({ t, currency, storeId }: { t: TFn; currency: string; storeI
   return (
     <div className="space-y-4">
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-        <KpiCard icon={Users} labelFr="Clients avec solde" labelAr="عملاء لديهم رصيد" value={String(rows.length)} t={t} />
-        <KpiCard icon={TrendingUp} labelFr="Total Créances" labelAr="إجمالي الذمم" value={fmtNum(total, currency)} t={t} variant="negative" />
+        <KpiCard icon={Users} labelFr="Contacts avec créance" labelAr="جهات لها أموال مستحقة للمحل" value={String(rows.length)} t={t} />
+        <KpiCard icon={TrendingUp} labelFr="Total créances" labelAr="إجمالي الأموال المستحقة للمحل" value={fmtNum(total, currency)} t={t} variant="positive" />
       </div>
       {rows.length === 0 ? (
-        <p className="text-center text-muted-foreground text-sm py-12">{t("Aucun client avec un solde impayé.", "لا يوجد عميل لديه رصيد مستحق.")}</p>
+        <p className="text-center text-muted-foreground text-sm py-12">{t("Aucune créance.", "لا توجد أموال مستحقة للمحل.")}</p>
       ) : (
         <SimpleTable
-          headers={[t("Client", "العميل"), t("Solde dû", "المبلغ المستحق")]}
+          headers={[t("Contact", "الجهة"), t("Type", "النوع"), t("Créance", "المبلغ المستحق")]}
           rows={rows.map((r) => [
             <span className="font-medium">{r.name}</span>,
-            <span className="tabular-nums font-semibold text-destructive">{fmtNum(r.balance)} {currency}</span>,
+            <span className="text-muted-foreground">{partyTypeLabel(r.party_type, t)}</span>,
+            <span className="tabular-nums font-semibold text-emerald-600">{fmtNum(r.balance)} {currency}</span>,
           ])}
         />
       )}
@@ -971,7 +982,7 @@ function CaissesTab({ t, currency, storeId }: { t: TFn; currency: string; storeI
 
 // ─── Fournisseurs tab ─────────────────────────────────────────────
 function FournisseursTab({ t, currency, storeId }: { t: TFn; currency: string; storeId?: string }) {
-  const { rows, loading, error } = useFetchList<SupplierRow>(buildPath("/api/erp/dashboard/supplier-debts", storeId));
+  const { rows, loading, error } = useFetchList<BalanceRow>(buildPath("/api/erp/dashboard/supplier-debts", storeId));
   const total = rows.reduce((s, r) => s + Number(r.balance ?? 0), 0);
 
   if (loading) return <LoadingGrid count={2} />;
@@ -980,17 +991,18 @@ function FournisseursTab({ t, currency, storeId }: { t: TFn; currency: string; s
   return (
     <div className="space-y-4">
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-        <KpiCard icon={Truck} labelFr="Fournisseurs créditeurs" labelAr="موردون دائنون" value={String(rows.length)} t={t} />
-        <KpiCard icon={Wallet} labelFr="Total Dettes" labelAr="إجمالي الديون" value={fmtNum(total, currency)} t={t} variant="negative" />
+        <KpiCard icon={Truck} labelFr="Contacts avec dette" labelAr="جهات مستحقة على المحل" value={String(rows.length)} t={t} />
+        <KpiCard icon={Wallet} labelFr="Total dettes" labelAr="إجمالي الديون المستحقة على المحل" value={fmtNum(Math.abs(total), currency)} t={t} variant="negative" />
       </div>
       {rows.length === 0 ? (
-        <p className="text-center text-muted-foreground text-sm py-12">{t("Aucun fournisseur avec un solde impayé.", "لا يوجد مورد لديه رصيد مستحق.")}</p>
+        <p className="text-center text-muted-foreground text-sm py-12">{t("Aucune dette.", "لا توجد ديون مستحقة على المحل.")}</p>
       ) : (
         <SimpleTable
-          headers={[t("Fournisseur", "المورد"), t("Solde dû", "المبلغ المستحق")]}
+          headers={[t("Contact", "الجهة"), t("Type", "النوع"), t("Dette", "الدين")]}
           rows={rows.map((r) => [
             <span className="font-medium">{r.name}</span>,
-            <span className="tabular-nums font-semibold text-destructive">{fmtNum(r.balance)} {currency}</span>,
+            <span className="text-muted-foreground">{partyTypeLabel(r.party_type, t)}</span>,
+            <span className="tabular-nums font-semibold text-destructive">{fmtNum(Math.abs(Number(r.balance)))} {currency}</span>,
           ])}
         />
       )}
@@ -1324,11 +1336,11 @@ const ALL_TABS = [
   { value: "ventes",       labelFr: "Ventes",       labelAr: "المبيعات",   icon: ShoppingCart,    profitOnly: false },
   { value: "vente-plus",   labelFr: "Vente+",       labelAr: "مبيعات+",    icon: TrendingUp,      profitOnly: false },
   { value: "benefice",     labelFr: "Bénéfice",     labelAr: "الأرباح",    icon: TrendingUp,      profitOnly: true  },
-  { value: "clients",      labelFr: "Clients",      labelAr: "العملاء",    icon: Users,           profitOnly: false },
+  { value: "clients",      labelFr: "créance",      labelAr: "créance",    icon: Users,           profitOnly: false },
   { value: "employes",     labelFr: "Employés",     labelAr: "الموظفون",   icon: UserCog,         profitOnly: false },
   { value: "stock",        labelFr: "Stock",        labelAr: "المخزون",    icon: Package,         profitOnly: false },
   { value: "caisses",      labelFr: "Caisses",      labelAr: "الصناديق",   icon: Wallet,          profitOnly: false },
-  { value: "fournisseurs", labelFr: "Fournisseurs", labelAr: "الموردون",   icon: Truck,           profitOnly: false },
+  { value: "fournisseurs", labelFr: "dettes",        labelAr: "dettes",      icon: Truck,           profitOnly: false },
 ] as const;
 
 // ─── Dashboard page ───────────────────────────────────────────────

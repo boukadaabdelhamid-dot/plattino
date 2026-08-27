@@ -277,6 +277,83 @@ function dashboardStoreId(req: AuthRequest): number | null {
   return req.currentStoreId ?? null;
 }
 
+export type DashboardBalanceDirection = "receivable" | "payable";
+
+/**
+ * Returns one net balance per financial contact across customer and supplier
+ * roles. Positive balances are owed to the store; negative balances are owed
+ * by the store.
+ *
+ * Exported (in addition to being used by the routes below) so the standalone
+ * integration test (src/test-dashboard-balances.ts) can exercise it directly
+ * against scratch data without going through the HTTP/auth stack.
+ */
+export async function getUnifiedDashboardBalances(
+  storeId: number | null,
+  direction: DashboardBalanceDirection,
+) {
+  const customerStoreFilter = storeId !== null ? sql` AND cp.store_id = ${storeId}` : sql``;
+  const supplierStoreFilter = storeId !== null ? sql` AND s.store_id = ${storeId}` : sql``;
+  const contactStoreFilter = storeId !== null ? sql` AND c.store_id = ${storeId}` : sql``;
+  const balanceFilter = direction === "receivable" ? sql`> 0` : sql`< 0`;
+  const sortDirection = direction === "receivable" ? sql`DESC` : sql`ASC`;
+
+  return db.execute(sql`
+    WITH balance_sources AS (
+      -- Customer-only contacts retain their customer-role balance.
+      SELECT
+        COALESCE('contact:' || c.global_contact_id, 'customer:' || u.id::text) AS identity_key,
+        u.name,
+        'customer'::text AS party_type,
+        ROUND(CAST(cp.current_balance AS numeric), 2) AS balance
+      FROM customer_profiles cp
+      JOIN users u ON u.id = cp.user_id
+      LEFT JOIN contacts c ON c.id = cp.contact_id
+      WHERE cp.contact_type <> 'customer_supplier'
+      ${customerStoreFilter}
+
+      UNION ALL
+
+      -- Supplier-only contacts retain their supplier-role balance.
+      SELECT
+        COALESCE(
+          'supplier:' || s.global_supplier_id,
+          'contact:' || c.global_contact_id,
+          'supplier:' || s.id::text
+        ) AS identity_key,
+        s.name,
+        'supplier'::text AS party_type,
+        ROUND(CAST(s.current_balance AS numeric), 2) AS balance
+      FROM suppliers s
+      LEFT JOIN contacts c ON c.id = s.contact_id
+      WHERE s.contact_type <> 'customer_supplier'
+      ${supplierStoreFilter}
+
+      UNION ALL
+
+      -- A customer_supplier contact is represented once by its canonical net
+      -- balance, rather than once per role.
+      SELECT
+        COALESCE('contact:' || c.global_contact_id, 'contact:' || c.id::text) AS identity_key,
+        c.name,
+        'customer_supplier'::text AS party_type,
+        ROUND(CAST(c.current_balance AS numeric), 2) AS balance
+      FROM contacts c
+      WHERE c.contact_type = 'customer_supplier'
+      ${contactStoreFilter}
+    )
+    SELECT identity_key AS id, name, party_type, balance
+    FROM (
+      SELECT DISTINCT ON (identity_key)
+        identity_key, name, party_type, balance
+      FROM balance_sources
+      WHERE balance ${balanceFilter}
+      ORDER BY identity_key, name
+    ) deduped
+    ORDER BY balance ${sortDirection}, name ASC
+  `);
+}
+
 router.get("/erp/dashboard/general", authenticate, requireStaff, requireStore, requirePermission("dashboard", "view"), async (req: AuthRequest, res) => {
   try {
     const sid = dashboardStoreId(req);
@@ -326,117 +403,18 @@ router.get("/erp/dashboard/stock-detail", authenticate, requireStaff, requireSto
   } catch (err) { req.log.error(err); res.status(500).json({ error: "Internal server error" }); }
 });
 
-// ─── Dashboard — Créances clients (drill-down) ────────────────────
+// ─── Dashboard — Créances (all positive balances) ─────────────────
 router.get("/erp/dashboard/client-receivables", authenticate, requireStaff, requireStore, requirePermission("dashboard", "view"), async (req: AuthRequest, res) => {
   try {
-    const sid = dashboardStoreId(req);
-    const storeFilter = sid !== null ? sql` AND cp.store_id = ${sid}` : sql``;
-    // Unified Créances/Dettes rule:
-    //   - For customer_supplier contacts, use contacts.current_balance (the net
-    //     unified balance). If net > 0 → Créances; if net ≤ 0 → excluded here
-    //     (and may appear in supplier-debts instead). This makes the two widgets
-    //     mutually exclusive for customer_supplier entities.
-    //   - For regular customers, use cp.current_balance as before.
-    // Dedup key: contacts.global_contact_id (primary) falls back to u.id — covers
-    // the case where the same real customer has different user_id values across stores.
-    const result = await db.execute(sql`
-      SELECT id, name, balance
-      FROM (
-        SELECT DISTINCT ON (
-                 COALESCE(
-                   CASE WHEN c.global_contact_id IS NOT NULL
-                        THEN 'gc:' || c.global_contact_id
-                        ELSE NULL END,
-                   'u:' || u.id::text
-                 )
-               )
-               u.id, u.name AS name,
-               ROUND(CAST(
-                 CASE WHEN cp.contact_type = 'customer_supplier' AND c.id IS NOT NULL
-                      THEN c.current_balance
-                      ELSE cp.current_balance
-                 END
-               AS numeric), 2) AS balance
-        FROM customer_profiles cp
-        JOIN  users    u ON u.id  = cp.user_id
-        LEFT JOIN contacts c ON c.id = cp.contact_id
-        WHERE CAST(
-                CASE WHEN cp.contact_type = 'customer_supplier' AND c.id IS NOT NULL
-                     THEN c.current_balance
-                     ELSE cp.current_balance
-                END
-              AS numeric) > 0
-        ${storeFilter}
-        ORDER BY
-          COALESCE(
-            CASE WHEN c.global_contact_id IS NOT NULL
-                 THEN 'gc:' || c.global_contact_id
-                 ELSE NULL END,
-            'u:' || u.id::text
-          ), cp.id
-      ) linked_dedup
-      ORDER BY balance DESC
-    `);
+    const result = await getUnifiedDashboardBalances(dashboardStoreId(req), "receivable");
     res.json(result.rows);
   } catch (err) { req.log.error(err); res.status(500).json({ error: "Internal server error" }); }
 });
 
-// ─── Dashboard — Dettes fournisseurs (drill-down) ─────────────────
+// ─── Dashboard — Dettes (all negative balances) ───────────────────
 router.get("/erp/dashboard/supplier-debts", authenticate, requireStaff, requireStore, requirePermission("dashboard", "view"), async (req: AuthRequest, res) => {
   try {
-    const sid = dashboardStoreId(req);
-    const storeFilter = sid !== null ? sql` AND s.store_id = ${sid}` : sql``;
-    // Cross-store linked suppliers exist as one row per store, each carrying the
-    // SAME synced balance. Collapse every unified supplier to a single row via
-    // DISTINCT ON so Total Dettes is never multiplied by the number of linked stores.
-    // Dedup key priority (first non-null wins):
-    //   1. s.global_supplier_id   — set by import-to-stores (most explicit link)
-    //   2. c.global_contact_id    — unified-contact system; covers customer_supplier
-    //      contacts linked via the contact layer without going through import-to-stores
-    //   3. 'id:' || s.id          — standalone unlinked supplier (stays distinct)
-    // Unified Créances/Dettes rule (mirrors client-receivables):
-    //   - For customer_supplier suppliers, use contacts.current_balance (net unified).
-    //     If net < 0 → Dettes; if net ≥ 0 → excluded here (appears in Créances instead).
-    //   - For regular suppliers, use s.current_balance as before.
-    // This makes the two widgets mutually exclusive for customer_supplier entities.
-    const result = await db.execute(sql`
-      SELECT id, name, balance FROM (
-        SELECT DISTINCT ON (
-                 COALESCE(
-                   s.global_supplier_id::text,
-                   CASE WHEN c.global_contact_id IS NOT NULL
-                        THEN 'gc:' || c.global_contact_id
-                        ELSE NULL END,
-                   'id:' || s.id::text
-                 )
-               )
-               s.id, s.name,
-               ROUND(CAST(
-                 CASE WHEN s.contact_type = 'customer_supplier' AND c.id IS NOT NULL
-                      THEN c.current_balance
-                      ELSE s.current_balance
-                 END
-               AS numeric), 2) AS balance
-        FROM suppliers s
-        LEFT JOIN contacts c ON c.id = s.contact_id
-        WHERE CAST(
-                CASE WHEN s.contact_type = 'customer_supplier' AND c.id IS NOT NULL
-                     THEN c.current_balance
-                     ELSE s.current_balance
-                END
-              AS numeric) < 0
-        ${storeFilter}
-        ORDER BY
-          COALESCE(
-            s.global_supplier_id::text,
-            CASE WHEN c.global_contact_id IS NOT NULL
-                 THEN 'gc:' || c.global_contact_id
-                 ELSE NULL END,
-            'id:' || s.id::text
-          ), s.id
-      ) deduped
-      ORDER BY balance ASC
-    `);
+    const result = await getUnifiedDashboardBalances(dashboardStoreId(req), "payable");
     res.json(result.rows);
   } catch (err) { req.log.error(err); res.status(500).json({ error: "Internal server error" }); }
 });

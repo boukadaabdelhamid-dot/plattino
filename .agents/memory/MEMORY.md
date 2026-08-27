@@ -1,1 +1,2 @@
 - [No test framework in this monorepo](testing-conventions.md) — tests are standalone `npx tsx` scripts run against the real dev DB with scratch data + cleanup, not vitest/jest.
+- [Cross-store dual-role imports](cross-store-dual-role-imports.md) — preserve both raw roles and lock identity before rows; recompute the unified balance only after syncing both.

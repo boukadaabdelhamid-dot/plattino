@@ -138,7 +138,10 @@ async function propagateContactTypeToSiblings(
   localContactId: number,
   effType: "customer" | "supplier" | "customer_supplier",
 ): Promise<void> {
-  const [local] = await tx.select({ globalContactId: schema.contactsTable.globalContactId })
+  const [local] = await tx.select({
+    globalContactId: schema.contactsTable.globalContactId,
+    email: schema.contactsTable.email,
+  })
     .from(schema.contactsTable).where(eq(schema.contactsTable.id, localContactId)).limit(1);
   if (!local?.globalContactId) return;
 
@@ -168,18 +171,23 @@ async function propagateContactTypeToSiblings(
       // Ensure BOTH roles exist at the sibling too, using the sibling's OWN contact
       // fields (never the local store's — each store keeps its own contact row).
       const sibShared: ContactSharedInput = {
-        name: sib.name, contactName: sib.contactName, email: sib.email,
+        name: sib.name, contactName: sib.contactName, email: sib.email ?? local.email,
         phone: sib.phone, address: sib.address, notes: sib.notes,
         contactType: "customer_supplier",
       };
       await ensureSupplierRole(tx, sib.storeId, sib.id, sibShared);
-      // The customer role needs an email to create a login. If this sibling
-      // contact has none on file, skip creating it there instead of failing the
-      // whole promotion over an unrelated store's missing data — the contactType
-      // label above already reflects the change everywhere, and the customer
-      // role can be added later once an email is on file for that store.
+      // A linked dual-role contact must never be labelled customer_supplier while
+      // missing its customer role. Reuse the source identity email when an older
+      // sibling contact has none, and persist that backfill on the sibling.
       if ((sibShared.email ?? "").trim()) {
+        if (!(sib.email ?? "").trim()) {
+          await tx.update(schema.contactsTable)
+            .set({ email: sibShared.email, updatedAt: new Date() })
+            .where(eq(schema.contactsTable.id, sib.id));
+        }
         await ensureCustomerRole(tx, sib.storeId, sib.id, sibShared);
+      } else {
+        throw new HttpError(400, "email is required to create the customer side of a customer/supplier contact");
       }
     }
   }
@@ -1650,7 +1658,10 @@ router.post("/erp/suppliers/:id/import-to-stores", authenticate, requireStaff, r
     const results: ImportResult[] = [];
 
     const globalSupplierId = await db.transaction(async (tx) => {
-      // Lock the source row so concurrent first-imports can't generate split groups.
+      // Match the advisory-lock → row-lock order used by every balance mutator.
+      // Taking FOR UPDATE first can deadlock with a concurrent supplier operation
+      // that already holds the identity advisory lock and is waiting for this row.
+      await lockSupplierIdentity(tx, src.id);
       const [srcLocked] = await tx.select().from(schema.suppliersTable)
         .where(eq(schema.suppliersTable.id, src.id)).for("update").limit(1);
 
@@ -1662,15 +1673,60 @@ router.post("/erp/suppliers/:id/import-to-stores", authenticate, requireStaff, r
           .set({ globalSupplierId: gsid })
           .where(eq(schema.suppliersTable.id, srcLocked.id));
       }
+      // The first import may just have replaced the per-row `sup:<id>` lock key
+      // with `sup-g:<uuid>`. Advisory locks are reentrant, so acquire the resolved
+      // group key before any balance writes.
+      await lockSupplierIdentity(tx, srcLocked.id);
       // Copy source balance so all linked stores start with the same shared balance.
       const sharedBalance = srcLocked.currentBalance ?? "0.00";
 
-      // Load source contact identity (for copying fields into the target store contact)
+      // Load the source identity. Older suppliers may predate contacts entirely;
+      // retrofit one so this import establishes the unified cross-store link too.
       let srcContact: typeof schema.contactsTable.$inferSelect | undefined;
       if (srcLocked.contactId != null) {
         const [c] = await tx.select().from(schema.contactsTable)
           .where(eq(schema.contactsTable.id, srcLocked.contactId)).limit(1);
         srcContact = c;
+      }
+      if (!srcContact) {
+        const sourceShared: ContactSharedInput = {
+          name: srcLocked.name,
+          contactName: srcLocked.contactName,
+          email: srcLocked.email,
+          phone: srcLocked.phone,
+          address: srcLocked.address,
+          notes: srcLocked.notes,
+          contactType: srcLocked.contactType,
+        };
+        const sourceContactId = await insertContact(tx, storeId, sourceShared);
+        await tx.update(schema.suppliersTable)
+          .set({ contactId: sourceContactId })
+          .where(eq(schema.suppliersTable.id, srcLocked.id));
+        const [createdSourceContact] = await tx.select().from(schema.contactsTable)
+          .where(eq(schema.contactsTable.id, sourceContactId)).limit(1);
+        srcContact = createdSourceContact;
+      }
+
+      const sourceIsDualRole =
+        srcLocked.contactType === "customer_supplier" ||
+        srcContact.contactType === "customer_supplier";
+      const sourceRoleType: "supplier" | "customer_supplier" =
+        sourceIsDualRole ? "customer_supplier" : "supplier";
+      if (sourceIsDualRole) {
+        const sourceShared: ContactSharedInput = {
+          name: srcContact.name,
+          contactName: srcContact.contactName,
+          email: srcContact.email ?? srcLocked.email,
+          phone: srcContact.phone,
+          address: srcContact.address,
+          notes: srcContact.notes,
+          contactType: "customer_supplier",
+        };
+        await updateContactFields(tx, srcContact.id, sourceShared);
+        await tx.update(schema.suppliersTable)
+          .set({ contactType: "customer_supplier" })
+          .where(eq(schema.suppliersTable.id, srcLocked.id));
+        await ensureCustomerRole(tx, storeId, srcContact.id, sourceShared);
       }
 
       for (const targetStoreId of tidArr) {
@@ -1684,48 +1740,72 @@ router.post("/erp/suppliers/:id/import-to-stores", authenticate, requireStaff, r
           .limit(1);
         if (!store) { results.push({ targetStoreId, status: "error", message: "Store not found or inactive" }); continue; }
 
-        // Already part of this global group in the target store?
-        const [alreadyLinked] = await tx.select({ id: schema.suppliersTable.id })
+        // Already part of this global group in the target store? Do not skip it:
+        // older imports may have linked the supplier account while leaving its
+        // balance at zero or omitting the customer side of a dual-role contact.
+        // Running it through the same repair path makes re-import idempotently
+        // heal those partially-linked rows.
+        const [alreadyLinked] = await tx.select({
+          id: schema.suppliersTable.id,
+          contactType: schema.suppliersTable.contactType,
+        })
           .from(schema.suppliersTable)
           .where(and(eq(schema.suppliersTable.storeId, targetStoreId), eq(schema.suppliersTable.globalSupplierId, gsid)))
           .limit(1);
-        if (alreadyLinked) { results.push({ targetStoreId, status: "already_linked", supplierId: alreadyLinked.id }); continue; }
-
-        // A same-name supplier already exists in the target store.
-        const [existingByName] = await tx.select().from(schema.suppliersTable)
-          .where(and(eq(schema.suppliersTable.storeId, targetStoreId), eq(schema.suppliersTable.name, src.name)))
-          .limit(1);
 
         let targetSupplierId: number;
-        if (existingByName) {
-          if (existingByName.globalSupplierId && existingByName.globalSupplierId !== gsid) {
-            // Linked to a different global group — refuse to silently merge.
-            results.push({ targetStoreId, status: "conflict", supplierId: existingByName.id, message: "Same-name supplier already linked to another global account" });
-            continue;
-          }
-          // Link first; the shared balance itself is set below via
-          // mutateSupplierBalance so it goes through the centralized mutator
-          // (lock + legacy sync + contact recompute/fan-out) instead of a raw write.
-          await tx.update(schema.suppliersTable)
-            .set({ globalSupplierId: gsid })
-            .where(eq(schema.suppliersTable.id, existingByName.id));
-          results.push({ targetStoreId, status: "linked_existing", supplierId: existingByName.id });
-          targetSupplierId = existingByName.id;
+        let targetRoleType: "supplier" | "customer_supplier";
+        if (alreadyLinked) {
+          targetSupplierId = alreadyLinked.id;
+          targetRoleType =
+            sourceIsDualRole || alreadyLinked.contactType === "customer_supplier"
+              ? "customer_supplier"
+              : "supplier";
+          results.push({ targetStoreId, status: "already_linked", supplierId: alreadyLinked.id });
         } else {
-          // Create a fresh linked supplier (starts at 0; the shared balance is set
-          // below via mutateSupplierBalance once globalSupplierId is in place).
-          const [created] = await tx.insert(schema.suppliersTable).values({
-            storeId: targetStoreId,
-            name: src.name,
-            contactName: src.contactName,
-            email: src.email,
-            phone: src.phone,
-            address: src.address,
-            notes: src.notes,
-            globalSupplierId: gsid,
-          }).returning();
-          results.push({ targetStoreId, status: "created", supplierId: created.id });
-          targetSupplierId = created.id;
+          // A same-name supplier already exists in the target store.
+          const [existingByName] = await tx.select().from(schema.suppliersTable)
+            .where(and(eq(schema.suppliersTable.storeId, targetStoreId), eq(schema.suppliersTable.name, src.name)))
+            .limit(1);
+
+          if (existingByName) {
+            if (existingByName.globalSupplierId && existingByName.globalSupplierId !== gsid) {
+              // Linked to a different global group — refuse to silently merge.
+              results.push({ targetStoreId, status: "conflict", supplierId: existingByName.id, message: "Same-name supplier already linked to another global account" });
+              continue;
+            }
+            // Link first; the shared balance itself is set below via
+            // mutateSupplierBalance so it goes through the centralized mutator
+            // (lock + legacy sync + contact recompute/fan-out) instead of a raw write.
+            targetRoleType =
+              sourceIsDualRole || existingByName.contactType === "customer_supplier"
+                ? "customer_supplier"
+                : "supplier";
+            await tx.update(schema.suppliersTable)
+              .set({ globalSupplierId: gsid, contactType: targetRoleType })
+              .where(eq(schema.suppliersTable.id, existingByName.id));
+            results.push({ targetStoreId, status: "linked_existing", supplierId: existingByName.id });
+            targetSupplierId = existingByName.id;
+          } else {
+            // Create a fresh linked supplier (starts at 0; the shared balance is set
+            // below via mutateSupplierBalance once globalSupplierId is in place).
+            // Preserve customer_supplier here: GET /erp/suppliers only exposes the
+            // canonical contact balance when the supplier role itself has this type.
+            targetRoleType = sourceRoleType;
+            const [created] = await tx.insert(schema.suppliersTable).values({
+              storeId: targetStoreId,
+              name: src.name,
+              contactName: src.contactName,
+              email: src.email,
+              phone: src.phone,
+              address: src.address,
+              notes: src.notes,
+              contactType: targetRoleType,
+              globalSupplierId: gsid,
+            }).returning();
+            results.push({ targetStoreId, status: "created", supplierId: created.id });
+            targetSupplierId = created.id;
+          }
         }
         // Establish the shared starting balance through the centralized mutator —
         // covers legacy globalSupplierId fan-out immediately, before the contact
@@ -1753,12 +1833,34 @@ router.post("/erp/suppliers/:id/import-to-stores", authenticate, requireStaff, r
               phone: srcContact.phone,
               address: srcContact.address,
               notes: srcContact.notes,
-              contactType: srcContact.contactType,
+              contactType: targetRoleType,
             }).returning({ id: schema.contactsTable.id });
             await tx.update(schema.suppliersTable)
-              .set({ contactId: newContact.id })
+              .set({ contactId: newContact.id, contactType: targetRoleType })
               .where(eq(schema.suppliersTable.id, targetSupplierId));
             targetContactId = newContact.id;
+          } else {
+            // Repair role labels created by older imports before the unified
+            // customer/supplier propagation existed.
+            await tx.update(schema.suppliersTable)
+              .set({ contactType: targetRoleType })
+              .where(eq(schema.suppliersTable.id, targetSupplierId));
+          }
+
+          if (targetRoleType === "customer_supplier") {
+            const [targetContact] = await tx.select().from(schema.contactsTable)
+              .where(eq(schema.contactsTable.id, targetContactId)).limit(1);
+            const targetShared: ContactSharedInput = {
+              name: targetContact?.name ?? srcContact.name,
+              contactName: targetContact?.contactName ?? srcContact.contactName,
+              email: targetContact?.email ?? srcContact.email ?? srcLocked.email,
+              phone: targetContact?.phone ?? srcContact.phone,
+              address: targetContact?.address ?? srcContact.address,
+              notes: targetContact?.notes ?? srcContact.notes,
+              contactType: "customer_supplier",
+            };
+            await updateContactFields(tx, targetContactId, targetShared);
+            await ensureCustomerRole(tx, targetStoreId, targetContactId, targetShared);
           }
 
           await linkContactsGlobally(tx, srcContact.id, targetContactId);
@@ -1775,7 +1877,19 @@ router.post("/erp/suppliers/:id/import-to-stores", authenticate, requireStaff, r
       // This copies the source's correct customer balance (and supplier balance) to
       // every newly-linked sibling, without the source being overwritten by a
       // zero-initialised target inside the loop.
-      if (srcContact) await syncLinkedContactBalances(tx, srcContact.id);
+      if (srcContact) {
+        // linkContactsGlobally may have established a gcid, which becomes the
+        // canonical lock key. Resolve it before the final role/balance fan-out.
+        await lockSupplierIdentity(tx, srcLocked.id);
+        // A supplier imported from a dual-role contact must also have the customer
+        // role in every target store. This creates any missing customer_profile,
+        // normalizes both role labels to customer_supplier, and also repairs older
+        // partially-linked imports before balances are copied.
+        if (sourceIsDualRole) {
+          await propagateContactTypeToSiblings(tx, srcContact.id, "customer_supplier");
+        }
+        await syncLinkedContactBalances(tx, srcContact.id);
+      }
 
       return gsid;
     });

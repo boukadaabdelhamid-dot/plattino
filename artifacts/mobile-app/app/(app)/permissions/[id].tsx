@@ -11,7 +11,7 @@ import {
   buildPermMap,
   mapToPermRows,
   PERMISSION_SECTIONS,
-  PERMISSION_ACTIONS,
+  getPermissionActions,
 } from "@/hooks/use-admin-api";
 import { Screen } from "@/components/Screen";
 import { Card, Button, SectionTitle, LoadingView, ErrorState, ScreenTitle, Badge } from "@/components/ui";
@@ -41,7 +41,7 @@ export default function EditStaffPermissions() {
   }, [rows]);
 
   const granted = useMemo(() => Array.from(map.values()).filter(Boolean).length, [map]);
-  const total = PERMISSION_SECTIONS.length * PERMISSION_ACTIONS.length;
+  const total = PERMISSION_SECTIONS.reduce((sum, section) => sum + getPermissionActions(section.key).length, 0);
 
   if (!ready) return null;
   if (Number.isNaN(userId)) return <ErrorState title={t("Membre introuvable", "العضو غير موجود")} />;
@@ -59,7 +59,7 @@ export default function EditStaffPermissions() {
   function toggleSection(section: string, value: boolean) {
     setMap((prev) => {
       const next = new Map(prev);
-      PERMISSION_ACTIONS.forEach((a) => next.set(`${section}:${a.key}`, value));
+      getPermissionActions(section).forEach((a) => next.set(`${section}:${a.key}`, value));
       return next;
     });
   }
@@ -67,7 +67,7 @@ export default function EditStaffPermissions() {
   function setAll(value: boolean) {
     setMap((prev) => {
       const next = new Map(prev);
-      PERMISSION_SECTIONS.forEach((s) => PERMISSION_ACTIONS.forEach((a) => next.set(`${s.key}:${a.key}`, value)));
+      PERMISSION_SECTIONS.forEach((s) => getPermissionActions(s.key).forEach((a) => next.set(`${s.key}:${a.key}`, value)));
       return next;
     });
   }
@@ -111,7 +111,8 @@ export default function EditStaffPermissions() {
       </View>
 
       {PERMISSION_SECTIONS.map((section) => {
-        const allGranted = PERMISSION_ACTIONS.every((a) => map.get(`${section.key}:${a.key}`));
+        const actions = getPermissionActions(section.key);
+        const allGranted = actions.every((a) => map.get(`${section.key}:${a.key}`));
         return (
           <Card key={section.key} style={{ marginBottom: 10 }}>
             <View style={styles.sectionHeader}>
@@ -123,7 +124,7 @@ export default function EditStaffPermissions() {
                 testID={`switch-section-${section.key}`}
               />
             </View>
-            {PERMISSION_ACTIONS.map((action) => (
+            {actions.map((action) => (
               <View key={action.key} style={styles.actionRow}>
                 <Text style={styles.actionLabel}>{t(action.fr, action.ar)}</Text>
                 <Switch

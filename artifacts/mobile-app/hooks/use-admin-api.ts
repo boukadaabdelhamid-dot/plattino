@@ -101,19 +101,37 @@ export const PERMISSION_SECTIONS: { key: string; fr: string; ar: string }[] = [
   { key: "accounting", fr: "Comptabilité", ar: "المحاسبة" },
   { key: "realtime", fr: "Temps réel", ar: "الوقت الفعلي" },
   { key: "settings", fr: "Paramètres", ar: "الإعدادات" },
+  { key: "transfers", fr: "Transferts de stock", ar: "تحويلات المخزون" },
 ];
 
-export const PERMISSION_ACTIONS: { key: "view" | "create" | "edit" | "delete"; fr: string; ar: string }[] = [
+export type PermissionActionDef = { key: string; fr: string; ar: string };
+
+export const PERMISSION_ACTIONS: PermissionActionDef[] = [
   { key: "view", fr: "Voir", ar: "عرض" },
   { key: "create", fr: "Créer", ar: "إضافة" },
   { key: "edit", fr: "Modifier", ar: "تعديل" },
   { key: "delete", fr: "Supprimer", ar: "حذف" },
 ];
 
+const TRANSFER_PERMISSION_ACTIONS: PermissionActionDef[] = [
+  { key: "view", fr: "Voir les transferts", ar: "عرض التحويلات" },
+  { key: "create", fr: "Créer un transfert", ar: "إنشاء تحويل" },
+  { key: "approve", fr: "Approuver un transfert", ar: "الموافقة على التحويل" },
+  { key: "reject", fr: "Rejeter un transfert", ar: "رفض التحويل" },
+  { key: "prepare", fr: "Préparer un transfert", ar: "تجهيز التحويل" },
+  { key: "ship", fr: "Expédier un transfert", ar: "إرسال التحويل" },
+  { key: "receive", fr: "Réceptionner un transfert", ar: "استلام التحويل" },
+  { key: "cancel", fr: "Annuler un transfert", ar: "إلغاء التحويل" },
+];
+
+export function getPermissionActions(section: string): PermissionActionDef[] {
+  return section === "transfers" ? TRANSFER_PERMISSION_ACTIONS : PERMISSION_ACTIONS;
+}
+
 export function buildPermMap(rows: PermRow[]): Map<string, boolean> {
   const m = new Map<string, boolean>();
   PERMISSION_SECTIONS.forEach((s) =>
-    PERMISSION_ACTIONS.forEach((a) => m.set(`${s.key}:${a.key}`, false)),
+    getPermissionActions(s.key).forEach((a) => m.set(`${s.key}:${a.key}`, false)),
   );
   rows.forEach((r) => m.set(`${r.section}:${r.action}`, r.granted));
   return m;
@@ -122,7 +140,7 @@ export function buildPermMap(rows: PermRow[]): Map<string, boolean> {
 export function mapToPermRows(map: Map<string, boolean>): PermRow[] {
   const rows: PermRow[] = [];
   PERMISSION_SECTIONS.forEach((s) =>
-    PERMISSION_ACTIONS.forEach((a) => {
+    getPermissionActions(s.key).forEach((a) => {
       rows.push({ section: s.key, action: a.key, granted: map.get(`${s.key}:${a.key}`) ?? false });
     }),
   );

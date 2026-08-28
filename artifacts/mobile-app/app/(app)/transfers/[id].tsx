@@ -25,7 +25,7 @@ import { colors } from "@/lib/colors";
 
 export default function TransferDetail() {
   const { id } = useLocalSearchParams<{ id: string }>();
-  const { ready, isAdmin } = useProtectedRoute({ section: "inventory" });
+  const { ready, isAdmin, can } = useProtectedRoute({ section: "transfers" });
   const { currentStoreId } = useStoreContext();
   const { t, lang } = useLang();
   const feedback = useApiFeedback();
@@ -53,7 +53,8 @@ export default function TransferDetail() {
 
   const isSource = tr.sourceStoreId === currentStoreId;
   const isDestination = tr.destinationStoreId === currentStoreId;
-  const actions = getTransferActions(tr.status, { isSource, isDestination, isAdmin });
+  const actions = getTransferActions(tr.status, { isSource, isDestination, isAdmin })
+    .filter((action) => can("transfers", action.action));
 
   const mutations: Record<TransferAction, { mutate: (vars: any, opts?: any) => void; isPending: boolean }> = {
     approve, reject, prepare, ship, receive, cancel,

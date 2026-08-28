@@ -5,7 +5,7 @@ import {
   Printer, CreditCard, Tag, TrendingUp, Globe, Package,
   Image as ImageIcon, Copy, Send, Upload, QrCode, History,
   LayoutGrid, Check, Cloud, Columns3, Store, User, Building2, Receipt,
-  ShoppingCart, ClipboardList,
+  ShoppingCart, ClipboardList, CheckCircle2, XCircle, PackageCheck, Truck, Inbox, Ban,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
@@ -116,6 +116,16 @@ const SECTION_ACTIONS: Record<string, ActionDef[]> = {
     { key: "edit",   labelFr: "Modifier",                          labelAr: "تعديل",                     icon: PenLine       },
     { key: "delete", labelFr: "Supprimer",                         labelAr: "حذف",                       icon: Trash2        },
     { key: "count",  labelFr: "Lancer / valider un jrd physique",  labelAr: "بدء / تأكيد جرد فعلي",      icon: ClipboardList },
+  ],
+  transfers: [
+    { key: "view",    labelFr: "Voir les transferts",        labelAr: "عرض التحويلات",       icon: Eye         },
+    { key: "create",  labelFr: "Créer un transfert",         labelAr: "إنشاء تحويل",          icon: Plus        },
+    { key: "approve", labelFr: "Approuver un transfert",     labelAr: "الموافقة على التحويل", icon: CheckCircle2 },
+    { key: "reject",  labelFr: "Rejeter un transfert",       labelAr: "رفض التحويل",          icon: XCircle     },
+    { key: "prepare", labelFr: "Préparer un transfert",      labelAr: "تجهيز التحويل",        icon: PackageCheck },
+    { key: "ship",    labelFr: "Expédier un transfert",      labelAr: "إرسال التحويل",        icon: Truck        },
+    { key: "receive", labelFr: "Réceptionner un transfert",  labelAr: "استلام التحويل",       icon: Inbox        },
+    { key: "cancel",  labelFr: "Annuler un transfert",       labelAr: "إلغاء التحويل",        icon: Ban          },
   ],
   settings: [
     { key: "view",                  labelFr: "Voir les paramètres",                     labelAr: "عرض الإعدادات",                  icon: Eye      },

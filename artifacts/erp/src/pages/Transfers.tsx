@@ -20,6 +20,7 @@ import { useQueryClient, useQuery } from "@tanstack/react-query";
 import { useMe } from "@/hooks/use-me";
 import { useStoreContext } from "@/hooks/use-store";
 import { useLang } from "@/hooks/use-lang";
+import { usePermissions } from "@/hooks/use-permissions";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -90,6 +91,7 @@ function findByCode(products: ProductLite[], raw: string): ProductLite | undefin
 export default function Transfers() {
   const qc = useQueryClient();
   const { user, isAdmin } = useMe();
+  const { can } = usePermissions();
   const { currentStoreId } = useStoreContext();
   const { lang } = useLang();
   const tr: TrFn = (fr, ar) => lang === "ar" ? ar : fr;
@@ -119,13 +121,15 @@ export default function Transfers() {
             {tr("Transferts de stock inter-magasins", "تحويلات المخزون بين المتاجر")}
           </p>
         </div>
-        <Button
-          onClick={() => setOpenCreate(true)}
-          disabled={otherStores.length === 0}
-          data-testid="button-new-transfer"
-        >
-          <Plus className="h-4 w-4 mr-2" /> {tr("Nouveau transfert", "تحويل جديد")}
-        </Button>
+        {can("transfers", "create") && (
+          <Button
+            onClick={() => setOpenCreate(true)}
+            disabled={otherStores.length === 0}
+            data-testid="button-new-transfer"
+          >
+            <Plus className="h-4 w-4 mr-2" /> {tr("Nouveau transfert", "تحويل جديد")}
+          </Button>
+        )}
       </div>
 
       <Tabs value={direction} onValueChange={(v) => setDirection(v as "in" | "out" | "all")}>
@@ -760,6 +764,7 @@ function TransferDetailDialog({
   onChanged: () => void;
 }) {
   const { lang } = useLang();
+  const { can } = usePermissions();
   const tr: TrFn = (fr, ar) => lang === "ar" ? ar : fr;
   const { data: detail, isLoading } = useGetErpTransfer(id);
   const approve = useApproveErpTransfer();
@@ -872,30 +877,34 @@ function TransferDetailDialog({
             <div className="flex flex-wrap gap-2 pt-2 border-t">
               {td.status === "requested" && isDest && (
                 <>
-                  <Button size="sm" onClick={() => act(approve)} disabled={approve.isPending} data-testid="button-approve">
-                    <CheckCircle2 className="h-4 w-4 mr-1" /> {tr("Approuver", "قبول")}
-                  </Button>
-                  <Button size="sm" variant="destructive" onClick={() => act(reject)} disabled={reject.isPending} data-testid="button-reject">
-                    <XCircle className="h-4 w-4 mr-1" /> {tr("Rejeter", "رفض")}
-                  </Button>
+                  {can("transfers", "approve") && (
+                    <Button size="sm" onClick={() => act(approve)} disabled={approve.isPending} data-testid="button-approve">
+                      <CheckCircle2 className="h-4 w-4 mr-1" /> {tr("Approuver", "قبول")}
+                    </Button>
+                  )}
+                  {can("transfers", "reject") && (
+                    <Button size="sm" variant="destructive" onClick={() => act(reject)} disabled={reject.isPending} data-testid="button-reject">
+                      <XCircle className="h-4 w-4 mr-1" /> {tr("Rejeter", "رفض")}
+                    </Button>
+                  )}
                 </>
               )}
-              {((td.status === "approved") || (td.status === "requested" && isAdmin)) && isSource && (
+              {((td.status === "approved") || (td.status === "requested" && isAdmin)) && isSource && can("transfers", "prepare") && (
                 <Button size="sm" onClick={() => act(prepare)} disabled={prepare.isPending} data-testid="button-prepare">
                   <PackageCheck className="h-4 w-4 mr-1" /> {tr("Préparer", "تجهيز")}
                 </Button>
               )}
-              {td.status === "prepared" && isSource && (
+              {td.status === "prepared" && isSource && can("transfers", "ship") && (
                 <Button size="sm" onClick={() => act(ship)} disabled={ship.isPending} data-testid="button-ship">
                   <Truck className="h-4 w-4 mr-1" /> {tr("Expédier", "إرسال")}
                 </Button>
               )}
-              {td.status === "in_transit" && isDest && (
+              {td.status === "in_transit" && isDest && can("transfers", "receive") && (
                 <Button size="sm" onClick={() => act(receive)} disabled={receive.isPending} data-testid="button-receive">
                   <Inbox className="h-4 w-4 mr-1" /> {tr("Réceptionner", "استلام")}
                 </Button>
               )}
-              {!["received", "cancelled", "rejected"].includes(td.status) && isSource &&
+              {!["received", "cancelled", "rejected"].includes(td.status) && isSource && can("transfers", "cancel") &&
                (!["prepared", "in_transit"].includes(td.status) || isAdmin) && (
                 <Button size="sm" variant="outline" onClick={() => act(cancel)} disabled={cancel.isPending} data-testid="button-cancel-transfer">
                   <Ban className="h-4 w-4 mr-1" /> {tr("Annuler", "إلغاء")}

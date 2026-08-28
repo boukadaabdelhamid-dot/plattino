@@ -48,7 +48,7 @@ export const MENU_GROUPS: MenuGroup[] = [
     items: [
       { key: "products", href: "/products", icon: "package", labelFr: "Produits", labelAr: "المنتجات", section: "products" },
       { key: "inventory", href: "/inventory", icon: "archive", labelFr: "Inventaire", labelAr: "الجرد", section: "inventory" },
-      { key: "transfers", href: "/transfers", icon: "repeat", labelFr: "Transferts", labelAr: "التحويلات", section: "inventory" },
+      { key: "transfers", href: "/transfers", icon: "repeat", labelFr: "Transferts", labelAr: "التحويلات", section: "transfers" },
       { key: "suppliers", href: "/suppliers", icon: "truck", labelFr: "Fournisseurs", labelAr: "الموردون", section: "suppliers" },
       { key: "purchase-orders", href: "/purchase-orders", icon: "clipboard", labelFr: "Bons d'achat", labelAr: "أوامر الشراء", section: "purchases" },
       { key: "smart-purchase", href: "/smart-purchase", icon: "zap", labelFr: "Achat intelligent", labelAr: "الشراء الذكي", section: "purchases" },

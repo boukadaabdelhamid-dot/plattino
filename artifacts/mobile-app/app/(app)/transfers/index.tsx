@@ -22,7 +22,7 @@ const STATUS_TONE: Record<string, "success" | "warning" | "danger" | "muted" | "
 };
 
 export default function TransfersList() {
-  const { ready, isAdmin, can } = useProtectedRoute({ section: "inventory" });
+  const { ready, isAdmin, can } = useProtectedRoute({ section: "transfers" });
   const { t, lang } = useLang();
   const router = useRouter();
   const [direction, setDirection] = useState<"all" | "in" | "out">("all");
@@ -33,7 +33,7 @@ export default function TransfersList() {
   });
 
   if (!ready) return null;
-  const canCreate = isAdmin || can("inventory", "create");
+  const canCreate = isAdmin || can("transfers", "create");
 
   return (
     <RNView style={{ flex: 1 }}>

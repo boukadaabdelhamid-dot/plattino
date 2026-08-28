@@ -19,8 +19,19 @@ export type PermSection =
   | "realtime"
   | "attendance"
   | "leaves"
-  | "accounting";
-export type PermAction = "view" | "create" | "edit" | "delete";
+  | "accounting"
+  | "transfers";
+export type PermAction =
+  | "view"
+  | "create"
+  | "edit"
+  | "delete"
+  | "approve"
+  | "reject"
+  | "prepare"
+  | "ship"
+  | "receive"
+  | "cancel";
 
 export type PermRow = { section: string; action: string; granted: boolean };
 

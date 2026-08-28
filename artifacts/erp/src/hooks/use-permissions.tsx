@@ -32,6 +32,8 @@ export type PermAction =
   | "print_barcode" | "view_history" | "bulk_actions"
   // purchases
   | "receive" | "manage_charges" | "column_settings"
+  // transfers
+  | "approve" | "reject" | "prepare" | "ship" | "cancel"
   // settings
   | "edit_store_name" | "edit_default_customer" | "manage_permissions" | "manage_stores"
   // orders – sidebar child visibility

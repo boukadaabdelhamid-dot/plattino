@@ -39,6 +39,9 @@ export function getTransferActions(
         actions.push({ action: "reject", label: "Rejeter", labelAr: "رفض", destructive: true });
       }
       if (ctx.isSource) {
+        if (ctx.isAdmin) {
+          actions.push({ action: "prepare", label: "Marquer comme préparé", labelAr: "وضع علامة تم التحضير" });
+        }
         actions.push({ action: "cancel", label: "Annuler", labelAr: "إلغاء", destructive: true });
       }
       break;

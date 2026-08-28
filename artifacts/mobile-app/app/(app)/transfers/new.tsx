@@ -33,7 +33,7 @@ type CartLine = { product: Product; quantity: number };
  * follow-up task for pull-mode initiation from mobile.
  */
 export default function NewTransfer() {
-  const { ready, isAdmin, can } = useProtectedRoute({ section: "inventory" });
+  const { ready, isAdmin, can } = useProtectedRoute({ section: "transfers" });
   const { currentStoreId } = useStoreContext();
   const { t, lang, isRTL } = useLang();
   const router = useRouter();
@@ -62,7 +62,7 @@ export default function NewTransfer() {
   const createTransfer = useCreateErpTransfer();
 
   const totalQty = useMemo(() => cart.reduce((sum, l) => sum + l.quantity, 0), [cart]);
-  const canCreate = isAdmin || can("inventory", "create");
+  const canCreate = isAdmin || can("transfers", "create");
   const canSend = isAdmin;
 
   if (!ready) return null;

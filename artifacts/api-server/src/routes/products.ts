@@ -191,7 +191,12 @@ async function handleListProducts(req: AuthRequest, res: import("express").Respo
 
     if (search) {
       conditions.push(
-        sql`(${ilike(schema.productsTable.nameAr, `%${search}%`)} OR ${ilike(schema.productsTable.nameEn, `%${search}%`)})`,
+        or(
+          ilike(schema.productsTable.nameAr, `%${search}%`),
+          ilike(schema.productsTable.nameEn, `%${search}%`),
+          ilike(schema.productsTable.reference, `%${search}%`),
+          ilike(schema.productsTable.barcode, `%${search}%`),
+        )!,
       );
     }
     if (categoryId) {

@@ -211,8 +211,8 @@ router.get("/erp/transfers/:id", authenticate, requireStaff, requireStore, requi
 // 'request' (default): created in 'requested', destination must approve.
 //   - source-initiated: source asks destination to accept goods (push request)
 //   - destination-initiated: destination asks source to send goods (pull request)
-// 'send' (admin only, source-initiated only): created in 'prepared',
-//   source stock decremented immediately.
+// 'send' (admin only, source-initiated only): created in 'prepared'.
+//   Source stock remains unchanged until the destination receives the transfer.
 router.post("/erp/transfers", authenticate, requireStaff, requireStore, requirePermission("transfers", "create"), async (req: AuthRequest, res) => {
   try {
     const currentStoreId = req.currentStoreId!;
@@ -266,6 +266,19 @@ router.post("/erp/transfers", authenticate, requireStaff, requireStore, requireP
     }
     const sourceMap = new Map(sourceProducts.map(p => [p.id, p]));
 
+    // Validate the total requested quantity per source product. API callers can
+    // submit duplicate rows, so checking each row independently is insufficient.
+    const requestedByProduct = new Map<number, number>();
+    for (const it of items) {
+      const productId = Number(it.sourceProductId);
+      const src = sourceMap.get(productId)!;
+      const qty = Number(it.quantity);
+      if (!Number.isInteger(qty) || qty <= 0) {
+        res.status(400).json({ error: `Invalid quantity for product ${src.id}` });
+        return;
+      }
+      requestedByProduct.set(productId, (requestedByProduct.get(productId) ?? 0) + qty);
+    }
     // Build line items + match destination products
     const preparedMode = mode === "send";
     if (preparedMode) {
@@ -285,10 +298,6 @@ router.post("/erp/transfers", authenticate, requireStaff, requireStore, requireP
     for (const it of items) {
       const src = sourceMap.get(Number(it.sourceProductId))!;
       const qty = Number(it.quantity);
-      if (!Number.isInteger(qty) || qty <= 0) {
-        res.status(400).json({ error: `Invalid quantity for product ${src.id}` });
-        return;
-      }
       const matchKey = (src.reference || src.barcode || "").trim();
       if (!matchKey) {
         res.status(400).json({ error: `Product "${src.nameEn}" has no reference or barcode — cannot match across stores` });
@@ -324,6 +333,33 @@ router.post("/erp/transfers", authenticate, requireStaff, requireStore, requireP
     const now = new Date();
 
     const created = await db.transaction(async (tx) => {
+      // Establish a creation-time serialization point with concurrent stock
+      // mutations. Lock in stable ID order to avoid deadlocks between requests.
+      const lockedProducts = await tx.select().from(schema.productsTable)
+        .where(and(
+          inArray(schema.productsTable.id, [...requestedByProduct.keys()]),
+          eq(schema.productsTable.storeId, sourceStoreId),
+        ))
+        .orderBy(schema.productsTable.id)
+        .for("update");
+      if (lockedProducts.length !== requestedByProduct.size) {
+        throw { http: 400, message: "One or more source products are no longer available" };
+      }
+      for (const src of lockedProducts) {
+        const requested = requestedByProduct.get(src.id)!;
+        const available = Number(src.stock) || 0;
+        if (available <= 0 || requested > available) {
+          throw {
+            http: 409,
+            message: `Insufficient source stock for "${src.nameEn || src.nameAr}" (${src.reference || src.barcode || src.id}): requested ${requested}, available ${available}.`,
+            code: "INSUFFICIENT_SOURCE_STOCK",
+            productId: src.id,
+            requested,
+            available,
+          };
+        }
+      }
+
       const [transfer] = await tx.insert(schema.stockTransfersTable).values({
         sourceStoreId,
         destinationStoreId: destId,
@@ -358,8 +394,24 @@ router.post("/erp/transfers", authenticate, requireStaff, requireStore, requireP
     broadcastTransferChanged(created);
     res.status(201).json(created);
   } catch (err) {
-    const e = err as { http?: number; message?: string };
-    if (e.http === 409) { res.status(409).json({ error: e.message }); return; }
+    const e = err as {
+      http?: number;
+      message?: string;
+      code?: string;
+      productId?: number;
+      requested?: number;
+      available?: number;
+    };
+    if (e.http === 400 || e.http === 409) {
+      res.status(e.http).json({
+        error: e.message,
+        ...(e.code ? { code: e.code } : {}),
+        ...(e.productId !== undefined ? { productId: e.productId } : {}),
+        ...(e.requested !== undefined ? { requested: e.requested } : {}),
+        ...(e.available !== undefined ? { available: e.available } : {}),
+      });
+      return;
+    }
     req.log.error(err);
     res.status(500).json({ error: "Internal server error" });
   }

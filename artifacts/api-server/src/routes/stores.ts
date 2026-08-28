@@ -1,8 +1,8 @@
 import { Router } from "express";
-import { eq, sql, ilike, or, and } from "drizzle-orm";
+import { eq, sql, ilike, or, and, gt } from "drizzle-orm";
 import { z } from "zod";
 import { db, schema } from "../lib/db";
-import { authenticate, requireAdmin, requireStaff, requireStore, type AuthRequest } from "../lib/auth";
+import { authenticate, requireAdmin, requireStaff, requireStore, requirePermission, type AuthRequest } from "../lib/auth";
 
 const router = Router();
 
@@ -215,15 +215,31 @@ router.get("/erp/stores/:id/users", authenticate, requireAdmin, async (req, res)
   } catch (err) { req.log.error(err); res.status(500).json({ error: "Internal server error" }); }
 });
 
-// Product catalogue for a specific store (read-only, admin only).
+// Product catalogue for a specific active store (read-only).
 // Used by the "Demander depuis un autre magasin" flow so the initiating store
 // can search the SOURCE store's products by name / reference / barcode instead
 // of having to type raw product IDs.
-router.get("/erp/stores/:id/products", authenticate, requireAdmin, async (req: AuthRequest, res) => {
+router.get(
+  "/erp/stores/:id/products",
+  authenticate,
+  requireStaff,
+  requireStore,
+  requirePermission("transfers", "create"),
+  async (req: AuthRequest, res) => {
   try {
     const storeId = pid(req, "id");
     if (!Number.isFinite(storeId)) {
       res.status(400).json({ error: "Invalid storeId" }); return;
+    }
+    if (storeId === req.currentStoreId) {
+      res.status(400).json({ error: "Source store must be different from the current store" }); return;
+    }
+    const [store] = await db.select({ id: schema.storesTable.id })
+      .from(schema.storesTable)
+      .where(and(eq(schema.storesTable.id, storeId), eq(schema.storesTable.isActive, true)))
+      .limit(1);
+    if (!store) {
+      res.status(404).json({ error: "Source store not found or inactive" }); return;
     }
     const search = (req.query["search"] as string | undefined)?.trim();
     const searchFilter = search
@@ -243,7 +259,11 @@ router.get("/erp/stores/:id/products", authenticate, requireAdmin, async (req: A
       stock: schema.productsTable.stock,
     })
       .from(schema.productsTable)
-      .where(and(eq(schema.productsTable.storeId, storeId), ...(searchFilter ? [searchFilter] : [])))
+      .where(and(
+        eq(schema.productsTable.storeId, storeId),
+        gt(schema.productsTable.stock, 0),
+        ...(searchFilter ? [searchFilter] : []),
+      ))
       .orderBy(schema.productsTable.nameEn)
       .limit(search ? 20 : 500);
     res.json({ products });

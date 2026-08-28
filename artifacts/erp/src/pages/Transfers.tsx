@@ -88,6 +88,20 @@ function findByCode(products: ProductLite[], raw: string): ProductLite | undefin
   );
 }
 
+function readableSearchError(error: unknown, tr: TrFn): string {
+  const raw = error instanceof Error ? error.message : String(error);
+  if (raw.includes("403")) {
+    return tr(
+      "Vous n'avez pas l'autorisation de rechercher les produits de ce magasin.",
+      "ليس لديك صلاحية البحث في منتجات هذا المتجر.",
+    );
+  }
+  return tr(
+    "Impossible de rechercher les produits. Réessayez.",
+    "تعذر البحث عن المنتجات. حاول مرة أخرى.",
+  );
+}
+
 export default function Transfers() {
   const qc = useQueryClient();
   const { user, isAdmin } = useMe();
@@ -279,13 +293,29 @@ function ProductSearchBar({ products: staticProducts, disabled, onPick, tr, tota
   }, [query]);
 
   // Own-store server search (Envoyer vers mode)
-  const { data: serverRes, isFetching: isFetchingOwn } = useGetProducts(
-    { search: debouncedQ || undefined, limit: 20 },
-    { query: { enabled: !!serverSearch && !storeSearchId && !disabled && debouncedQ.length >= 1 } },
+  const ownSearchParams = { search: debouncedQ || undefined, limit: 20, inStockOnly: true };
+  const {
+    data: serverRes,
+    isFetching: isFetchingOwn,
+    isError: isOwnSearchError,
+    error: ownSearchError,
+  } = useGetProducts(
+    ownSearchParams,
+    {
+      query: {
+        queryKey: ["/api/products", ownSearchParams],
+        enabled: !!serverSearch && !storeSearchId && !disabled && debouncedQ.length >= 1,
+      },
+    },
   );
 
   // Cross-store server search (Demander depuis mode)
-  const { data: crossStoreRes, isFetching: isFetchingCross } = useQuery({
+  const {
+    data: crossStoreRes,
+    isFetching: isFetchingCross,
+    isError: isCrossSearchError,
+    error: crossSearchError,
+  } = useQuery({
     queryKey: ["/api/erp/stores/products/search", storeSearchId, debouncedQ],
     enabled: !!storeSearchId && !disabled && debouncedQ.length >= 1,
     queryFn: async () => {
@@ -294,13 +324,16 @@ function ProductSearchBar({ products: staticProducts, disabled, onPick, tr, tota
       const res = await fetch(`${API_BASE}/api/erp/stores/${storeSearchId}/products?${params}`, {
         headers: token ? { Authorization: `Bearer ${token}` } : {},
       });
-      if (!res.ok) throw new Error(await res.text());
+      if (!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text()}`);
       return res.json() as Promise<{ products: ProductLite[] }>;
     },
     staleTime: 15_000,
   });
 
   const isFetching = isFetchingOwn || isFetchingCross;
+  const searchError = isCrossSearchError
+    ? crossSearchError
+    : (isOwnSearchError ? ownSearchError : null);
 
   // Products to display — cross-store server results, own-store server results, or local list
   const displayProducts: ProductLite[] = storeSearchId
@@ -327,7 +360,7 @@ function ProductSearchBar({ products: staticProducts, disabled, onPick, tr, tota
           (p.barcode ?? "").toLowerCase().includes(tok),
       )
       .slice(0, 8);
-  }, [query, displayProducts, serverSearch]);
+  }, [query, displayProducts, serverSearch, storeSearchId]);
 
   function pick(p: ProductLite) {
     setError(null);
@@ -404,6 +437,11 @@ function ProductSearchBar({ products: staticProducts, disabled, onPick, tr, tota
       {error && (
         <p className="text-[11px] text-red-600 mt-1" data-testid="text-scan-error">{error}</p>
       )}
+      {searchError && debouncedQ.length >= 1 && (
+        <p className="text-[11px] text-red-600 mt-1" data-testid="text-product-search-request-error">
+          {readableSearchError(searchError, tr)}
+        </p>
+      )}
       {!serverSearch && totalCount !== undefined && totalCount > (staticProducts?.length ?? 0) && (
         <p className="text-[11px] text-muted-foreground mt-1">
           {totalCount - (staticProducts?.length ?? 0)} {tr("produit(s) masqués — référence/code-barres manquant.", "منتج مخفي — مرجع/باركود مفقود.")}
@@ -439,14 +477,14 @@ export function CreateTransferDialog({
   const [mode, setMode] = useState<"request" | "send">("request");
   const [notes, setNotes] = useState("");
   const [lines, setLines] = useState<LineDraft[]>(initialLines ?? []);
-  const { data: productsRes } = useGetProducts({ limit: 500 });
+  const { data: productsRes } = useGetProducts({ limit: 500, inStockOnly: true });
   const products = (productsRes?.products ?? []) as ProductLite[];
   // Cache products picked via server-side search so line-item display works
   // even for items beyond the 500-item local list.
   const [pickedProducts, setPickedProducts] = useState<Record<number, ProductLite>>(initialPickedProducts ?? {});
   const create = useCreateErpTransfer();
 
-  const { data: inboundData } = useQuery({
+  const { data: inboundData, isError: isInboundError, error: inboundError } = useQuery({
     queryKey: ["/api/erp/stores/products", Number(otherStoreId)],
     enabled: direction === "in" && !!otherStoreId,
     queryFn: async () => {
@@ -454,7 +492,7 @@ export function CreateTransferDialog({
       const res = await fetch(`${API_BASE}/api/erp/stores/${otherStoreId}/products`, {
         headers: token ? { Authorization: `Bearer ${token}` } : {},
       });
-      if (!res.ok) throw new Error(await res.text());
+      if (!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text()}`);
       return res.json() as Promise<{ products: ProductLite[] }>;
     },
     staleTime: 30_000,
@@ -540,19 +578,18 @@ export function CreateTransferDialog({
   const hasUnmatchable =
     direction === "out" &&
     linesWithProduct.some((l) => l.product && productKey(l.product) === null);
-  const hasOverstock =
-    direction === "out" &&
-    linesWithProduct.some(
-      (l) => l.product && Number(l.quantity) > (l.product.stock ?? 0),
-    );
+  const hasOverstock = linesWithProduct.some(
+    (l) => l.product && Number(l.quantity) > (l.product.stock ?? 0),
+  );
 
   const valid = useMemo(() => {
     if (!otherStoreId) return false;
     if (lines.length === 0) return false;
     if (!lines.every((l) => l.sourceProductId && Number(l.quantity) > 0)) return false;
     if (hasUnmatchable) return false;
+    if (hasOverstock) return false;
     return true;
-  }, [otherStoreId, lines, hasUnmatchable]);
+  }, [otherStoreId, lines, hasUnmatchable, hasOverstock]);
 
   const submit = () => {
     const otherId = Number(otherStoreId);
@@ -637,7 +674,7 @@ export function CreateTransferDialog({
               </Select>
               {mode === "send" && direction === "out" && (
                 <p className="text-[11px] text-amber-700 mt-1">
-                  {tr("Le stock sera déduit immédiatement de la source.", "سيخصم المخزون فوراً من المصدر.")}
+                  {tr("Le transfert sera préparé directement; le stock sera déduit à la réception.", "سيُحضّر التحويل مباشرة؛ وسيُخصم المخزون عند الاستلام.")}
                 </p>
               )}
               {direction === "in" && (
@@ -662,6 +699,11 @@ export function CreateTransferDialog({
               totalCount={direction === "in" ? inboundProducts.length : undefined}
               autoFocus={direction === "out"}
             />
+            {direction === "in" && isInboundError && (
+              <p className="text-[11px] text-red-600 mb-2" data-testid="text-inbound-catalogue-error">
+                {readableSearchError(inboundError, tr)}
+              </p>
+            )}
 
             {hasUnmatchable && (
               <div className="mb-2 text-xs text-red-700 bg-red-50 border border-red-200 rounded px-3 py-2 flex items-start gap-2">
@@ -688,7 +730,7 @@ export function CreateTransferDialog({
                 const p = line.product;
                 const noKey = direction === "out" && p && productKey(p) === null;
                 const qtyN = Number(line.quantity);
-                const overStock = direction === "out" && p && qtyN > (p.stock ?? 0);
+                const overStock = p && qtyN > (p.stock ?? 0);
                 return (
                   <div key={i} className="flex gap-2 items-start border rounded px-2 py-1.5">
                     <div className="flex-1 min-w-0">

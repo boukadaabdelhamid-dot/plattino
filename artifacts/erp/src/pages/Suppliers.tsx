@@ -599,6 +599,7 @@ export default function Suppliers() {
       ...emptySupplierForm,
       name: s.name ?? "", email: s.email ?? "", phone: s.phone ?? "",
       address: s.address ?? "", notes: s.notes ?? "",
+      wilaya: s.wilaya ?? "", commune: s.commune ?? "",
       contactType: s.contactType ?? "supplier",
     });
     setSaveError(null);
@@ -619,6 +620,8 @@ export default function Suppliers() {
       email: form.email,
       phone: form.phone,
       address: form.address,
+      wilaya: form.wilaya,
+      commune: form.commune,
       notes: form.notes,
       contactType: form.contactType as "supplier" | "customer_supplier",
     };

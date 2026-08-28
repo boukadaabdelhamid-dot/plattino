@@ -315,6 +315,8 @@ CREATE TABLE "suppliers" (
         "email" text,
         "phone" text,
         "address" text,
+        "wilaya" text,
+        "commune" text,
         "notes" text,
         "created_at" timestamp DEFAULT now() NOT NULL
 );--> statement-breakpoint
@@ -448,6 +450,8 @@ ALTER TYPE "public"."caisse_movement_reason" ADD VALUE IF NOT EXISTS 'purchase_p
 ALTER TYPE "public"."caisse_movement_reason" ADD VALUE IF NOT EXISTS 'salary_payment';--> statement-breakpoint
 ALTER TYPE "public"."caisse_movement_reason" ADD VALUE IF NOT EXISTS 'expense';--> statement-breakpoint
 -- ─── Schema-alignment patch (idempotent): brings MIGRATION_SQL in sync with lib/db/src/schema/*.ts ───
+ALTER TABLE "suppliers" ADD COLUMN IF NOT EXISTS "wilaya" text;--> statement-breakpoint
+ALTER TABLE "suppliers" ADD COLUMN IF NOT EXISTS "commune" text;--> statement-breakpoint
 CREATE TYPE "public"."caisse_session_status" AS ENUM('open', 'closed');--> statement-breakpoint
 CREATE TYPE "public"."contact_type" AS ENUM('customer', 'customer_supplier');--> statement-breakpoint
 ALTER TYPE "public"."order_status" ADD VALUE IF NOT EXISTS 'draft' BEFORE 'pending';--> statement-breakpoint

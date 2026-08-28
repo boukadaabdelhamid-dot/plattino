@@ -945,6 +945,8 @@ export interface Supplier {
   email?: string | null;
   phone?: string | null;
   address?: string | null;
+  wilaya?: string | null;
+  commune?: string | null;
   notes?: string | null;
   contactType?: SupplierContactType;
   contactId?: number | null;
@@ -1008,6 +1010,8 @@ export interface CreateSupplierRequest {
   email?: string;
   phone?: string;
   address?: string;
+  wilaya?: string;
+  commune?: string;
   notes?: string;
   contactType?: CreateSupplierRequestContactType;
 }

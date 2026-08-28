@@ -691,6 +691,40 @@ export declare const suppliersTable: import("drizzle-orm/pg-core").PgTableWithCo
             identity: undefined;
             generated: undefined;
         }, {}, {}>;
+        wilaya: import("drizzle-orm/pg-core").PgColumn<{
+            name: "wilaya";
+            tableName: "suppliers";
+            dataType: "string";
+            columnType: "PgText";
+            data: string;
+            driverParam: string;
+            notNull: false;
+            hasDefault: false;
+            isPrimaryKey: false;
+            isAutoincrement: false;
+            hasRuntimeDefault: false;
+            enumValues: [string, ...string[]];
+            baseColumn: never;
+            identity: undefined;
+            generated: undefined;
+        }, {}, {}>;
+        commune: import("drizzle-orm/pg-core").PgColumn<{
+            name: "commune";
+            tableName: "suppliers";
+            dataType: "string";
+            columnType: "PgText";
+            data: string;
+            driverParam: string;
+            notNull: false;
+            hasDefault: false;
+            isPrimaryKey: false;
+            isAutoincrement: false;
+            hasRuntimeDefault: false;
+            enumValues: [string, ...string[]];
+            baseColumn: never;
+            identity: undefined;
+            generated: undefined;
+        }, {}, {}>;
         notes: import("drizzle-orm/pg-core").PgColumn<{
             name: "notes";
             tableName: "suppliers";
@@ -1102,7 +1136,7 @@ export declare const purchaseOrdersTable: import("drizzle-orm/pg-core").PgTableW
             tableName: "purchase_orders";
             dataType: "string";
             columnType: "PgEnumColumn";
-            data: "pending" | "cancelled" | "received";
+            data: "pending" | "received" | "cancelled";
             driverParam: string;
             notNull: true;
             hasDefault: true;
@@ -1887,7 +1921,7 @@ export declare const inventoryMovementsTable: import("drizzle-orm/pg-core").PgTa
             tableName: "inventory_movements";
             dataType: "string";
             columnType: "PgEnumColumn";
-            data: "out" | "in" | "adjustment";
+            data: "in" | "out" | "adjustment";
             driverParam: string;
             notNull: true;
             hasDefault: false;
@@ -3630,7 +3664,7 @@ export declare const stockTransfersTable: import("drizzle-orm/pg-core").PgTableW
             tableName: "stock_transfers";
             dataType: "string";
             columnType: "PgEnumColumn";
-            data: "cancelled" | "approved" | "rejected" | "received" | "requested" | "prepared" | "in_transit";
+            data: "approved" | "rejected" | "received" | "cancelled" | "requested" | "prepared" | "in_transit";
             driverParam: string;
             notNull: true;
             hasDefault: true;
@@ -3933,7 +3967,7 @@ export declare const stockTransferEventsTable: import("drizzle-orm/pg-core").PgT
             tableName: "stock_transfer_events";
             dataType: "string";
             columnType: "PgEnumColumn";
-            data: "cancelled" | "approved" | "rejected" | "received" | "requested" | "prepared" | "in_transit";
+            data: "approved" | "rejected" | "received" | "cancelled" | "requested" | "prepared" | "in_transit";
             driverParam: string;
             notNull: true;
             hasDefault: false;
@@ -4231,7 +4265,7 @@ export declare const caisseTransfersTable: import("drizzle-orm/pg-core").PgTable
             tableName: "caisse_transfers";
             dataType: "string";
             columnType: "PgEnumColumn";
-            data: "pending" | "cancelled" | "rejected" | "accepted";
+            data: "pending" | "rejected" | "cancelled" | "accepted";
             driverParam: string;
             notNull: true;
             hasDefault: true;

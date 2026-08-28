@@ -70,6 +70,8 @@ export const suppliersTable = pgTable("suppliers", {
   email: text("email"),
   phone: text("phone"),
   address: text("address"),
+  wilaya: text("wilaya"),
+  commune: text("commune"),
   notes: text("notes"),
   // Role of the linked contact: 'supplier' (default) or 'customer_supplier'.
   contactType: contactTypeEnum("contact_type").notNull().default("supplier"),

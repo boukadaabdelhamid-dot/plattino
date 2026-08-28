@@ -38,6 +38,8 @@ type ContactSharedInput = {
   email?: string | null;
   phone?: string | null;
   address?: string | null;
+  wilaya?: string | null;
+  commune?: string | null;
   notes?: string | null;
   contactType: "customer" | "supplier" | "customer_supplier";
 };
@@ -105,6 +107,8 @@ async function ensureCustomerRole(tx: Tx, storeId: number, contactId: number, s:
   await tx.insert(schema.customerProfilesTable).values({
     userId: uid, storeId, contactId,
     contactType: s.contactType === "customer_supplier" ? "customer_supplier" : "customer",
+    wilaya: s.wilaya ?? null,
+    commune: s.commune ?? null,
   }).onConflictDoNothing();
   return uid;
 }
@@ -117,7 +121,8 @@ async function ensureSupplierRole(tx: Tx, storeId: number, contactId: number, s:
   if (existing) return existing.id;
   const [supplier] = await tx.insert(schema.suppliersTable).values({
     storeId, name: s.name, contactName: s.contactName ?? null, email: s.email ?? null,
-    phone: s.phone ?? null, address: s.address ?? null, notes: s.notes ?? null,
+    phone: s.phone ?? null, address: s.address ?? null,
+    wilaya: s.wilaya ?? null, commune: s.commune ?? null, notes: s.notes ?? null,
     contactType: s.contactType === "customer_supplier" ? "customer_supplier" : "supplier",
     contactId,
   }).returning({ id: schema.suppliersTable.id });
@@ -1374,6 +1379,8 @@ router.post("/erp/suppliers", authenticate, requireStaff, requireStore, requireP
       email: b.email ?? null,
       phone: b.phone ?? null,
       address: b.address ?? null,
+      wilaya: b.wilaya ?? null,
+      commune: b.commune ?? null,
       notes: b.notes ?? null,
       contactType,
     };
@@ -1414,6 +1421,8 @@ router.put("/erp/suppliers/:id", authenticate, requireStaff, requireStore, requi
     if (b.email !== undefined) set.email = b.email ?? null;
     if (b.phone !== undefined) set.phone = b.phone ?? null;
     if (b.address !== undefined) set.address = b.address ?? null;
+    if (b.wilaya !== undefined) set.wilaya = b.wilaya ?? null;
+    if (b.commune !== undefined) set.commune = b.commune ?? null;
     if (b.notes !== undefined) set.notes = b.notes ?? null;
     const newType: "supplier" | "customer_supplier" | undefined =
       b.contactType === "customer_supplier" ? "customer_supplier"
@@ -1448,6 +1457,8 @@ router.put("/erp/suppliers/:id", authenticate, requireStaff, requireStore, requi
         email: (set.email as string | null | undefined) ?? current.email,
         phone: (set.phone as string | null | undefined) ?? current.phone,
         address: (set.address as string | null | undefined) ?? current.address,
+        wilaya: (set.wilaya as string | null | undefined) ?? current.wilaya,
+        commune: (set.commune as string | null | undefined) ?? current.commune,
         notes: (set.notes as string | null | undefined) ?? current.notes,
         contactType: effType,
       };
@@ -1697,6 +1708,8 @@ router.post("/erp/suppliers/:id/import-to-stores", authenticate, requireStaff, r
           email: srcLocked.email,
           phone: srcLocked.phone,
           address: srcLocked.address,
+          wilaya: srcLocked.wilaya,
+          commune: srcLocked.commune,
           notes: srcLocked.notes,
           contactType: srcLocked.contactType,
         };
@@ -1721,6 +1734,8 @@ router.post("/erp/suppliers/:id/import-to-stores", authenticate, requireStaff, r
           email: srcContact.email ?? srcLocked.email,
           phone: srcContact.phone,
           address: srcContact.address,
+          wilaya: srcLocked.wilaya,
+          commune: srcLocked.commune,
           notes: srcContact.notes,
           contactType: "customer_supplier",
         };
@@ -1801,6 +1816,8 @@ router.post("/erp/suppliers/:id/import-to-stores", authenticate, requireStaff, r
               email: src.email,
               phone: src.phone,
               address: src.address,
+              wilaya: src.wilaya,
+              commune: src.commune,
               notes: src.notes,
               contactType: targetRoleType,
               globalSupplierId: gsid,
@@ -1858,6 +1875,8 @@ router.post("/erp/suppliers/:id/import-to-stores", authenticate, requireStaff, r
               email: targetContact?.email ?? srcContact.email ?? srcLocked.email,
               phone: targetContact?.phone ?? srcContact.phone,
               address: targetContact?.address ?? srcContact.address,
+              wilaya: srcLocked.wilaya,
+              commune: srcLocked.commune,
               notes: targetContact?.notes ?? srcContact.notes,
               contactType: "customer_supplier",
             };
@@ -3602,6 +3621,7 @@ router.put("/erp/customers/:id", authenticate, requireStaff, requireStore, requi
       const cShared: ContactSharedInput = {
         name: u.name, contactName: null, email: u.email,
         phone: u.phone ?? null, address: u.address ?? null, notes: u.notes ?? null,
+        wilaya: prof.wilaya, commune: prof.commune,
         contactType: effType,
       };
       if (contactId == null) {
@@ -3944,7 +3964,8 @@ router.post("/erp/customers/:id/import-to-stores", authenticate, requireStaff, r
                   storeId: targetStoreId,
                   name: srcSupplier.name, contactName: srcSupplier.contactName,
                   email: srcSupplier.email, phone: srcSupplier.phone,
-                  address: srcSupplier.address, notes: srcSupplier.notes,
+                  address: srcSupplier.address, wilaya: srcSupplier.wilaya,
+                  commune: srcSupplier.commune, notes: srcSupplier.notes,
                   contactType: "customer_supplier", contactId: resolvedContactId,
                 });
               } else if (existingSupplier.contactType !== "customer_supplier") {
@@ -3973,7 +3994,8 @@ router.post("/erp/customers/:id/import-to-stores", authenticate, requireStaff, r
                 storeId: targetStoreId,
                 name: srcSupplier.name, contactName: srcSupplier.contactName,
                 email: srcSupplier.email, phone: srcSupplier.phone,
-                address: srcSupplier.address, notes: srcSupplier.notes,
+                address: srcSupplier.address, wilaya: srcSupplier.wilaya,
+                commune: srcSupplier.commune, notes: srcSupplier.notes,
                 contactType: "customer_supplier", contactId: linkedContactId,
               });
             }
@@ -4047,6 +4069,8 @@ router.post("/erp/customers/:id/import-to-stores", authenticate, requireStaff, r
               email: srcSupplier.email,
               phone: srcSupplier.phone,
               address: srcSupplier.address,
+              wilaya: srcSupplier.wilaya,
+              commune: srcSupplier.commune,
               notes: srcSupplier.notes,
               contactType: "customer_supplier",
               contactId: targetContactId,

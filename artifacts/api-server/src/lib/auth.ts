@@ -58,7 +58,7 @@ export function requireAdmin(req: AuthRequest, res: Response, next: NextFunction
 
 export function requireStaff(req: AuthRequest, res: Response, next: NextFunction) {
   const role = req.user?.role;
-  if (role !== "admin" && role !== "employee") {
+  if (role !== "admin" && role !== "tenant_admin" && role !== "employee") {
     res.status(403).json({ error: "Forbidden" });
     return;
   }
@@ -113,7 +113,7 @@ export function isAdmin(req: AuthRequest): boolean {
  */
 export function requirePermission(section: string, action: string) {
   return async (req: AuthRequest, res: Response, next: NextFunction) => {
-    if (req.user?.role === "admin") { next(); return; }
+    if (req.user?.role === "admin" || req.user?.role === "tenant_admin") { next(); return; }
     if (!req.user?.id) { res.status(401).json({ error: "Unauthorized" }); return; }
     try {
       const { db, schema } = await import("./db");
